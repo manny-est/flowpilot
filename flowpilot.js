@@ -341,7 +341,8 @@ module.exports = function flowPilotRuntime(RED) {
     // follow-up question instead of producing a flow when the request is too
     // ambiguous to act on. The frontend renders the question as a normal
     // assistant message and keeps the Execute action armed for the answer.
-    if (typeof parsed.question === "string" && parsed.question.trim() && !Array.isArray(parsed.flow)) {
+    if (typeof parsed.question === "string" && parsed.question.trim() &&
+        (!Array.isArray(parsed.flow) || parsed.flow.length === 0)) {
       storage.appendAudit({ action: auditAction + "_question" });
       return { question: parsed.question, explanation: parsed.explanation || "" };
     }
