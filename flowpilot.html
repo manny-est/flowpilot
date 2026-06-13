@@ -1,0 +1,3120 @@
+<script type="text/javascript">
+(function () {
+    "use strict";
+
+    var VERSION = "2.2-repair";
+
+    // Idempotency guard: Node-RED can invoke a plugin's onadd more than once
+    // in a single editor load. Without this, each call builds another #fp-root
+    // and we end up with an orphaned detached copy alongside the live one.
+    var initialised = false;
+
+    // ---------------------------------------------------------------------
+    // All state and DOM references are scoped to this closure.
+    // We look elements up *within the inserted content* ($root.find(...))
+    // rather than document.getElementById, so we are never coupled to global
+    // IDs and never depend on global assignment timing.
+    // ---------------------------------------------------------------------
+    var $root = null;
+
+    // Holds the most recently loaded settings so warning logic can read the
+    // user's thresholds and suppression preference without refetching.
+    var currentSettings = {};
+
+    // ---------------------------------------------------------------------
+    // Phase 6: client-held conversation history. The backend is stateless —
+    // each request that should have continuity carries a capped slice of
+    // this array. Cleared by clearChat() ("start a fresh conversation").
+    // Entries are { role: "user" | "assistant", content: <string> }.
+    // ---------------------------------------------------------------------
+    var conversationHistory = [];
+
+    function pushHistory(role, content) {
+        if (!content) { return; }
+        conversationHistory.push({ role: role, content: String(content) });
+    }
+
+    function getHistoryMaxExchanges() {
+        var n = Number(currentSettings.historyMaxExchanges);
+        return (isFinite(n) && n >= 0) ? n : 10;
+    }
+
+    // Returns the capped slice of history to send with a request, plus
+    // whether anything was dropped. ONE place both /chat and the
+    // generate/modify/document send paths call, so the cap and truncation
+    // behaviour can't drift between them.
+    function buildHistoryPayload() {
+        var maxMessages = getHistoryMaxExchanges() * 2;
+        var truncated = conversationHistory.length > maxMessages;
+        var messages = maxMessages > 0 ? conversationHistory.slice(-maxMessages) : [];
+        return { messages: messages, truncated: truncated };
+    }
+
+    // Which Execute action (if any) Send currently triggers. null = ordinary
+    // chat. Only one Execute action can be armed at a time — clicking an
+    // armed one again disarms it back to chat.
+    var armedExecuteAction = null;
+
+    function disarmExecuteAction() {
+        if (!armedExecuteAction) { return; }
+        armedExecuteAction = null;
+        el("#fp-generate").removeClass("fp-action-armed");
+        el("#fp-document").removeClass("fp-action-armed");
+        el("#fp-modify").removeClass("fp-action-armed");
+        el("#fp-send").text("Send");
+    }
+
+    function setArmedExecuteAction(action) {
+        if (armedExecuteAction === action) { disarmExecuteAction(); return; }
+        armedExecuteAction = action;
+        el("#fp-generate").toggleClass("fp-action-armed", armedExecuteAction === "generate");
+        el("#fp-document").toggleClass("fp-action-armed", armedExecuteAction === "document");
+        el("#fp-modify").toggleClass("fp-action-armed", armedExecuteAction === "modify");
+        var label = "Send";
+        if (armedExecuteAction === "generate") { label = "Send (Generate)"; }
+        else if (armedExecuteAction === "document") { label = "Send (Document)"; }
+        else if (armedExecuteAction === "modify") { label = "Send (Modify)"; }
+        el("#fp-send").text(label);
+    }
+
+    // ---- Phase 3 intent modes -------------------------------------------
+    // Single source of truth for the one-click intents. Each button is
+    // generated from this list. Clicking a button fills the prompt box with
+    // the instruction (the user can then edit before sending). Intent is
+    // deliberately kept separate from "scope" (what gets sent) so future
+    // scope modes (selected flow, entire instance) slot in without touching
+    // this. To add an intent, add an entry here.
+    var INTENTS = [
+        {
+            id: "explain",
+            label: "Explain",
+            text: "Explain what this selection does, step by step, in plain " +
+                  "language. Describe the message path and what each node " +
+                  "contributes."
+        },
+        {
+            id: "troubleshoot",
+            label: "Troubleshoot",
+            text: "Help diagnose why this selection may not be working as " +
+                  "intended. Point out disabled nodes, dead-end wires, outputs " +
+                  "that never fire, and likely misconfigurations. Be specific " +
+                  "about what you can and cannot see."
+        },
+        {
+            id: "review",
+            label: "Review",
+            text: "Review this selection as an architecture and design " +
+                  "critique: coupling, missing error handling, fragile " +
+                  "patterns, and concrete suggestions to improve " +
+                  "maintainability."
+        },
+        {
+            id: "suggest",
+            label: "Suggest",
+            text: "Suggest improvements or relevant Node-RED nodes that would " +
+                  "make this selection better, simpler, or more robust."
+        }
+    ];
+
+    function applyIntentText(text) {
+        if (!text) { return; }
+        // Picking a Query action means "chat with this template" — an armed
+        // Execute action (e.g. Generate) would otherwise hijack the next Send.
+        disarmExecuteAction();
+        var $box = el("#fp-prompt");
+        var existing = ($box.val() || "").trim();
+        // Guard against accidental re-clicks: if the box already starts with
+        // this intent's text, do nothing rather than stacking duplicates.
+        if (existing.indexOf(text) === 0) { $box.focus(); return; }
+        $box.val(existing ? (text + "\n\n" + existing) : text);
+        $box.focus();
+    }
+
+    // Built-in intents + user-defined customIntents from settings. Custom
+    // intents are { label, text } objects persisted in settings.json.
+    function getAllIntents() {
+        var custom = Array.isArray(currentSettings.customIntents)
+            ? currentSettings.customIntents : [];
+        var builtin = INTENTS.map(function (i) {
+            return { label: i.label, text: i.text, custom: false };
+        });
+        var user = custom.filter(function (c) {
+            return c && c.label && c.text;
+        }).map(function (c) {
+            return { label: c.label, text: c.text, custom: true };
+        });
+        return builtin.concat(user);
+    }
+
+    // Custom query actions beyond this count collapse into a "…" dropdown so
+    // the action bar doesn't grow without bound as users add more.
+    var INLINE_CUSTOM_INTENT_LIMIT = 2;
+
+    function renderIntents($container) {
+        if (!$container || !$container.length) { $container = el("#fp-intents"); }
+        if (!$container.length) { return; }
+        $container.empty();
+
+        function addIntentButton(intent) {
+            $("<button>")
+                .addClass("red-ui-button red-ui-button-small fp-intent-btn")
+                .toggleClass("fp-intent-custom", !!intent.custom)
+                .attr("type", "button")
+                .attr("title", intent.text)
+                .text(intent.label)
+                .on("click", function () { applyIntentText(intent.text); })
+                .appendTo($container);
+        }
+
+        var all = getAllIntents();
+        var builtin = all.filter(function (i) { return !i.custom; });
+        var custom = all.filter(function (i) { return i.custom; });
+
+        builtin.forEach(addIntentButton);
+        custom.slice(0, INLINE_CUSTOM_INTENT_LIMIT).forEach(addIntentButton);
+
+        var overflow = custom.slice(INLINE_CUSTOM_INTENT_LIMIT);
+        if (overflow.length) {
+            var $menu = $("<div>").addClass("fp-intent-menu fp-hidden");
+            overflow.forEach(function (intent) {
+                $("<a>")
+                    .attr("href", "#")
+                    .attr("title", intent.text)
+                    .text(intent.label)
+                    .on("click", function (e) {
+                        e.preventDefault();
+                        $menu.addClass("fp-hidden");
+                        applyIntentText(intent.text);
+                    })
+                    .appendTo($menu);
+            });
+            var $toggle = $("<button>")
+                .addClass("red-ui-button red-ui-button-small fp-intent-more")
+                .attr("type", "button")
+                .attr("title", "More query actions")
+                .text("…")
+                .on("click", function (e) {
+                    e.stopPropagation();
+                    $(".fp-intent-menu").not($menu).addClass("fp-hidden");
+                    $menu.toggleClass("fp-hidden");
+                });
+            $("<div>")
+                .addClass("fp-intent-more-wrap")
+                .append($toggle)
+                .append($menu)
+                .appendTo($container);
+        }
+    }
+
+    // Working copy of custom intents while editing in settings. Seeded from
+    // currentSettings each time the list is rendered, edited in place, and
+    // read back by collectSettings().
+    var editingCustomIntents = [];
+
+    function renderCustomIntentList() {
+        var $list = el("#fp-custom-intents");
+        if (!$list.length) { return; }
+        editingCustomIntents = Array.isArray(currentSettings.customIntents)
+            ? currentSettings.customIntents.map(function (c) {
+                return { label: c.label, text: c.text };
+            })
+            : [];
+        $list.empty();
+        if (!editingCustomIntents.length) {
+            $("<div>").addClass("fp-consent-hint")
+                .text("No custom buttons yet. Add one below.")
+                .appendTo($list);
+        }
+        editingCustomIntents.forEach(function (item, idx) {
+            var $row = $("<div>").addClass("fp-custom-intent-row");
+            $("<span>").addClass("fp-custom-intent-label").text(item.label).appendTo($row);
+            $("<button>")
+                .addClass("red-ui-button red-ui-button-small")
+                .attr("type", "button")
+                .text("Remove")
+                .on("click", function () {
+                    editingCustomIntents.splice(idx, 1);
+                    // Persist immediately so buttons update; reuses saveSettings.
+                    currentSettings.customIntents = editingCustomIntents.slice();
+                    saveSettings();
+                })
+                .appendTo($row);
+            $row.appendTo($list);
+        });
+    }
+
+    function addCustomIntent() {
+        var label = (el("#fp-new-intent-label").val() || "").trim();
+        var text = (el("#fp-new-intent-text").val() || "").trim();
+        if (!label || !text) {
+            addMessage("error", "A custom button needs both a label and instruction text.");
+            return;
+        }
+        var list = Array.isArray(currentSettings.customIntents)
+            ? currentSettings.customIntents.slice() : [];
+        list.push({ label: label, text: text });
+        currentSettings.customIntents = list;
+        el("#fp-new-intent-label").val("");
+        el("#fp-new-intent-text").val("");
+        saveSettings();
+    }
+
+    function el(sel) {
+        return $root ? $root.find(sel) : $();
+    }
+
+    // ---- View switching -------------------------------------------------
+
+    function showChat() {
+        el("#fp-chat-panel").removeClass("fp-hidden");
+        el("#fp-settings-panel").addClass("fp-hidden");
+        el("#fp-show-chat").addClass("fp-active");
+        el("#fp-show-settings").removeClass("fp-active");
+    }
+
+    function showSettings() {
+        el("#fp-settings-panel").removeClass("fp-hidden");
+        el("#fp-chat-panel").addClass("fp-hidden");
+        el("#fp-show-settings").addClass("fp-active");
+        el("#fp-show-chat").removeClass("fp-active");
+    }
+
+    // Clears the visible chat AND resets the conversation history the model
+    // sees — "start a fresh conversation" (Phase 6).
+    function clearChat() {
+        el("#fp-messages").empty();
+        conversationHistory = [];
+        updateSelectionStatus();
+    }
+
+    // ---- Messages -------------------------------------------------------
+
+    function addMessage(role, text) {
+        var $box = el("#fp-messages");
+        if (!$box.length) { return; }
+
+        var label = role === "user" ? "YOU" : role === "error" ? "ERROR" : "FLOWPILOT";
+        var cls = "fp-message" + (role === "user" ? " fp-user" : role === "error" ? " fp-error" : "");
+
+        var $msg = $("<div>").addClass(cls);
+        $("<div>").addClass("fp-label").text(label).appendTo($msg);
+        $("<div>").text(text || "").appendTo($msg);
+
+        $box.append($msg);
+        $box.scrollTop($box[0].scrollHeight);
+    }
+
+    // Pending "typing" indicator shown in the thread while awaiting a reply.
+    // Lives where the answer will appear, so the eye is already there. Always
+    // removed in both the success and error paths so it can't get stuck.
+    function showPending() {
+        var $box = el("#fp-messages");
+        if (!$box.length) { return; }
+        // Guard against duplicates (e.g. fast double-send).
+        $box.find("#fp-pending").remove();
+
+        var $msg = $("<div>").addClass("fp-message").attr("id", "fp-pending");
+        $("<div>").addClass("fp-label").text("FLOWPILOT").appendTo($msg);
+        var $dots = $("<div>").addClass("fp-typing");
+        $dots.append($("<span>"), $("<span>"), $("<span>"));
+        $msg.append($dots);
+
+        $box.append($msg);
+        $box.scrollTop($box[0].scrollHeight);
+    }
+
+    function hidePending() {
+        el("#fp-messages").find("#fp-pending").remove();
+    }
+
+    // ---- Server communication -------------------------------------------
+    // Note: no leading slash. Node-RED serves admin endpoints under a base
+    // path (httpAdminRoot) that may not be "/". A relative URL respects it.
+
+    function ajaxJson(method, url, payload, onSuccess, onError) {
+        $.ajax({
+            url: url,
+            method: method,
+            contentType: "application/json",
+            data: payload ? JSON.stringify(payload) : undefined,
+            success: onSuccess,
+            error: function (xhr) {
+                var msg = (xhr.responseJSON && xhr.responseJSON.error) ||
+                          xhr.responseText || xhr.statusText || "Unknown error";
+                if (onError) { onError(msg, xhr); }
+                else { addMessage("error", msg); }
+            }
+        });
+    }
+
+    // ---- Settings -------------------------------------------------------
+
+    // Helpers for the providers list living in currentSettings.
+    function providersList() {
+        return Array.isArray(currentSettings.providers) ? currentSettings.providers : [];
+    }
+    function activeProvider() {
+        var list = providersList();
+        if (!list.length) { return null; }
+        var found = list.filter(function (p) { return p.id === currentSettings.activeProviderId; })[0];
+        return found || list[0];
+    }
+
+    function renderProviderDropdown() {
+        var $sel = el("#fp-provider-select");
+        if (!$sel.length) { return; }
+        $sel.empty();
+        providersList().forEach(function (p) {
+            $("<option>")
+                .attr("value", p.id)
+                .text(p.providerName + (p.model ? (" / " + p.model) : " (no model)"))
+                .appendTo($sel);
+        });
+        var active = activeProvider();
+        if (active) { $sel.val(active.id); }
+    }
+
+    // Write the form fields from a given provider profile.
+    function fillProviderFields(p) {
+        p = p || {};
+        el("#fp-provider-name").val(p.providerName || "");
+        el("#fp-base-url").val(p.baseUrl || "");
+        el("#fp-api-key").val(p.apiKey || "");
+        el("#fp-model").val(p.model || "");
+        el("#fp-temperature").val(p.temperature !== undefined ? p.temperature : 0.2);
+        // Test provider is disabled until this provider has a model.
+        el("#fp-test-provider").prop("disabled", !(p.model && String(p.model).trim()));
+    }
+
+    function fillSettings(settings) {
+        settings = settings || {};
+        currentSettings = settings;
+
+        renderProviderDropdown();
+        fillProviderFields(activeProvider());
+
+        el("#fp-system-prompt").val(settings.systemPrompt || "");
+        el("#fp-warn-tokens").val(settings.contextWarnTokens || 4000);
+        el("#fp-high-tokens").val(settings.contextHighTokens || 8000);
+        el("#fp-history-max").val(settings.historyMaxExchanges !== undefined ? settings.historyMaxExchanges : 10);
+        el("#fp-streaming-enabled").prop("checked", !!settings.streamingEnabled);
+        el("#fp-suppress-warnings").prop("checked", !!settings.suppressContextWarnings);
+
+        // The dev/test banner is part of the warning set the user can silence
+        // via the type-to-confirm acknowledgement.
+        if (settings.suppressContextWarnings) {
+            el("#fp-dev-banner").addClass("fp-hidden");
+        } else {
+            el("#fp-dev-banner").removeClass("fp-hidden");
+        }
+
+        // Custom intents may have changed; rebuild buttons and the editor list.
+        renderIntents(el("#fp-intents"));
+        renderCustomIntentList();
+
+        var ap = activeProvider();
+        var providerText = (ap && ap.model)
+            ? (ap.providerName + " / " + ap.model)
+            : ((ap ? ap.providerName : "Provider") + ": model not configured");
+        el("#fp-provider-status").text("Provider: " + providerText);
+    }
+
+    // Read the form's provider fields back into the active provider profile.
+    function captureProviderFields() {
+        var list = providersList();
+        var ap = activeProvider();
+        if (!ap) { return; }
+        ap.providerName = el("#fp-provider-name").val() || "Provider";
+        ap.baseUrl = el("#fp-base-url").val() || "";
+        ap.apiKey = el("#fp-api-key").val() || "";
+        ap.model = el("#fp-model").val() || "";
+        ap.temperature = Number(el("#fp-temperature").val() || 0.2);
+        currentSettings.providers = list;
+    }
+
+    function collectSettings() {
+        // Only honour the suppression toggle if the confirmation phrase was
+        // typed exactly. Otherwise warnings stay on regardless of the checkbox.
+        var wantSuppress = el("#fp-suppress-warnings").prop("checked");
+        var typed = (el("#fp-suppress-confirm").val() || "").trim();
+        var suppress = wantSuppress && typed === "I understand the risk";
+
+        // Fold the form's provider fields back into the active profile first.
+        captureProviderFields();
+
+        var historyMax = Number(el("#fp-history-max").val());
+        if (!isFinite(historyMax) || historyMax < 0) { historyMax = 10; }
+
+        return {
+            providers: providersList(),
+            activeProviderId: currentSettings.activeProviderId,
+            systemPrompt: el("#fp-system-prompt").val(),
+            contextWarnTokens: Number(el("#fp-warn-tokens").val() || 4000),
+            contextHighTokens: Number(el("#fp-high-tokens").val() || 8000),
+            historyMaxExchanges: historyMax,
+            streamingEnabled: el("#fp-streaming-enabled").prop("checked"),
+            suppressContextWarnings: suppress,
+            customIntents: Array.isArray(currentSettings.customIntents)
+                ? currentSettings.customIntents : []
+        };
+    }
+
+    // Switch which provider the form edits. Captures the current form into the
+    // outgoing provider first, so unsaved edits aren't lost when switching.
+    function switchProvider(newId) {
+        captureProviderFields();
+        currentSettings.activeProviderId = newId;
+        fillProviderFields(activeProvider());
+    }
+
+    function addProvider() {
+        captureProviderFields();
+        var list = providersList();
+        // Generate a unique default name so adding several doesn't immediately
+        // collide (the save-time check enforces uniqueness, but this avoids the
+        // obvious "New provider" / "New provider" clash up front).
+        var base = "New provider";
+        var name = base;
+        var n = 1;
+        var taken = {};
+        list.forEach(function (p) {
+            taken[String(p.providerName || "").trim().toLowerCase()] = true;
+        });
+        while (taken[name.toLowerCase()]) { n += 1; name = base + " " + n; }
+
+        var id = "p" + Date.now().toString(36);
+        list.push({
+            id: id,
+            providerName: name,
+            baseUrl: "http://localhost:8080",
+            apiKey: "",
+            model: "",
+            temperature: 0.2
+        });
+        currentSettings.providers = list;
+        currentSettings.activeProviderId = id;
+        renderProviderDropdown();
+        fillProviderFields(activeProvider());
+    }
+
+    function removeProvider() {
+        var list = providersList();
+        if (list.length <= 1) {
+            addMessage("error", "At least one provider is required.");
+            return;
+        }
+        var ap = activeProvider();
+        currentSettings.providers = list.filter(function (p) { return p.id !== ap.id; });
+        currentSettings.activeProviderId = currentSettings.providers[0].id;
+        renderProviderDropdown();
+        fillProviderFields(activeProvider());
+    }
+
+    // Test provider: switch to chat, fill the test prompt, and send it.
+    function testProvider() {
+        // Make sure the active provider reflects unsaved form edits, then save
+        // so the backend tests what the user sees, then run the test.
+        saveSettings(function () {
+            showChat();
+            send("test", "Say hello from FlowPilot. Keep it brief.");
+        });
+    }
+
+    function loadSettings() {
+        ajaxJson("GET", "flowpilot/settings", null, function (data) {
+            fillSettings(data);
+            maybeShowFirstRun(data);
+            updateSelectionStatus();
+        }, function (msg) {
+            addMessage("error", "Unable to load FlowPilot settings: " + msg);
+            el("#fp-provider-status").text("Provider: settings load failed");
+        });
+    }
+
+    function saveSettings(callback) {
+        var payload = collectSettings();
+        var list = payload.providers || [];
+
+        // Validation 1: every provider needs a base URL (the one field a
+        // provider cannot function without).
+        var noUrl = list.filter(function (p) {
+            return !p.baseUrl || !String(p.baseUrl).trim();
+        });
+        if (noUrl.length) {
+            var urlNames = noUrl.map(function (p) { return p.providerName || "(unnamed)"; }).join(", ");
+            addMessage("error", "Cannot save: these provider(s) need a Base URL: " + urlNames + ".");
+            showSettings();
+            return;
+        }
+
+        // Validation 2: provider names must be present and unique. Name is the
+        // identity of a provider — base URL / model / key may all legitimately
+        // repeat (e.g. same endpoint, different billing key), so the name is
+        // what must distinguish them.
+        var blankName = list.filter(function (p) {
+            return !p.providerName || !String(p.providerName).trim();
+        });
+        if (blankName.length) {
+            addMessage("error", "Cannot save: every provider needs a name.");
+            showSettings();
+            return;
+        }
+        var seen = {};
+        var dupes = [];
+        list.forEach(function (p) {
+            var key = String(p.providerName).trim().toLowerCase();
+            if (seen[key]) {
+                if (dupes.indexOf(p.providerName) === -1) { dupes.push(p.providerName); }
+            }
+            seen[key] = true;
+        });
+        if (dupes.length) {
+            addMessage("error", "Cannot save: provider names must be unique. Duplicate: " + dupes.join(", ") + ".");
+            showSettings();
+            return;
+        }
+
+        ajaxJson("POST", "flowpilot/settings", payload, function (data) {
+            fillSettings(data);
+            addMessage("assistant", "Settings saved.");
+            updateSelectionStatus();
+            if (callback) { callback(); }
+        }, function (msg) {
+            addMessage("error", "Unable to save FlowPilot settings: " + msg);
+        });
+    }
+
+    // ---- Selection context (Phase 2) ------------------------------------
+    // We read the user's current node selection and build a SANITIZED copy to
+    // send to the AI. Two reasons we never send raw nodes:
+    //   1. Node objects are proxies carrying editor-internal fields (geometry,
+    //      validation state, i18n functions) that waste tokens and mean nothing
+    //      to the model.
+    //   2. Config nodes can hold secrets (broker passwords, API keys). We drop
+    //      anything whose field name looks secret-bearing.
+    // The user only ever sees how many nodes are attached, and nothing is sent
+    // unless they have an active selection — staying within "user-initiated"
+    // and "complete visibility".
+
+    var INTERNAL_FIELDS = {
+        _def: 1, _: 1, changed: 1, moved: 1, dirty: 1, selected: 1, valid: 1,
+        validationErrors: 1, _index: 1, resize: 1, x: 1, y: 1, w: 1, h: 1, l: 1,
+        __outputs: 1, inputs: 1, outputs: 1, g: 1, _config: 1, _orig: 1,
+        credentials: 1
+    };
+    var SECRET_KEY = /pass|secret|token|apikey|api_key|key$|credential|auth/i;
+
+    function sanitizeNode(n) {
+        var out = {};
+        Object.keys(n).forEach(function (k) {
+            if (INTERNAL_FIELDS[k]) { return; }
+            if (SECRET_KEY.test(k)) { out[k] = "[redacted]"; return; }
+            var v = n[k];
+            if (typeof v === "function") { return; }
+            // JSON round-trip strips the proxy wrapper and drops anything
+            // non-serializable, leaving plain config values (incl. props).
+            try { out[k] = JSON.parse(JSON.stringify(v)); }
+            catch (e) { out[k] = "[unserializable]"; }
+        });
+        return out;
+    }
+
+    // Build readable connections from the editor's LIVE wiring model.
+    // Important: in the editor, node.wires is NOT populated — that's an
+    // export-time artifact. Live wiring lives as separate link objects, which
+    // RED.view.selection() hands us in sel.links. Each link is already an
+    // explicit edge: { source: <node>, sourcePort: <int>, target: <node> }.
+    // This handles multi-output and multi-input naturally — each is just
+    // another link object.
+    function nodeLabel(n) {
+        if (!n) { return "(unknown node)"; }
+        var nm = (n.name && n.name.length) ? n.name : "(unnamed)";
+        return nm + " [" + n.type + "]";
+    }
+
+    function buildConnections(nodes, links) {
+        var selectedIds = nodes.map(function (n) { return n.id; });
+        links = Array.isArray(links) ? links : [];
+
+        var edges = links.map(function (l) {
+            var srcId = l.source && l.source.id;
+            var tgtId = l.target && l.target.id;
+            return {
+                fromId: srcId,
+                from: nodeLabel(l.source),
+                fromPort: (typeof l.sourcePort === "number") ? l.sourcePort : 0,
+                toId: tgtId,
+                to: nodeLabel(l.target),
+                sourceInSelection: selectedIds.indexOf(srcId) !== -1,
+                targetInSelection: selectedIds.indexOf(tgtId) !== -1
+            };
+        });
+
+        // Group selected nodes into connected sub-flows (undirected connected
+        // components over the links). This turns "are these separate flows?"
+        // from a reasoning task into a lookup for the model. Two nodes share a
+        // group if a link connects them either way; an unlinked selected node
+        // forms its own group.
+        var parent = {};
+        nodes.forEach(function (n) { parent[n.id] = n.id; });
+        function find(x) {
+            while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+            return x;
+        }
+        edges.forEach(function (e) {
+            if (parent[e.fromId] === undefined || parent[e.toId] === undefined) { return; }
+            parent[find(e.fromId)] = find(e.toId);
+        });
+        var rootToGroup = {};
+        var nextGroup = 1;
+        var groupOf = {};
+        nodes.forEach(function (n) {
+            var r = find(n.id);
+            if (rootToGroup[r] === undefined) { rootToGroup[r] = nextGroup++; }
+            groupOf[n.id] = rootToGroup[r];
+        });
+        var subFlowCount = nextGroup - 1;
+
+        // Per-node summary of inputs and outputs, reconstructed from edges so
+        // multi-input nodes are legible without the model cross-referencing.
+        // Each node is tagged with its sub-flow group.
+        var perNode = nodes.map(function (n) {
+            var outs = edges.filter(function (e) { return e.fromId === n.id; })
+                            .map(function (e) { return "port " + e.fromPort + " -> " + e.to; });
+            var ins = edges.filter(function (e) { return e.toId === n.id; })
+                           .map(function (e) { return e.from + " (port " + e.fromPort + ")"; });
+            return { node: nodeLabel(n), subFlow: groupOf[n.id], inputs: ins, outputs: outs };
+        });
+
+        return { edges: edges, perNode: perNode, subFlowCount: subFlowCount };
+    }
+
+    // Returns { nodes, connections } or null if nothing selected.
+    function collectSelectionContext() {
+        var sel = (RED.view && RED.view.selection) ? RED.view.selection() : null;
+        var rawNodes = (sel && sel.nodes) ? sel.nodes : [];
+        var rawLinks = (sel && sel.links) ? sel.links : [];
+        if (!rawNodes.length) { return null; }
+        return {
+            nodes: rawNodes.map(sanitizeNode),
+            connections: buildConnections(rawNodes, rawLinks)
+        };
+    }
+
+    // Rough token estimate. ~4 chars per token is the standard cheap
+    // approximation; good enough for an advisory size warning. We measure the
+    // serialized context (nodes + connections) exactly as it will be sent.
+    function estimateTokens(context) {
+        if (!context) { return 0; }
+        var chars = 0;
+        try { chars = JSON.stringify(context).length; } catch (e) { chars = 0; }
+        return Math.ceil(chars / 4);
+    }
+
+    // Live indicator so the user knows what will be sent BEFORE they hit Send.
+    // Driven by the "view:selection-changed" editor event. Shows three things:
+    // the selection count, a size estimate with advisory tier, and a standing
+    // secrets reminder (unless the user has suppressed it in settings).
+    function updateSelectionStatus() {
+        var $status = el("#fp-selection-status");
+        if (!$status.length) { return; }
+
+        var sel = (RED.view && RED.view.selection) ? RED.view.selection() : null;
+        var count = (sel && sel.nodes) ? sel.nodes.length : 0;
+
+        var $size = el("#fp-size-status");
+        var $secrets = el("#fp-secrets-status");
+
+        if (count === 0) {
+            $status.text("No nodes selected").removeClass("fp-has-selection");
+        } else {
+            $status.text(count + (count === 1 ? " node" : " nodes") +
+                         " selected — will be sent as context")
+                   .addClass("fp-has-selection");
+        }
+
+        // Size line: selection context (Phase 2) + conversation history
+        // (Phase 6) — whichever of the two apply right now.
+        var contextTokens = count > 0 ? estimateTokens(collectSelectionContext()) : 0;
+        var historyPayload = buildHistoryPayload();
+        var historyTokens = estimateTokens(historyPayload.messages);
+        var tokens = contextTokens + historyTokens;
+
+        if (tokens === 0) {
+            $size.text("").addClass("fp-hidden");
+        } else {
+            var warnAt = Number(currentSettings.contextWarnTokens) || 4000;
+            var highAt = Number(currentSettings.contextHighTokens) || 8000;
+
+            var parts = [];
+            if (contextTokens) { parts.push("context ~" + contextTokens.toLocaleString()); }
+            if (historyTokens) {
+                parts.push("history ~" + historyTokens.toLocaleString() +
+                    (historyPayload.truncated ? " (earlier messages omitted)" : ""));
+            }
+            var sizeText = "~" + tokens.toLocaleString() + " tokens" +
+                (parts.length ? " (" + parts.join(", ") + ")" : "");
+
+            $size.removeClass("fp-hidden fp-size-warn fp-size-high");
+            if (tokens >= highAt) {
+                $size.text(sizeText + " — large; may exceed smaller local models. " +
+                           "Consider selecting fewer nodes, clearing chat history, or splitting your request.")
+                     .addClass("fp-size-high");
+            } else if (tokens >= warnAt) {
+                $size.text(sizeText + " — getting large; consider selecting fewer nodes or clearing chat history.")
+                     .addClass("fp-size-warn");
+            } else {
+                $size.text(sizeText);
+            }
+        }
+
+        // Secrets reminder (suppressible) — only relevant when a selection is
+        // attached as context.
+        if (count === 0 || currentSettings.suppressContextWarnings) {
+            $secrets.addClass("fp-hidden");
+        } else {
+            $secrets.text("⚠ Context may include node config and code. Don't send " +
+                          "credentials or proprietary data. Local/private AI recommended.")
+                    .removeClass("fp-hidden");
+        }
+    }
+
+    // First-run welcome + warning. Shows in the chat until the user saves
+    // settings once (saveSettings stamps firstRunAcknowledged server-side).
+    function maybeShowFirstRun(settings) {
+        if (settings && settings.firstRunAcknowledged) { return; }
+        addMessage("assistant",
+            "Welcome to FlowPilot.\n\n" +
+            "FlowPilot sends your selected Node-RED nodes — including their " +
+            "configuration and any code inside function or template nodes — to " +
+            "the AI provider you configure. Please keep in mind:\n\n" +
+            "• Do not include credentials, API keys, or proprietary information " +
+            "in anything you send.\n" +
+            "• A local or private AI provider (e.g. LocalAI, Ollama) is strongly " +
+            "recommended over a cloud provider.\n" +
+            "• FlowPilot is read-only in this phase: it cannot change or deploy " +
+            "your flows.\n\n" +
+            "Open Settings (gear icon), configure your provider, and click Save " +
+            "to dismiss this notice.");
+    }
+
+    // ---- Prompting ------------------------------------------------------
+
+    function setBusy(busy) {
+        el("#fp-send").prop("disabled", busy);
+        el("#fp-generate").prop("disabled", busy);
+        el("#fp-document").prop("disabled", busy);
+        el("#fp-modify").prop("disabled", busy);
+        el("#fp-test-provider").prop("disabled", busy);
+    }
+
+    // Shared so chat and generate describe an attached selection identically —
+    // "[+ N node(s), M connection(s) attached as context]".
+    function contextAttachmentNote(context) {
+        var nodeCount = (context && context.nodes) ? context.nodes.length : 0;
+        var connCount = (context && context.connections && context.connections.edges)
+            ? context.connections.edges.length : 0;
+        return nodeCount
+            ? "\n\n[+ " + nodeCount + " node(s)" +
+              (connCount ? ", " + connCount + " connection(s)" : "") +
+              " attached as context]"
+            : "";
+    }
+
+    // endpoint is "chat" (real prompt) or "test" (connectivity check)
+    function send(endpoint, promptOverride) {
+        var $promptBox = el("#fp-prompt");
+        var prompt = promptOverride || ($promptBox.length ? $promptBox.val().trim() : "");
+
+        if (!prompt) {
+            addMessage("error", "Enter a prompt first.");
+            return;
+        }
+
+        // Connectivity test never carries flow context or conversation
+        // history; keep it minimal and out of the conversation entirely.
+        var isChat = endpoint === "chat";
+        var context = (endpoint === "test") ? null : collectSelectionContext();
+        var note = contextAttachmentNote(context);
+        addMessage("user", prompt + note);
+        if (isChat) { pushHistory("user", prompt + note); }
+        if (!promptOverride) { $promptBox.val(""); }
+
+        setBusy(true);
+        showPending();
+
+        var historyPayload = isChat ? buildHistoryPayload() : { messages: [], truncated: false };
+        var payload = {
+            prompt: prompt,
+            context: context,
+            history: historyPayload.messages,
+            historyTruncated: historyPayload.truncated
+        };
+
+        if (isChat && currentSettings.streamingEnabled) {
+            payload.stream = true;
+            sendChatStream(payload);
+            return;
+        }
+
+        ajaxJson("POST", "flowpilot/" + endpoint, payload, function (data) {
+            hidePending();
+            addMessage("assistant", data.message || JSON.stringify(data, null, 2));
+            if (isChat) { pushHistory("assistant", data.message || ""); }
+            setBusy(false);
+            updateSelectionStatus();
+        }, function (msg) {
+            hidePending();
+            addMessage("error", msg);
+            setBusy(false);
+        });
+    }
+
+    // Phase 6 chunk 4: streaming chat. Posts with stream:true and reads the
+    // SSE response body incrementally via fetch's ReadableStream. The
+    // bouncing "pending" indicator (already in the DOM from showPending) is
+    // converted in place into the assistant bubble and filled in as chunks
+    // arrive — generate/modify/document never call this; their JSON envelope
+    // can't be rendered until complete.
+    function sendChatStream(payload) {
+        var $box = el("#fp-messages");
+        if (!$box.length) { return; }
+
+        var $msg = $box.find("#fp-pending");
+        var $text = null;
+        if ($msg.length) {
+            $msg.removeAttr("id").empty();
+            $("<div>").addClass("fp-label").text("FLOWPILOT").appendTo($msg);
+            $text = $("<div>").appendTo($msg);
+        }
+
+        var fullText = "";
+
+        function ensureBubble() {
+            if ($text) { return; }
+            hidePending();
+            addMessage("assistant", "");
+            $msg = $box.find(".fp-message").last();
+            $text = $msg.find("div").last();
+        }
+
+        function finish() {
+            hidePending();
+            if (!fullText) {
+                if ($msg && $msg.length) { $msg.remove(); }
+                addMessage("error", "No response received from the provider.");
+            } else {
+                pushHistory("assistant", fullText);
+            }
+            setBusy(false);
+            updateSelectionStatus();
+        }
+
+        function fail(err) {
+            hidePending();
+            if ($msg && $msg.length) { $msg.remove(); }
+            addMessage("error", (err && err.message) ? err.message : String(err));
+            setBusy(false);
+        }
+
+        if (typeof fetch !== "function") {
+            fail(new Error("Streaming requires a browser with fetch() support. " +
+                "Disable streaming in Settings to use chat."));
+            return;
+        }
+
+        fetch("flowpilot/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        }).then(function (resp) {
+            if (!resp.ok) {
+                return resp.text().then(function (text) {
+                    var msg = text;
+                    try { msg = JSON.parse(text).error || text; } catch (e) { /* not JSON */ }
+                    throw new Error(msg || resp.statusText);
+                });
+            }
+            if (!resp.body || !resp.body.getReader) {
+                // No streaming support in this environment — fall back to a
+                // single full-text render.
+                return resp.text().then(function (text) {
+                    fullText = text;
+                    ensureBubble();
+                    $text.text(fullText);
+                });
+            }
+
+            var reader = resp.body.getReader();
+            var decoder = new TextDecoder();
+            var buf = "";
+
+            function pump() {
+                return reader.read().then(function (step) {
+                    if (step.done) { return; }
+                    buf += decoder.decode(step.value, { stream: true });
+                    var lines = buf.split("\n");
+                    buf = lines.pop();
+                    lines.forEach(function (line) {
+                        line = line.trim();
+                        if (line.indexOf("data:") !== 0) { return; }
+                        var dataStr = line.slice(5).trim();
+                        if (!dataStr || dataStr === "[DONE]") { return; }
+                        var evt;
+                        try { evt = JSON.parse(dataStr); } catch (e) { return; }
+                        if (evt.error) { throw new Error(evt.error); }
+                        if (evt.delta) {
+                            fullText += evt.delta;
+                            ensureBubble();
+                            $text.text(fullText);
+                            $box.scrollTop($box[0].scrollHeight);
+                        }
+                    });
+                    return pump();
+                });
+            }
+            return pump();
+        }).then(finish, fail);
+    }
+
+    // Phase 4 (first chunk): request a generated flow fragment and show it for
+    // review. This cut displays the explanation + raw JSON in the chat; it does
+    // NOT yet validate node types or import to the workspace.
+    function generate() {
+        var $promptBox = el("#fp-prompt");
+        var prompt = $promptBox.length ? $promptBox.val().trim() : "";
+        if (!prompt) {
+            addMessage("error", "Describe what you'd like to generate first.");
+            return;
+        }
+
+        // Selection context lets the model generate something that fits with
+        // the nodes you've selected (e.g. "wire this into my MQTT setup").
+        var context = collectSelectionContext();
+        var label = "Generate: " + prompt + contextAttachmentNote(context);
+        addMessage("user", label);
+        pushHistory("user", label);
+        $promptBox.val("");
+
+        setBusy(true);
+        showPending();
+        var historyPayload = buildHistoryPayload();
+        ajaxJson("POST", "flowpilot/generate", {
+            prompt: prompt, context: context,
+            history: historyPayload.messages, historyTruncated: historyPayload.truncated
+        }, function (data) {
+            hidePending();
+
+            // Phase 6 chunk 3: the model can ask a clarifying question instead
+            // of generating. Render it as a normal assistant message and leave
+            // Generate armed so the user's next Send answers it.
+            if (data.question) {
+                var qText = (data.explanation ? data.explanation + "\n\n" : "") + data.question;
+                addMessage("assistant", qText);
+                pushHistory("assistant", qText);
+                setBusy(false);
+                updateSelectionStatus();
+                return;
+            }
+
+            // Lay nodes out before review/import — see layoutGeneratedFlow for why.
+            var flow = Array.isArray(data.flow) ? layoutGeneratedFlow(data.flow) : data.flow;
+            addMessage("assistant", data.explanation || "(no explanation returned)");
+            pushHistory("assistant", data.explanation || "(no explanation returned)");
+            addGeneratedReview(flow);
+            setBusy(false);
+            updateSelectionStatus();
+        }, function (msg, xhr) {
+            hidePending();
+            // 422 with raw text means the model replied but we couldn't parse a
+            // flow; show the raw so the user can see what happened.
+            var raw = xhr && xhr.responseJSON && xhr.responseJSON.raw;
+            addMessage("error", msg);
+            if (raw) { addGeneratedJson(raw, true); }
+            setBusy(false);
+        });
+    }
+
+    // Document feature: explain the SELECTED nodes and produce a single
+    // comment node (prose + Mermaid diagram in its "info" field) to drop onto
+    // the canvas. Reuses the same validate -> review -> import pipeline as
+    // Generate — a comment node is just a regular flow-JSON node, so there's
+    // nothing import-mechanism-specific to build here. The prompt box holds
+    // OPTIONAL notes to steer the explanation; the selection is the real input.
+    function documentFlow() {
+        var context = collectSelectionContext();
+        if (!context || !Array.isArray(context.nodes) || context.nodes.length === 0) {
+            addMessage("error", "Select the node(s) you want documented first.");
+            return;
+        }
+
+        var $promptBox = el("#fp-prompt");
+        var notes = $promptBox.length ? $promptBox.val().trim() : "";
+        var label = "Document selection" + (notes ? ": " + notes : "") + contextAttachmentNote(context);
+        addMessage("user", label);
+        pushHistory("user", label);
+        $promptBox.val("");
+
+        setBusy(true);
+        showPending();
+        var historyPayload = buildHistoryPayload();
+        ajaxJson("POST", "flowpilot/document", {
+            prompt: notes, context: context,
+            history: historyPayload.messages, historyTruncated: historyPayload.truncated
+        }, function (data) {
+            hidePending();
+
+            if (data.question) {
+                var qText = (data.explanation ? data.explanation + "\n\n" : "") + data.question;
+                addMessage("assistant", qText);
+                pushHistory("assistant", qText);
+                setBusy(false);
+                updateSelectionStatus();
+                return;
+            }
+
+            var flow = Array.isArray(data.flow) ? layoutGeneratedFlow(data.flow) : data.flow;
+            addMessage("assistant", data.explanation || "(no explanation returned)");
+            pushHistory("assistant", data.explanation || "(no explanation returned)");
+            addGeneratedReview(flow);
+            setBusy(false);
+            updateSelectionStatus();
+        }, function (msg, xhr) {
+            hidePending();
+            var raw = xhr && xhr.responseJSON && xhr.responseJSON.raw;
+            addMessage("error", msg);
+            if (raw) { addGeneratedJson(raw, true); }
+            setBusy(false);
+        });
+    }
+
+    // ---- Phase 5: Modify flow -------------------------------------------
+    // Fields we never include in a property diff: internal editor state that
+    // the model correctly omits and that we must never overwrite on apply.
+    // "outputs" is intentionally NOT skipped: for node types like "function"
+    // it's a real, user-meaningful defaults field (port count) that the model
+    // is expected to change when asked for "N outputs" — skipping it silently
+    // dropped that change while the func code already returned an N-element
+    // array. (Switch nodes derive "outputs" from rules.length separately, in
+    // applyModifications's Tier 1 block, so this doesn't conflict.)
+    var DIFF_SKIP = {
+        x: 1, y: 1, z: 1, _def: 1, _: 1, changed: 1, dirty: 1, selected: 1,
+        valid: 1, validationErrors: 1, _index: 1, resize: 1, moved: 1,
+        w: 1, h: 1, l: 1, __outputs: 1, inputs: 1, g: 1,
+        _config: 1, _orig: 1, credentials: 1
+    };
+
+    // Sentinel strings written by sanitizeNode for values it couldn't include.
+    // If the model echoes these back, the field is opaque — skip it entirely;
+    // never write a sentinel string into a live node property.
+    var SANITIZE_SENTINELS = { "[unserializable]": true, "[redacted]": true };
+
+    function generateNodeId() {
+        var chars = "0123456789abcdef";
+        var id = "";
+        for (var i = 0; i < 16; i++) { id += chars[Math.floor(Math.random() * 16)]; }
+        return id;
+    }
+
+    // Resolve a newWires from/to reference to a display label.
+    // ref is either a placeholder id present in newNodes or an existing node id.
+    function resolveWireRef(ref, newNodes) {
+        if (!ref) { return "(unknown)"; }
+        // Check against newNodes placeholder ids.
+        for (var i = 0; i < newNodes.length; i++) {
+            if (newNodes[i] && newNodes[i].id === ref) {
+                var n = newNodes[i];
+                return (n.name || n.type || ref) + " [new]";
+            }
+        }
+        // Existing node.
+        var live = RED.nodes && RED.nodes.node ? RED.nodes.node(ref) : null;
+        return live ? (live.name || live.type || ref) : ref;
+    }
+
+    // Insert new nodes into the live graph and add wires connecting them to
+    // existing nodes. Uses RED.nodes.add (the same path Node-RED's undo uses
+    // internally for t:"add" events) and pushes one compound history entry so
+    // a single Ctrl+Z removes both the new nodes and their wires together.
+    function applyInsertions(newNodes, newWires) {
+        if (!newNodes || !newNodes.length) { return; }
+
+        // Determine z (flow-tab id) from the active workspace.
+        var z = "";
+        if (RED.workspaces && RED.workspaces.active) {
+            var ws = RED.workspaces.active();
+            z = ws ? (typeof ws === "string" ? ws : ws.id || "") : "";
+        }
+
+        // Collect model placeholder ids to distinguish them from existing-node
+        // ids when scanning newWires for spatial anchors.
+        var placeholderIds = {};
+        newNodes.forEach(function (n) { if (n.id) { placeholderIds[n.id] = true; } });
+
+        // Find live positions of existing nodes referenced in newWires so we
+        // can anchor the inserted cluster next to them on the canvas.
+        // Split into "upstream" (existing node feeds INTO a new node) and
+        // "downstream" (a new node feeds INTO an existing node) anchors -
+        // a wire's direction matters for where the cluster should land.
+        var upstreamAnchors = [];
+        var downstreamAnchors = [];
+        (newWires || []).forEach(function (wire) {
+            var fromIsNew = placeholderIds[wire.from];
+            var toIsNew = placeholderIds[wire.to];
+            if (!fromIsNew && toIsNew) {
+                var src = RED.nodes.node(wire.from);
+                if (src && typeof src.x === "number" && typeof src.y === "number") {
+                    upstreamAnchors.push(src);
+                }
+            } else if (fromIsNew && !toIsNew) {
+                var tgt = RED.nodes.node(wire.to);
+                if (tgt && typeof tgt.x === "number" && typeof tgt.y === "number") {
+                    downstreamAnchors.push(tgt);
+                }
+            }
+        });
+        var anchorNodes = upstreamAnchors.concat(downstreamAnchors);
+
+        // Layout new nodes so they have x/y before adding to the graph.
+        var toLayout = newNodes.map(function (n) {
+            return Object.assign({}, n, { wires: Array.isArray(n.wires) ? n.wires : [[]] });
+        });
+        var laid = layoutGeneratedFlow(toLayout);
+
+        // Position the cluster relative to its anchors, centred on their
+        // average Y. layoutGeneratedFlow starts at (160, 120).
+        // - If the new node(s) receive a connection FROM an existing node
+        //   ("inserted after X" / "inserted between X and Y"), land 200px
+        //   right of the rightmost such upstream anchor. This is correct
+        //   even when downstream anchors exist further right (e.g. "insert
+        //   a function between the inject and the existing debugs" should
+        //   land right after the inject, not past the debugs).
+        // - Otherwise (the new node only feeds existing nodes, e.g. "add an
+        //   inject that triggers this debug"), land 200px left of the
+        //   leftmost downstream anchor.
+        if (anchorNodes.length > 0) {
+            var avgY = anchorNodes.reduce(function (s, n) { return s + n.y; }, 0) / anchorNodes.length;
+            var targetX;
+            if (upstreamAnchors.length > 0) {
+                var maxUpstreamX = upstreamAnchors.reduce(function (m, n) { return Math.max(m, n.x); }, 0);
+                targetX = maxUpstreamX + 200;
+            } else {
+                var minDownstreamX = downstreamAnchors.reduce(function (m, n) { return Math.min(m, n.x); }, downstreamAnchors[0].x);
+                targetX = minDownstreamX - 200;
+            }
+            laid.forEach(function (n) {
+                n.x = n.x - 160 + targetX;
+                n.y = n.y - 120 + avgY;
+            });
+        }
+
+        // Build placeholder-id → real-id map and assign real ids + z.
+        var idMap = {};
+        laid.forEach(function (n) {
+            var realId = generateNodeId();
+            idMap[n.id] = realId; // n.id is the model's placeholder
+            n.id = realId;
+            n.z = z;
+            if (!Array.isArray(n.wires)) { n.wires = [[]]; }
+        });
+
+        // Rewrite any intra-new-node wires to use real ids.
+        laid.forEach(function (n) {
+            n.wires = n.wires.map(function (port) {
+                return Array.isArray(port) ? port.map(function (tid) {
+                    return idMap[tid] || tid;
+                }) : [];
+            });
+        });
+
+        // Rewrite config-node references that point at another new node's
+        // placeholder id — e.g. an "mqtt out" node's "broker" pointing at a
+        // newly-inserted "mqtt-broker". The model reuses the same placeholder
+        // ids for these as it does for wires, but only "wires" was rewritten
+        // above; without this, the reference is left dangling on the
+        // placeholder string and the node fails validation at Deploy.
+        laid.forEach(function (n) {
+            if (n.type === "junction") { return; }
+            var typeDef = RED.nodes.getType(n.type);
+            if (!typeDef || !typeDef.defaults) { return; }
+            Object.keys(typeDef.defaults).forEach(function (k) {
+                var def = typeDef.defaults[k];
+                if (def && def.type && typeof n[k] === "string" && idMap[n[k]]) {
+                    n[k] = idMap[n[k]];
+                }
+            });
+        });
+
+        // Add each node to the live graph.
+        // RED.nodes.add requires _def (the type's registration object) to be
+        // set on the node — it's what the undo system restores, not a raw cfg.
+        var addedNodes = [];
+        var addedJunctions = [];
+        var insertFailed = false;
+        laid.forEach(function (n) {
+            // Junctions (wire-splice points) are NOT registered node types —
+            // RED.nodes.getType("junction") returns undefined, so the regular
+            // RED.nodes.add path below would reject them as "not installed".
+            // They're added via RED.nodes.addJunction with a different shape
+            // (no defaults/_def beyond a stub), mirroring the object NR's own
+            // "split wire with junction" action builds (red.js addJunctionsToWires).
+            if (n.type === "junction") {
+                var junctionObj = {
+                    _def: { defaults: {} },
+                    type: "junction",
+                    z: n.z,
+                    id: n.id,
+                    x: n.x,
+                    y: n.y,
+                    w: 0,
+                    h: 0,
+                    inputs: 1,
+                    outputs: 1,
+                    dirty: true,
+                    moved: true
+                };
+                try {
+                    junctionObj = RED.nodes.addJunction(junctionObj);
+                    addedJunctions.push(junctionObj);
+                } catch (e) {
+                    addMessage("error", "Failed to add junction: " + (e.message || e));
+                    insertFailed = true;
+                }
+                return;
+            }
+
+            var typeDef = RED.nodes.getType(n.type);
+            if (!typeDef) {
+                addMessage("error", "Node type not installed: " + n.type);
+                insertFailed = true;
+                return;
+            }
+            n._def = typeDef;
+            // inputs/outputs are runtime state that add() reads from the node
+            // object directly — it doesn't copy them from _def automatically.
+            if (typeof n.inputs === "undefined") {
+                n.inputs = typeDef.inputs !== undefined ? typeDef.inputs : 1;
+            }
+            if (typeof n.outputs === "undefined") {
+                n.outputs = typeDef.outputs !== undefined
+                    ? typeDef.outputs
+                    : (Array.isArray(n.wires) ? n.wires.length : 0);
+            }
+            // Apply type-definition defaults for any property the model omitted.
+            // This covers required fields (e.g. statusVal/statusType on debug)
+            // that oneditsave would normally set, preventing a spurious triangle.
+            if (typeDef.defaults) {
+                Object.keys(typeDef.defaults).forEach(function (k) {
+                    if (n[k] === undefined) {
+                        var d = typeDef.defaults[k];
+                        if (d && d.value !== undefined) { n[k] = d.value; }
+                    }
+                });
+            }
+            try {
+                RED.nodes.add(n);
+                // Try the public validator; if it isn't exposed or still leaves
+                // the node invalid, clear the triangle explicitly — real
+                // validation runs at edit-dialog-close and at Deploy.
+                if (typeof RED.nodes.validateNode === "function") {
+                    RED.nodes.validateNode(n);
+                }
+                if (!n.valid) { n.valid = true; n.validationErrors = []; }
+                addedNodes.push(n);
+            } catch (e) {
+                addMessage("error", "Failed to add node '" + (n.type || "?") + "': " + (e.message || e));
+                insertFailed = true;
+            }
+        });
+        if (insertFailed || (!addedNodes.length && !addedJunctions.length)) { return; }
+
+        // Re-link config-node "users" now that all new nodes (including any
+        // new config nodes, e.g. mqtt-broker) exist. addNode() ran this
+        // per-node as it was added, but a node added BEFORE its config-node
+        // dependency wouldn't have found it in configNodes yet — without this,
+        // the config node shows 0 users and may not be included on Deploy.
+        if (typeof RED.nodes.updateConfigNodeUsers === "function") {
+            addedNodes.forEach(function (n) {
+                RED.nodes.updateConfigNodeUsers(n, { action: "add" });
+            });
+        }
+
+        // Resolve newWires refs and add link objects. findLiveNode (not
+        // RED.nodes.node) because endpoints may be junctions we just added —
+        // junctions live in RED.nodes.junctions(z), not the normal registry.
+        var addedLinks = [];
+        (newWires || []).forEach(function (wire) {
+            var fromId = idMap[wire.from] || wire.from;
+            var toId = idMap[wire.to] || wire.to;
+            var fromNode = findLiveNode(fromId);
+            var toNode = findLiveNode(toId);
+            if (!fromNode || !toNode) {
+                addMessage("error", "Cannot wire — node not found: " + (!fromNode ? fromId : toId));
+                return;
+            }
+            var link = { source: fromNode, sourcePort: wire.fromPort || 0, target: toNode };
+            try {
+                RED.nodes.addLink(link);
+                addedLinks.push(link);
+            } catch (e) {
+                addMessage("error", "Failed to add wire: " + (e.message || e));
+            }
+        });
+
+        // Also process wires inside newNodes that reference existing nodes.
+        // The model uses "wires" for intra-new-node connections and "newWires"
+        // for cross-boundary connections, but it may also use "wires" to point
+        // to existing nodes (e.g. a new junction wired to an existing debug).
+        laid.forEach(function (newNode) {
+            if (!newNode.wires || !Array.isArray(newNode.wires)) { return; }
+            newNode.wires.forEach(function (portWires, portIndex) {
+                if (!Array.isArray(portWires)) { return; }
+                portWires.forEach(function (targetId) {
+                    // Skip if this is an intra-new-node wire (placeholder id)
+                    if (idMap[targetId]) { return; }
+                    // This is a wire to an existing node - create the link
+                    var fromNode = findLiveNode(newNode.id);
+                    var toNode = findLiveNode(targetId);
+                    if (!fromNode || !toNode) {
+                        addMessage("error", "Cannot wire new node to existing node — node not found: " + (!fromNode ? newNode.id : targetId));
+                        return;
+                    }
+                    var link = { source: fromNode, sourcePort: portIndex, target: toNode };
+                    try {
+                        RED.nodes.addLink(link);
+                        addedLinks.push(link);
+                    } catch (e) {
+                        addMessage("error", "Failed to add wire: " + (e.message || e));
+                    }
+                });
+            });
+        });
+
+        // One compound undo entry covers both the new nodes and their wires.
+        // NB: for t:"add", ev.nodes must be an array of ID STRINGS — NR's undo
+        // does RED.nodes.node(ev.nodes[i]) then reads .z, which throws (and
+        // silently breaks Ctrl+Z) if given node objects instead of ids.
+        RED.history.push({
+            t: "add",
+            nodes: addedNodes.map(function (n) { return n.id; }),
+            links: addedLinks,
+            groups: [],
+            junctions: addedJunctions,
+            subflow: { id: undefined, instances: [] },
+            subflowInputs: [],
+            subflowOutputs: [],
+            dirty: RED.nodes.dirty()
+        });
+
+        RED.nodes.dirty(true);
+        RED.view.redraw(true);
+
+        // Phase 6 chunk 5: ground follow-up turns in what was just inserted.
+        var insertedNote = "Inserted " + (addedNodes.length + addedJunctions.length) + " node(s)" +
+            (addedLinks.length ? " and added " + addedLinks.length + " wire connection(s)" : "") +
+            ". Use Ctrl+Z to undo.";
+        addMessage("assistant", insertedNote);
+        pushHistory("assistant", insertedNote);
+        updateSelectionStatus();
+    }
+
+    // Look up a live node by id, falling back to the per-tab junction registry.
+    // Junction nodes (wire-splice points) are NOT in RED.nodes.node()'s normal
+    // registry — they live in RED.nodes.junctions(z) only. Without this fallback,
+    // any modNode/removeNodes id that refers to a junction reads as "not found",
+    // which (in addModifyReview) renders "⚠ Node not found in editor" and blocks
+    // Apply entirely, even when the junction itself is unchanged.
+    function findLiveNode(id) {
+        var node = (RED.nodes && RED.nodes.node) ? RED.nodes.node(id) : null;
+        if (node) { return node; }
+        if (RED.nodes.junctions && RED.workspaces && RED.workspaces.active) {
+            var activeZ = RED.workspaces.active();
+            var junctionsOnTab = RED.nodes.junctions(activeZ) || [];
+            for (var i = 0; i < junctionsOnTab.length; i++) {
+                if (junctionsOnTab[i].id === id) { return junctionsOnTab[i]; }
+            }
+        }
+        return null;
+    }
+
+    // Compare a live editor node against a returned (modified) node, key by
+    // key. We only diff keys present in the returned node — internal editor
+    // fields the model omits are untouched on apply and excluded from the diff.
+    // `wires` is separated out so the review can flag it without applying it.
+    function computeNodeDiff(liveNode, modNode) {
+        var propertyChanges = [];
+        var wiresChanged = false;
+        Object.keys(modNode).forEach(function (k) {
+            if (DIFF_SKIP[k]) { return; }
+            var newRaw = modNode[k];
+            // If the model echoed a sanitizer sentinel, the field is opaque —
+            // we can't meaningfully compare or apply it, so skip entirely.
+            if (SANITIZE_SENTINELS[newRaw]) { return; }
+            var oldRaw = liveNode ? liveNode[k] : undefined;
+            var oldStr, newStr;
+            try { oldStr = JSON.stringify(oldRaw); } catch (e) { oldStr = String(oldRaw); }
+            try { newStr = JSON.stringify(newRaw); } catch (e) { newStr = String(newRaw); }
+            if (oldStr === newStr) { return; }
+            if (k === "wires") { wiresChanged = true; return; }
+            propertyChanges.push({ key: k, oldVal: oldRaw, newVal: newRaw });
+        });
+        return { propertyChanges: propertyChanges, wiresChanged: wiresChanged };
+    }
+
+    // Diff outgoing wires for an existing node: compare what's live in the graph
+    // against what the model returned. Returns { toRemove, toAdd } each an array
+    // of { sourcePort, targetId }. Used by Tier 3 (rewire) to apply wire changes.
+    //
+    // validTargetIds is the set of node ids the model actually had in context
+    // (i.e. ids present in the returned "flow"). The model can't see or preserve
+    // connections to nodes outside its selection, so a live connection whose
+    // target is NOT in validTargetIds is left alone even if it's missing from
+    // modelWires — otherwise every out-of-context connection would look like an
+    // unintended removal (e.g. a node wired to a debug node that wasn't selected).
+    function computeWireDiff(nodeId, modelWires, validTargetIds) {
+        var currentByPort = {};
+        RED.nodes.eachLink(function (l) {
+            if (l.source && l.source.id === nodeId) {
+                var port = l.sourcePort || 0;
+                if (!currentByPort[port]) { currentByPort[port] = []; }
+                currentByPort[port].push(l.target.id);
+            }
+        });
+
+        var desiredByPort = {};
+        var wires = Array.isArray(modelWires) ? modelWires : [];
+        wires.forEach(function (targets, port) {
+            if (Array.isArray(targets) && targets.length > 0) {
+                desiredByPort[port] = targets.slice();
+            }
+        });
+
+        var toRemove = [];
+        Object.keys(currentByPort).forEach(function (port) {
+            var portNum = parseInt(port, 10);
+            var curTargets = currentByPort[port];
+            var desTargets = desiredByPort[portNum] || [];
+            curTargets.forEach(function (tid) {
+                if (desTargets.indexOf(tid) === -1 && validTargetIds && validTargetIds[tid]) {
+                    toRemove.push({ sourcePort: portNum, targetId: tid });
+                }
+            });
+        });
+
+        var toAdd = [];
+        Object.keys(desiredByPort).forEach(function (port) {
+            var portNum = parseInt(port, 10);
+            var desTargets = desiredByPort[port];
+            var curTargets = currentByPort[portNum] || [];
+            desTargets.forEach(function (tid) {
+                if (curTargets.indexOf(tid) === -1) {
+                    toAdd.push({ sourcePort: portNum, targetId: tid });
+                }
+            });
+        });
+
+        return { toRemove: toRemove, toAdd: toAdd };
+    }
+
+    function formatDiffVal(v) {
+        if (v === undefined || v === null) { return "(none)"; }
+        if (typeof v === "object") { return JSON.stringify(v); }
+        return String(v);
+    }
+
+    // Tabbed diff review for a modify response. Shows property diffs for
+    // existing nodes and, when the model also returned new nodes to insert,
+    // a list of those plus the wire connections to be made. The Apply button
+    // label adapts: "Apply Changes" / "Insert Nodes" / "Apply & Insert".
+    function addModifyReview(modifiedFlow, newNodes, newWires, removeNodes, applyCallback) {
+        var $box = el("#fp-messages");
+        if (!$box.length) { return; }
+
+        var nodes = Array.isArray(modifiedFlow) ? modifiedFlow : [];
+        newNodes = Array.isArray(newNodes) ? newNodes : [];
+        newWires = Array.isArray(newWires) ? newWires : [];
+        removeNodes = Array.isArray(removeNodes) ? removeNodes : [];
+
+        // Ids the model actually had in context (the returned "flow"). Used by
+        // computeWireDiff to avoid flagging connections to out-of-context nodes
+        // as removals — the model can't see or preserve those.
+        var validTargetIds = {};
+        nodes.forEach(function (n) { if (n && n.id) { validTargetIds[n.id] = true; } });
+
+        // Match each returned node to its live counterpart and compute diffs.
+        // wiresDiff is computed from the live graph via eachLink, not from
+        // node.wires (which is empty in the live editor — export-time artifact).
+        var nodeDiffs = nodes.map(function (modNode) {
+            var liveNode = findLiveNode(modNode.id);
+            var diff = computeNodeDiff(liveNode || {}, modNode);
+            var wiresDiff = (diff.wiresChanged && liveNode)
+                ? computeWireDiff(modNode.id, modNode.wires, validTargetIds)
+                : { toRemove: [], toAdd: [] };
+            return {
+                modNode: modNode,
+                liveNode: liveNode,
+                propertyChanges: diff.propertyChanges,
+                wiresChanged: diff.wiresChanged,
+                wiresDiff: wiresDiff,
+                name: modNode.name || (liveNode && liveNode.name) || "",
+                type: modNode.type || (liveNode && liveNode.type) || ""
+            };
+        });
+
+        var totalPropChanges = nodeDiffs.reduce(function (s, d) {
+            return s + d.propertyChanges.length;
+        }, 0);
+        var nodesWithChanges = nodeDiffs.filter(function (d) {
+            return d.propertyChanges.length > 0;
+        }).length;
+        var missingLive = nodeDiffs.some(function (d) { return !d.liveNode; });
+        var hasPropChanges = totalPropChanges > 0;
+        var hasWireChanges = nodeDiffs.some(function (d) {
+            return d.wiresDiff && (d.wiresDiff.toRemove.length > 0 || d.wiresDiff.toAdd.length > 0);
+        });
+        var hasNewNodes = newNodes.length > 0;
+        var hasRemoveNodes = removeNodes.length > 0;
+        var hasAnyChanges = hasPropChanges || hasWireChanges || hasNewNodes || hasRemoveNodes;
+
+        var $msg = $("<div>").addClass("fp-message fp-review");
+        $("<div>").addClass("fp-label").text("MODIFY FLOW — REVIEW CHANGES").appendTo($msg);
+
+        var $tabSummary = $("<button>").addClass("fp-tab fp-tab-active").attr("type", "button").text("Summary");
+        var $tabJson = $("<button>").addClass("fp-tab").attr("type", "button").text("JSON");
+        $("<div>").addClass("fp-tabs").append($tabSummary, $tabJson).appendTo($msg);
+
+        var $summaryPanel = $("<div>").addClass("fp-tab-panel");
+        var $jsonPanel = $("<div>").addClass("fp-tab-panel fp-hidden");
+        $msg.append($summaryPanel, $jsonPanel);
+
+        // ---- Summary tab: property diffs for existing nodes ----
+        // Only show this section when there are actual property changes —
+        // "0 of N will change" is confusing when we're purely inserting or rewiring.
+        if (hasPropChanges) {
+            $("<div>").addClass("fp-review-count")
+                .text(nodesWithChanges + " of " + nodes.length + " node(s) will change:")
+                .appendTo($summaryPanel);
+            nodeDiffs.forEach(function (d) {
+                if (d.propertyChanges.length === 0) { return; }
+                var $section = $("<div>").addClass("fp-diff-node").appendTo($summaryPanel);
+                var title = d.type + (d.name ? " — \"" + d.name + "\"" : "");
+                $("<div>").addClass("fp-diff-node-title").text(title).appendTo($section);
+                if (!d.liveNode) {
+                    $("<div>").addClass("fp-diff-warn")
+                        .text("⚠ Node not found in editor (id: " + d.modNode.id + ")")
+                        .appendTo($section);
+                    return;
+                }
+                d.propertyChanges.forEach(function (c) {
+                    var $row = $("<div>").addClass("fp-diff-row").appendTo($section);
+                    $("<span>").addClass("fp-diff-key").text(c.key).appendTo($row);
+                    $("<span>").addClass("fp-diff-old").text(formatDiffVal(c.oldVal)).appendTo($row);
+                    $("<span>").addClass("fp-diff-arrow").text("→").appendTo($row);
+                    $("<span>").addClass("fp-diff-new").text(formatDiffVal(c.newVal)).appendTo($row);
+                });
+            });
+        }
+
+        // ---- Summary tab: wiring changes (Tier 3) ----
+        // Shown when model changed wires on existing nodes. Removed wires appear
+        // in the old column (red strikethrough); added wires in the new column (green).
+        if (hasWireChanges) {
+            var sectionTop = hasPropChanges ? "12px" : "0";
+            $("<div>").addClass("fp-review-count").css("margin-top", sectionTop)
+                .text("Wiring changes:")
+                .appendTo($summaryPanel);
+            nodeDiffs.forEach(function (d) {
+                var wd = d.wiresDiff;
+                if (!wd || (!wd.toRemove.length && !wd.toAdd.length)) { return; }
+                var $section = $("<div>").addClass("fp-diff-node").appendTo($summaryPanel);
+                var title = d.type + (d.name ? " — \"" + d.name + "\"" : "");
+                $("<div>").addClass("fp-diff-node-title").text(title).appendTo($section);
+                wd.toRemove.forEach(function (entry) {
+                    var tgt = RED.nodes.node ? RED.nodes.node(entry.targetId) : null;
+                    var tgtLabel = tgt ? (tgt.name || tgt.type || entry.targetId) : entry.targetId;
+                    var $row = $("<div>").addClass("fp-diff-row").appendTo($section);
+                    $("<span>").addClass("fp-diff-key").text("port " + entry.sourcePort).appendTo($row);
+                    $("<span>").addClass("fp-diff-old").text("→ " + tgtLabel).appendTo($row);
+                    $("<span>").addClass("fp-diff-arrow").text("✕").appendTo($row);
+                    $("<span>").addClass("fp-diff-new").text("").appendTo($row);
+                });
+                wd.toAdd.forEach(function (entry) {
+                    var tgt = RED.nodes.node ? RED.nodes.node(entry.targetId) : null;
+                    var tgtLabel = tgt ? (tgt.name || tgt.type || entry.targetId) : entry.targetId;
+                    var $row = $("<div>").addClass("fp-diff-row").appendTo($section);
+                    $("<span>").addClass("fp-diff-key").text("port " + entry.sourcePort).appendTo($row);
+                    $("<span>").addClass("fp-diff-old").text("").appendTo($row);
+                    $("<span>").addClass("fp-diff-arrow").text("→").appendTo($row);
+                    $("<span>").addClass("fp-diff-new").text(tgtLabel).appendTo($row);
+                });
+            });
+        }
+
+        // ---- Summary tab: nodes to remove (Tier 4) ----
+        if (hasRemoveNodes) {
+            var rmTop = (hasPropChanges || hasWireChanges) ? "12px" : "0";
+            $("<div>").addClass("fp-review-count fp-diff-warn").css("margin-top", rmTop)
+                .text(removeNodes.length + " node(s) to remove:")
+                .appendTo($summaryPanel);
+            var $rmList = $("<ul>").addClass("fp-review-list").appendTo($summaryPanel);
+            removeNodes.forEach(function (id) {
+                var lv = RED.nodes.node ? RED.nodes.node(id) : null;
+                var label = lv ? ((lv.name || lv.type || id) + " (" + id + ")") : id + " (not found)";
+                $("<li>").addClass("fp-diff-warn").text("✕ " + label).appendTo($rmList);
+            });
+            $("<div>").addClass("fp-diff-warn").css("margin-top", "4px")
+                .text("All wires to/from removed nodes will also be deleted.")
+                .appendTo($summaryPanel);
+        }
+
+        // ---- Summary tab: new nodes to insert ----
+        if (hasNewNodes) {
+            var insTop = (hasPropChanges || hasWireChanges || hasRemoveNodes) ? "12px" : "0";
+            $("<div>").addClass("fp-review-count").css("margin-top", insTop)
+                .text(newNodes.length + " node(s) to insert:")
+                .appendTo($summaryPanel);
+            var $newList = $("<ul>").addClass("fp-review-list").appendTo($summaryPanel);
+            newNodes.forEach(function (n) {
+                $("<li>").text((n.type || "unknown") + (n.name ? " — \"" + n.name + "\"" : "")).appendTo($newList);
+            });
+            if (newWires.length > 0) {
+                $("<div>").addClass("fp-review-count").css("margin-top", "8px")
+                    .text(newWires.length + " wire connection(s):")
+                    .appendTo($summaryPanel);
+                var $wireList = $("<ul>").addClass("fp-review-list").appendTo($summaryPanel);
+                newWires.forEach(function (wire) {
+                    var fromLabel = resolveWireRef(wire.from, newNodes);
+                    var toLabel = resolveWireRef(wire.to, newNodes);
+                    var portNote = (wire.fromPort && wire.fromPort > 0) ? " [port " + wire.fromPort + "]" : "";
+                    $("<li>").text(fromLabel + portNote + " → " + toLabel).appendTo($wireList);
+                });
+            }
+        }
+
+        // ---- JSON tab ----
+        var jsonPayload = (hasNewNodes || hasRemoveNodes)
+            ? { modifiedNodes: nodes, newNodes: newNodes, newWires: newWires, removeNodes: removeNodes }
+            : nodes;
+        var jsonText = JSON.stringify(jsonPayload, null, 2);
+        var $copyBtn = $("<button>")
+            .addClass("red-ui-button red-ui-button-small")
+            .attr("type", "button")
+            .text("Copy")
+            .on("click", function () { copyToClipboard($copyBtn, jsonText); });
+        $("<div>").addClass("fp-json-toolbar").append($copyBtn).appendTo($jsonPanel);
+        $("<pre>").addClass("fp-json").text(jsonText).appendTo($jsonPanel);
+
+        function activateTab(showSummary) {
+            $tabSummary.toggleClass("fp-tab-active", showSummary);
+            $tabJson.toggleClass("fp-tab-active", !showSummary);
+            $summaryPanel.toggleClass("fp-hidden", !showSummary);
+            $jsonPanel.toggleClass("fp-hidden", showSummary);
+        }
+        $tabSummary.on("click", function () { activateTab(true); });
+        $tabJson.on("click", function () { activateTab(false); });
+
+        // ---- Action row ----
+        var $actions = $("<div>").addClass("fp-review-actions").appendTo($msg);
+        if (!hasAnyChanges) {
+            $("<div>").addClass("fp-review-hint")
+                .text("No changes detected — nothing to apply.")
+                .appendTo($actions);
+        } else if (missingLive && (hasPropChanges || hasWireChanges)) {
+            $("<div>").addClass("fp-warning")
+                .text("One or more nodes could not be found in the editor. Cannot apply safely.")
+                .appendTo($actions);
+        } else {
+            var hasMutations = hasPropChanges || hasWireChanges || hasRemoveNodes;
+            var btnLabel = (hasMutations && hasNewNodes) ? "Apply & Insert"
+                : hasMutations ? "Apply Changes"
+                : "Insert Nodes";
+            var $applyBtn = $("<button>")
+                .addClass("red-ui-button red-ui-button-primary")
+                .attr("type", "button")
+                .text(btnLabel)
+                .on("click", function () {
+                    $applyBtn.prop("disabled", true).text("Applying…");
+                    if (hasMutations && applyCallback) { applyCallback(nodeDiffs, removeNodes, null); }
+                    if (hasNewNodes) { applyInsertions(newNodes, newWires); }
+                    $applyBtn.text("Done ✓");
+                });
+            $actions.append($applyBtn);
+            var hintParts = [];
+            if (hasPropChanges || hasWireChanges) { hintParts.push("changes mutate live nodes"); }
+            if (hasRemoveNodes) { hintParts.push("removals delete nodes"); }
+            if (hasNewNodes) { hintParts.push("insertions add new nodes"); }
+            var hintText = "Review above — " + hintParts.join(", ") + ". Ctrl+Z to undo.";
+            $("<span>").addClass("fp-review-hint").text(hintText).appendTo($actions);
+        }
+
+        $box.append($msg);
+        $box.scrollTop($box[0].scrollHeight);
+    }
+
+    // Apply mechanism covering all Phase 5 tiers:
+    //   Tier 1 — property changes: mutate live node + {t:"edit"} history entry
+    //   Tier 3 — wire changes: removeLink/addLink + {t:"add", removedLinks} entry
+    //   Tier 4 — node removals: collect links, removeLink, remove node + {t:"delete"} entry
+    // One history entry per node per type so Ctrl+Z steps back through them cleanly.
+    function applyModifications(nodeDiffs, removeNodes, $applyBtn) {
+        var propApplied = 0;
+        var wireNodesApplied = 0;
+        var nodesRemoved = 0;
+        var failed = [];
+        removeNodes = Array.isArray(removeNodes) ? removeNodes : [];
+
+        // --- Tier 1: property changes ---
+        nodeDiffs.forEach(function (d) {
+            if (d.propertyChanges.length === 0) { return; }
+            var liveNode = findLiveNode(d.modNode.id);
+            if (!liveNode) { failed.push(d.modNode.id); return; }
+
+            var oldValues = {};
+            d.propertyChanges.forEach(function (c) { oldValues[c.key] = liveNode[c.key]; });
+            d.propertyChanges.forEach(function (c) { liveNode[c.key] = c.newVal; });
+
+            // Switch nodes derive their port count from rules.length (the edit
+            // dialog's "outputCount" map assigns each rule its own output and
+            // writes the resulting count to node.outputs on save). FlowPilot's
+            // direct mutation above changes "rules" but never touches
+            // "outputs", leaving the canvas showing the old port count even
+            // though the new wires/rules are correct. Recompute it here so
+            // RED.view.redraw(true) (below) rebuilds the ports - the redraw
+            // loop rebuilds a node's output ports whenever __outputs__.length
+            // !== d.outputs.
+            if (liveNode.type === "switch" && Array.isArray(liveNode.rules) &&
+                    liveNode.rules.length !== liveNode.outputs) {
+                if (!oldValues.hasOwnProperty("outputs")) { oldValues.outputs = liveNode.outputs; }
+                liveNode.outputs = liveNode.rules.length;
+            }
+
+            liveNode.changed = true;
+            liveNode.dirty = true;
+            RED.history.push({
+                t: "edit",
+                node: liveNode,
+                changes: oldValues,
+                dirty: RED.nodes.dirty()
+            });
+            propApplied++;
+        });
+
+        // --- Tier 3: wire changes ---
+        // removeLink old + addLink new, then push ONE {t:"add", removedLinks} entry
+        // per node. NR's undo for this shape removes the new links AND restores
+        // the old ones — confirmed via the history spike (removedLinks field is
+        // present on every "add" wire event).
+        nodeDiffs.forEach(function (d) {
+            var wd = d.wiresDiff;
+            if (!wd || (!wd.toRemove.length && !wd.toAdd.length)) { return; }
+            var liveNode = findLiveNode(d.modNode.id);
+            if (!liveNode) { return; }
+
+            var removedLinks = [];
+            var addedLinks = [];
+
+            wd.toRemove.forEach(function (entry) {
+                var found = null;
+                RED.nodes.eachLink(function (l) {
+                    if (found) { return; }
+                    if (l.source && l.source.id === d.modNode.id &&
+                            (l.sourcePort || 0) === entry.sourcePort &&
+                            l.target && l.target.id === entry.targetId) {
+                        found = l;
+                    }
+                });
+                if (found) {
+                    RED.nodes.removeLink(found);
+                    removedLinks.push(found);
+                }
+            });
+
+            wd.toAdd.forEach(function (entry) {
+                var toNode = (RED.nodes && RED.nodes.node) ? RED.nodes.node(entry.targetId) : null;
+                if (!toNode) { return; }
+                var link = { source: liveNode, sourcePort: entry.sourcePort, target: toNode };
+                try {
+                    RED.nodes.addLink(link);
+                    addedLinks.push(link);
+                } catch (e) {
+                    addMessage("error", "Failed to add wire: " + (e.message || e));
+                }
+            });
+
+            if (removedLinks.length || addedLinks.length) {
+                RED.history.push({
+                    t: "add",
+                    links: addedLinks,
+                    removedLinks: removedLinks,
+                    dirty: RED.nodes.dirty()
+                });
+                wireNodesApplied++;
+            }
+        });
+
+        // --- Tier 4: node removals ---
+        // Collect connected links BEFORE removing anything (for the history entry),
+        // then remove the node — RED.nodes.remove(id) cleans up its own links
+        // internally. RED.nodes.remove(id) takes an ID STRING (not a node object —
+        // confirmed via red.js: removeNode(id) does `allNodes.hasNode(id)`, which
+        // a node object fails silently, making it a no-op with no error). Push one
+        // compound {t:"delete"} entry per node so a single Ctrl+Z restores both
+        // the node and its links.
+        //
+        // Junction nodes (wire-splice points) are removed via
+        // RED.nodes.removeJunction(junctionObj) (object, not id), with the
+        // history entry's junction going in `junctions`, not `nodes` —
+        // findLiveNode's junction-registry fallback returns the junction
+        // object itself, which doubles as the isJunction check via .type.
+        removeNodes.forEach(function (id) {
+            var liveNode = findLiveNode(id);
+            var isJunction = !!(liveNode && liveNode.type === "junction");
+
+            if (!liveNode) { failed.push(id); return; }
+
+            var connectedLinks = [];
+            RED.nodes.eachLink(function (l) {
+                if ((l.source && l.source.id === id) || (l.target && l.target.id === id)) {
+                    connectedLinks.push(l);
+                }
+            });
+
+            try {
+                if (isJunction) {
+                    RED.nodes.removeJunction(liveNode);
+                } else {
+                    RED.nodes.remove(liveNode.id);
+                }
+            } catch (e) {
+                addMessage("error", "Failed to remove node " + id + ": " + (e.message || e));
+                return;
+            }
+
+            RED.history.push({
+                t: "delete",
+                nodes: isJunction ? [] : [liveNode],
+                links: connectedLinks,
+                groups: [],
+                junctions: isJunction ? [liveNode] : [],
+                subflow: { id: undefined, instances: [] },
+                subflowInputs: [],
+                subflowOutputs: [],
+                dirty: RED.nodes.dirty()
+            });
+            nodesRemoved++;
+        });
+
+        RED.nodes.dirty(true);
+        RED.view.redraw(true);
+
+        if ($applyBtn) { $applyBtn.prop("disabled", true).text("Applied ✓"); }
+
+        var parts = [];
+        if (propApplied) { parts.push("changes to " + propApplied + " node(s)"); }
+        if (wireNodesApplied) { parts.push("wiring updates on " + wireNodesApplied + " node(s)"); }
+        if (nodesRemoved) { parts.push("removed " + nodesRemoved + " node(s)"); }
+
+        if (failed.length) {
+            addMessage("error",
+                (parts.length ? "Applied: " + parts.join(", ") + ". " : "") +
+                failed.length + " node(s) not found and skipped: " + failed.join(", "));
+        } else if (parts.length) {
+            // Phase 6 chunk 5: ground follow-up turns ("now undo the topic
+            // change") in what was actually applied.
+            var appliedNote = "Applied: " + parts.join(", ") + ". Use Ctrl+Z to undo.";
+            addMessage("assistant", appliedNote);
+            pushHistory("assistant", appliedNote);
+            updateSelectionStatus();
+        }
+    }
+
+    function modifyFlow() {
+        var context = collectSelectionContext();
+        if (!context || !Array.isArray(context.nodes) || context.nodes.length === 0) {
+            addMessage("error", "Select the node(s) you want to modify first.");
+            return;
+        }
+        var $promptBox = el("#fp-prompt");
+        var instruction = $promptBox.length ? $promptBox.val().trim() : "";
+        if (!instruction) {
+            addMessage("error", "Describe what you want to change.");
+            return;
+        }
+        var label = "Modify: " + instruction + contextAttachmentNote(context);
+        addMessage("user", label);
+        pushHistory("user", label);
+        $promptBox.val("");
+
+        setBusy(true);
+        showPending();
+        var historyPayload = buildHistoryPayload();
+        ajaxJson("POST", "flowpilot/modify", {
+            prompt: instruction, context: context,
+            history: historyPayload.messages, historyTruncated: historyPayload.truncated
+        }, function (data) {
+            hidePending();
+
+            // Phase 6 chunk 3: the model can ask a clarifying question instead
+            // of proposing changes. Render it as a normal assistant message and
+            // leave Modify armed so the user's next Send answers it.
+            if (data.question) {
+                var qText = (data.explanation ? data.explanation + "\n\n" : "") + data.question;
+                addMessage("assistant", qText);
+                pushHistory("assistant", qText);
+                setBusy(false);
+                updateSelectionStatus();
+                return;
+            }
+
+            addMessage("assistant", data.explanation || "(no explanation returned)");
+            pushHistory("assistant", data.explanation || "(no explanation returned)");
+            addModifyReview(data.flow, data.newNodes || [], data.newWires || [], data.removeNodes || [], applyModifications);
+            setBusy(false);
+            updateSelectionStatus();
+        }, function (msg, xhr) {
+            hidePending();
+            var raw = xhr && xhr.responseJSON && xhr.responseJSON.raw;
+            addMessage("error", msg);
+            if (raw) { addGeneratedJson(raw, true); }
+            setBusy(false);
+        });
+    }
+
+    // Render generated flow JSON in a preformatted, copyable block. Used for
+    // the raw-response fallback when the model's reply couldn't be parsed.
+    function addGeneratedJson(flowOrRaw, isRaw) {
+        var $box = el("#fp-messages");
+        if (!$box.length) { return; }
+        var text = isRaw ? String(flowOrRaw)
+            : JSON.stringify(flowOrRaw, null, 2);
+
+        var $msg = $("<div>").addClass("fp-message");
+        $("<div>").addClass("fp-label").text(isRaw ? "RAW RESPONSE" : "GENERATED FLOW (JSON)").appendTo($msg);
+        $("<pre>").addClass("fp-json").text(text).appendTo($msg);
+        $box.append($msg);
+        $box.scrollTop($box[0].scrollHeight);
+    }
+
+    // ---- Phase 4: pre-import validation ---------------------------------
+    // Static list of Node-RED's built-in node types, used only to classify a
+    // generated type as "core" vs "non-core but installed". The editor's node
+    // registry can tell us whether a type is INSTALLED (RED.nodes.getType),
+    // but not whether it ships with Node-RED itself — there is no documented
+    // API for that, so a maintained list is the simple, stable answer (it
+    // mirrors the same set the generation prompt steers the model toward).
+    var CORE_NODE_TYPES = {
+        "inject": true, "debug": true, "complete": true, "catch": true, "status": true,
+        "link in": true, "link out": true, "link call": true, "comment": true,
+        "junction": true, "unknown": true,
+        "function": true, "switch": true, "change": true, "range": true, "template": true,
+        "mqtt in": true, "mqtt out": true, "mqtt-broker": true,
+        "http in": true, "http response": true, "http request": true,
+        "websocket in": true, "websocket out": true,
+        "websocket-listener": true, "websocket-client": true,
+        "tcp in": true, "tcp out": true, "tcp request": true,
+        "udp in": true, "udp out": true, "tls-config": true, "httpproxy": true,
+        "split": true, "join": true, "sort": true, "batch": true,
+        "csv": true, "html": true, "json": true, "xml": true, "yaml": true,
+        "file": true, "file in": true, "watch": true, "tail": true,
+        "exec": true, "delay": true, "trigger": true
+    };
+
+    // Checks the two things only the live editor can tell us before import:
+    // (1) wire integrity — every wire target id must exist in the generated
+    // set (the model can hallucinate ids); (2) node-type classification —
+    // core / non-core-but-installed / not-installed, via RED.nodes.getType.
+    // Returns per-node summary entries plus separated warning/problem lists
+    // so the review UI can render them and decide whether import is offered.
+    function validateGeneratedFlow(flow) {
+        var nodes = Array.isArray(flow) ? flow : [];
+        var ids = {};
+        nodes.forEach(function (n) {
+            if (n && n.id) { ids[n.id] = true; }
+        });
+
+        var summary = [];
+        var typeWarnings = [];
+        var brokenWires = [];
+
+        nodes.forEach(function (n) {
+            if (!n || !n.id || !n.type) { return; }
+
+            var isCore = !!CORE_NODE_TYPES[n.type];
+            var isInstalled = !!RED.nodes.getType(n.type);
+            var status = isCore ? "core" : (isInstalled ? "non-core-installed" : "not-installed");
+
+            var entry = { id: n.id, type: n.type, name: n.name || "", status: status };
+            summary.push(entry);
+            if (status !== "core") { typeWarnings.push(entry); }
+
+            (Array.isArray(n.wires) ? n.wires : []).forEach(function (port) {
+                (Array.isArray(port) ? port : []).forEach(function (targetId) {
+                    if (!ids[targetId]) {
+                        brokenWires.push({ from: n.id, type: n.type, target: targetId });
+                    }
+                });
+            });
+        });
+
+        return { summary: summary, typeWarnings: typeWarnings, brokenWires: brokenWires };
+    }
+
+    // The generation prompt deliberately omits x/y ("the editor assigns those
+    // on import"), but RED.view.importNodes does NOT auto-arrange nodes that
+    // lack coordinates — it just places them on top of each other. So we lay
+    // them out ourselves: left-to-right by topological depth (column = longest
+    // distance from a node with no incoming wire in this set), stacked
+    // top-to-bottom within a column. Good enough for the "single node / small
+    // group" first-cut scope without needing real graph-layout machinery.
+    // Config nodes (no "wires" array — e.g. mqtt-broker) are left untouched;
+    // they don't live on the canvas and have no x/y/z of their own.
+    function layoutGeneratedFlow(flow) {
+        var COL_WIDTH = 200;
+        var ROW_HEIGHT = 90;
+        var BASE_X = 160;
+        var BASE_Y = 120;
+
+        var nodes = Array.isArray(flow) ? flow : [];
+        var canvasNodes = nodes.filter(function (n) { return n && Array.isArray(n.wires); });
+        var byId = {};
+        canvasNodes.forEach(function (n) { byId[n.id] = n; });
+
+        var incoming = {};
+        canvasNodes.forEach(function (n) { incoming[n.id] = 0; });
+        canvasNodes.forEach(function (n) {
+            n.wires.forEach(function (port) {
+                (Array.isArray(port) ? port : []).forEach(function (targetId) {
+                    if (incoming.hasOwnProperty(targetId)) { incoming[targetId] += 1; }
+                });
+            });
+        });
+
+        // Column = longest path from a root (in-degree 0 within this set).
+        // Relax repeatedly until stable; generated flows are small, so a
+        // simple bounded loop is plenty (and can't hang on a wiring cycle).
+        var column = {};
+        canvasNodes.forEach(function (n) { column[n.id] = incoming[n.id] === 0 ? 0 : -1; });
+        var changed = true;
+        var guard = 0;
+        while (changed && guard <= canvasNodes.length) {
+            changed = false;
+            guard += 1;
+            canvasNodes.forEach(function (n) {
+                var fromCol = column[n.id] < 0 ? 0 : column[n.id];
+                n.wires.forEach(function (port) {
+                    (Array.isArray(port) ? port : []).forEach(function (targetId) {
+                        if (!byId[targetId]) { return; }
+                        if (column[targetId] < fromCol + 1) {
+                            column[targetId] = fromCol + 1;
+                            changed = true;
+                        }
+                    });
+                });
+            });
+        }
+
+        var rowsUsed = {};
+        canvasNodes.forEach(function (n) {
+            var col = column[n.id] < 0 ? 0 : column[n.id];
+            var row = rowsUsed[col] || 0;
+            rowsUsed[col] = row + 1;
+            n.x = BASE_X + col * COL_WIDTH;
+            n.y = BASE_Y + row * ROW_HEIGHT;
+        });
+
+        return nodes;
+    }
+
+    // ---- Phase 4: tabbed review + import ---------------------------------
+    // Hands validated flow JSON to Node-RED's own import mechanism — the same
+    // path the editor's Import menu uses (confirmed live: RED.view.importNodes
+    // exists, attaches the new nodes to the cursor for the user to place with
+    // one click, and registers the whole add as a single native undo step).
+    // generateIds avoids id clashes with existing nodes, matching the behavior
+    // already validated via manual import of a generated flow.
+    function importGeneratedFlow(nodes) {
+        try {
+            RED.view.importNodes(nodes, { generateIds: true });
+            // Phase 6 chunk 5: ground follow-up turns in what was just
+            // imported (placement itself happens on the next canvas click).
+            var n = Array.isArray(nodes) ? nodes.length : 0;
+            var importedNote = "Imported " + n + " node(s) — click the canvas to place them.";
+            addMessage("assistant", importedNote);
+            pushHistory("assistant", importedNote);
+            updateSelectionStatus();
+        } catch (e) {
+            addMessage("error", "Import failed: " + (e && e.message ? e.message : String(e)));
+        }
+    }
+
+    // Copies text to the clipboard and gives the triggering button brief
+    // "Copied!" feedback. Tries the modern Clipboard API first — but that
+    // requires a "secure context" (HTTPS or localhost), which this editor may
+    // not be served over — and falls back to the long-supported
+    // execCommand("copy") approach via a temporary off-screen textarea, which
+    // works regardless of context. Plain clipboard access is a generic browser
+    // feature, not an editor capability, so there's nothing Node-RED-specific
+    // to reuse here.
+    function copyToClipboard($btn, text) {
+        var original = $btn.data("fp-label");
+        if (original === undefined) {
+            original = $btn.text();
+            $btn.data("fp-label", original);
+        }
+
+        function showCopied() {
+            $btn.text("Copied!");
+            setTimeout(function () { $btn.text(original); }, 1500);
+        }
+
+        function legacyCopy() {
+            var $ta = $("<textarea>").val(text)
+                .css({ position: "fixed", top: "-1000px", left: "-1000px" });
+            $("body").append($ta);
+            $ta[0].select();
+            var ok = false;
+            try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+            $ta.remove();
+            if (ok) { showCopied(); }
+            else { addMessage("error", "Couldn't copy to clipboard."); }
+        }
+
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(showCopied, legacyCopy);
+        } else {
+            legacyCopy();
+        }
+    }
+
+    // Tabbed Summary/JSON review for a generated flow, modeled on the look of
+    // Node-RED's Export dialog but built from FlowPilot's own bespoke markup
+    // (fp-tab) themed with the editor's --red-ui-* variables — see the handoff
+    // doc for why we don't reuse Node-RED's internal tab/export classes.
+    // Summary lists each node with type warnings flagged inline plus a
+    // detail box; JSON shows the raw, copyable flow. Broken wire references
+    // block the "Add to workspace" action (the JSON itself is malformed, not
+    // a normal "node not installed" situation); type warnings do not — the
+    // user is informed and decides whether to proceed or regenerate.
+    function addGeneratedReview(flow) {
+        var $box = el("#fp-messages");
+        if (!$box.length) { return; }
+
+        var nodes = Array.isArray(flow) ? flow : [];
+        var v = validateGeneratedFlow(nodes);
+
+        var $msg = $("<div>").addClass("fp-message fp-review");
+        $("<div>").addClass("fp-label").text("GENERATED FLOW — REVIEW").appendTo($msg);
+
+        var $tabSummary = $("<button>").addClass("fp-tab fp-tab-active").attr("type", "button").text("Summary");
+        var $tabJson = $("<button>").addClass("fp-tab").attr("type", "button").text("JSON");
+        $("<div>").addClass("fp-tabs").append($tabSummary, $tabJson).appendTo($msg);
+
+        var $summaryPanel = $("<div>").addClass("fp-tab-panel");
+        var $jsonPanel = $("<div>").addClass("fp-tab-panel fp-hidden");
+        $msg.append($summaryPanel, $jsonPanel);
+
+        // ---- Summary tab ----
+        $("<div>").addClass("fp-review-count")
+            .text("Generated " + nodes.length + " node" + (nodes.length === 1 ? "" : "s") + ":")
+            .appendTo($summaryPanel);
+
+        var $list = $("<ul>").addClass("fp-review-list").appendTo($summaryPanel);
+        v.summary.forEach(function (item) {
+            var $li = $("<li>").text(item.type + (item.name ? " — \"" + item.name + "\"" : ""));
+            if (item.status === "not-installed") {
+                $("<span>").addClass("fp-type-flag").text(" ⚠ not installed").appendTo($li);
+            } else if (item.status === "non-core-installed") {
+                $("<span>").addClass("fp-type-flag").text(" ⚠ non-core").appendTo($li);
+            }
+            $list.append($li);
+        });
+
+        if (v.typeWarnings.length) {
+            var $warn = $("<div>").addClass("fp-warning fp-review-warning").appendTo($summaryPanel);
+            $("<strong>").text("Type warnings — review before adding:").appendTo($warn);
+            var $wlist = $("<ul>").appendTo($warn);
+            v.typeWarnings.forEach(function (w) {
+                var reason = w.status === "not-installed"
+                    ? "not installed — will appear as a broken placeholder until the module is added"
+                    : "installed, but not a core Node-RED type — may be less stable across versions";
+                $("<li>").text(w.type + ": " + reason).appendTo($wlist);
+            });
+            $("<div>").text("You can add it anyway, or ask FlowPilot to regenerate using only core nodes.").appendTo($warn);
+        }
+
+        // ---- JSON tab ----
+        var jsonText = JSON.stringify(nodes, null, 2);
+        var $copyBtn = $("<button>")
+            .addClass("red-ui-button red-ui-button-small")
+            .attr("type", "button")
+            .text("Copy")
+            .on("click", function () { copyToClipboard($copyBtn, jsonText); });
+        $("<div>").addClass("fp-json-toolbar").append($copyBtn).appendTo($jsonPanel);
+        $("<pre>").addClass("fp-json").text(jsonText).appendTo($jsonPanel);
+
+        function activateTab(showSummary) {
+            $tabSummary.toggleClass("fp-tab-active", showSummary);
+            $tabJson.toggleClass("fp-tab-active", !showSummary);
+            $summaryPanel.toggleClass("fp-hidden", !showSummary);
+            $jsonPanel.toggleClass("fp-hidden", showSummary);
+        }
+        $tabSummary.on("click", function () { activateTab(true); });
+        $tabJson.on("click", function () { activateTab(false); });
+
+        // ---- Action row ----
+        var $actions = $("<div>").addClass("fp-review-actions").appendTo($msg);
+        if (v.brokenWires.length) {
+            $("<div>").addClass("fp-warning").text(
+                "This flow has " + v.brokenWires.length + " wire(s) pointing to node ids " +
+                "that don't exist in the generated set, so it can't be safely imported. " +
+                "Try asking FlowPilot to regenerate it."
+            ).appendTo($actions);
+        } else if (!nodes.length) {
+            $("<div>").addClass("fp-warning").text("No nodes were generated — nothing to add.").appendTo($actions);
+        } else {
+            var $addBtn = $("<button>")
+                .addClass("red-ui-button red-ui-button-primary")
+                .attr("type", "button")
+                .text("Add to workspace")
+                .on("click", function () {
+                    $addBtn.prop("disabled", true).text("Click the canvas to place…");
+                    importGeneratedFlow(nodes);
+                });
+            $actions.append($addBtn);
+            $("<span>").addClass("fp-review-hint")
+                .text("Opens Node-RED's normal place-at-cursor import — click the canvas to drop the nodes.")
+                .appendTo($actions);
+        }
+
+        $box.append($msg);
+        $box.scrollTop($box[0].scrollHeight);
+    }
+
+    // ---- Plugin registration --------------------------------------------
+
+    RED.plugins.registerPlugin("flowpilot", {
+        type: "node-red-plugin",
+        onadd: function () {
+            // If onadd has already run this session, do nothing. This is the
+            // primary fix for the duplicate #fp-root: the second invocation
+            // returns before building or inserting any DOM.
+            if (initialised) { return; }
+            initialised = true;
+
+            // Belt-and-suspenders: clear any orphan left by a prior version
+            // before this guard existed. Harmless once the guard is in place.
+            try { RED.sidebar.removeTab("flowpilot"); } catch (e) {}
+            $("#fp-root").remove();
+
+            var content = $(
+                '<div id="fp-root">' +
+                '  <div class="fp-header">' +
+                '    <div class="fp-header-row">' +
+                '      <div class="fp-logo">FP</div>' +
+                '      <div class="fp-heading">' +
+                '        <div class="fp-title">FlowPilot</div>' +
+                '        <div class="fp-subtitle">Read-only copilot</div>' +
+                '      </div>' +
+                '      <div class="fp-view-buttons">' +
+                '        <button id="fp-clear-chat" class="red-ui-button red-ui-button-small" type="button" title="Clear chat and start a fresh conversation (resets memory)"><i class="fa fa-eraser"></i></button>' +
+                '        <button id="fp-show-chat" class="red-ui-button red-ui-button-small" type="button" title="Chat"><i class="fa fa-comments"></i></button>' +
+                '        <button id="fp-show-settings" class="red-ui-button red-ui-button-small" type="button" title="Settings"><i class="fa fa-cog"></i></button>' +
+                '      </div>' +
+                '    </div>' +
+                '  </div>' +
+
+                '  <div id="fp-chat-panel" class="fp-panel">' +
+                '    <div id="fp-dev-banner" class="fp-warning">' +
+                '      <strong>Development/test only.</strong> ' +
+                '      Anything you send may leave this Node-RED instance. ' +
+                '      Don\'t include credentials or proprietary data; local/private AI recommended.' +
+                '    </div>' +
+                '    <div id="fp-messages" class="fp-messages"></div>' +
+                '    <div class="fp-compose">' +
+                '      <div class="fp-action-bar">' +
+                '        <div class="fp-action-group">' +
+                '          <div class="fp-action-label">Query</div>' +
+                '          <div id="fp-intents" class="fp-intents"></div>' +
+                '        </div>' +
+                '        <div class="fp-action-divider"></div>' +
+                '        <div class="fp-action-group">' +
+                '          <div class="fp-action-label">Execute</div>' +
+                '          <div class="fp-intents">' +
+                '            <button id="fp-document" class="red-ui-button red-ui-button-small" type="button" title="Toggle document mode — select nodes, optionally add notes, then hit Send to generate a comment-node explanation">Document</button>' +
+                '            <button id="fp-generate" class="red-ui-button red-ui-button-small" type="button" title="Toggle generate mode, then describe the flow and hit Send">Generate</button>' +
+                '            <button id="fp-modify" class="red-ui-button red-ui-button-small" type="button" title="Toggle modify mode — select node(s), describe the change, then hit Send">Modify</button>' +
+                '          </div>' +
+                '        </div>' +
+                '      </div>' +
+                '      <div id="fp-selection-status" class="fp-selection-status">No nodes selected</div>' +
+                '      <div id="fp-size-status" class="fp-size-status fp-hidden"></div>' +
+                '      <div id="fp-secrets-status" class="fp-secrets-status fp-hidden"></div>' +
+                '      <textarea id="fp-prompt" placeholder="Select nodes for context, or just type a question…"></textarea>' +
+                '      <div class="fp-compose-footer">' +
+                '        <div id="fp-provider-status">Provider: not loaded</div>' +
+                '        <div class="fp-buttons">' +
+                '          <button id="fp-clear-prompt" class="red-ui-button red-ui-button-small" type="button" title="Clear prompt box">✕</button>' +
+                '          <button id="fp-send" class="red-ui-button red-ui-button-primary" type="button">Send</button>' +
+                '        </div>' +
+                '      </div>' +
+                '    </div>' +
+                '  </div>' +
+
+                '  <div id="fp-settings-panel" class="fp-panel fp-hidden">' +
+                '    <div class="fp-warning">' +
+                '      <strong>Provider settings.</strong><br>' +
+                '      Stored locally under the Node-RED user directory in <code>flowpilot/settings.json</code>.' +
+                '    </div>' +
+                '    <div class="fp-form">' +
+                '      <div class="fp-settings-section">AI Provider</div>' +
+                '      <label>Active provider</label>' +
+                '      <select id="fp-provider-select"></select>' +
+                '      <div class="fp-provider-actions">' +
+                '        <button id="fp-add-provider" class="red-ui-button red-ui-button-small" type="button">+ Add</button>' +
+                '        <button id="fp-remove-provider" class="red-ui-button red-ui-button-small" type="button">Remove</button>' +
+                '      </div>' +
+                '      <label>Provider Name</label>' +
+                '      <input id="fp-provider-name" type="text" placeholder="LocalAI">' +
+                '      <label>Base URL</label>' +
+                '      <input id="fp-base-url" type="text" placeholder="http://localhost:8080">' +
+                '      <label>API Key</label>' +
+                '      <input id="fp-api-key" type="password" placeholder="Optional">' +
+                '      <label>Model</label>' +
+                '      <input id="fp-model" type="text" placeholder="Model name for this provider">' +
+                '      <label>Temperature</label>' +
+                '      <input id="fp-temperature" type="number" min="0" max="2" step="0.1" placeholder="0.2">' +
+                '      <div class="fp-settings-actions">' +
+                '        <button id="fp-test-provider" class="red-ui-button" type="button" title="Save and send a quick test to this provider">Test provider</button>' +
+                '      </div>' +
+
+                '      <div class="fp-settings-section">System Prompt</div>' +
+                '      <textarea id="fp-system-prompt"></textarea>' +
+
+                '      <div class="fp-settings-section">Context size warnings</div>' +
+                '      <label>Warn above (estimated tokens)</label>' +
+                '      <input id="fp-warn-tokens" type="number" min="0" step="500" placeholder="4000">' +
+                '      <label>Strong warning above (estimated tokens)</label>' +
+                '      <input id="fp-high-tokens" type="number" min="0" step="500" placeholder="8000">' +
+
+                '      <div class="fp-settings-section">Conversation memory</div>' +
+                '      <label>Remember last N exchanges</label>' +
+                '      <input id="fp-history-max" type="number" min="0" step="1" placeholder="10">' +
+                '      <div class="fp-consent-hint">How much of the visible chat is sent back to the ' +
+                '        AI as conversation history with each request (0 = no memory). Older messages ' +
+                '        drop off and the AI is told when that happens. Clear chat (eraser icon) ' +
+                '        resets this entirely.</div>' +
+                '      <label class="fp-checkbox-row">' +
+                '        <input id="fp-streaming-enabled" type="checkbox"> ' +
+                '        Stream chat replies as they generate' +
+                '      </label>' +
+                '      <div class="fp-consent-hint">Only applies to chat replies — Generate, ' +
+                '        Document, and Modify always wait for the full response.</div>' +
+
+                '      <div class="fp-settings-section">Risk warnings</div>' +
+                '      <label class="fp-checkbox-row">' +
+                '        <input id="fp-suppress-warnings" type="checkbox"> ' +
+                '        Hide the recurring credentials/size warning bar' +
+                '      </label>' +
+                '      <div class="fp-consent-hint">To hide the warning, check the box and type ' +
+                '        <strong>I understand the risk</strong> below. ' +
+                '        Anything you send may leave this Node-RED instance.</div>' +
+                '      <input id="fp-suppress-confirm" type="text" placeholder="Type: I understand the risk">' +
+
+                '      <div class="fp-settings-section">Custom intent buttons</div>' +
+                '      <div class="fp-consent-hint">Add your own one-click prompt buttons. ' +
+                '        They appear next to the built-in ones above the prompt.</div>' +
+                '      <div id="fp-custom-intents" class="fp-custom-intents"></div>' +
+                '      <label>New button label</label>' +
+                '      <input id="fp-new-intent-label" type="text" placeholder="e.g. Security review">' +
+                '      <label>Instruction text</label>' +
+                '      <textarea id="fp-new-intent-text" placeholder="What should this button ask the AI to do?"></textarea>' +
+                '      <div class="fp-settings-actions">' +
+                '        <button id="fp-add-intent" class="red-ui-button" type="button">Add button</button>' +
+                '      </div>' +
+
+                '      <div class="fp-settings-actions">' +
+                '        <button id="fp-save-settings" class="red-ui-button red-ui-button-primary" type="button">Save settings</button>' +
+                '      </div>' +
+                '    </div>' +
+                '  </div>' +
+                '</div>'
+            );
+
+            // Keep the closure reference to the *inserted* content.
+            $root = content;
+
+            // ---- Bind events here, after the DOM exists. No inline onclick.
+            content.find("#fp-show-chat").on("click", showChat);
+            content.find("#fp-show-settings").on("click", showSettings);
+            content.find("#fp-clear-chat").on("click", clearChat);
+
+            content.find("#fp-clear-prompt").on("click", function () {
+                el("#fp-prompt").val("").focus();
+            });
+
+            content.find("#fp-send").on("click", function () {
+                if (armedExecuteAction === "generate") {
+                    generate();
+                } else if (armedExecuteAction === "document") {
+                    documentFlow();
+                } else if (armedExecuteAction === "modify") {
+                    modifyFlow();
+                } else {
+                    send("chat");
+                }
+            });
+            content.find("#fp-generate").on("click", function () {
+                setArmedExecuteAction("generate");
+            });
+            content.find("#fp-document").on("click", function () {
+                setArmedExecuteAction("document");
+            });
+            content.find("#fp-modify").on("click", function () {
+                setArmedExecuteAction("modify");
+            });
+
+            // Close the "more query actions" dropdown on any click outside it.
+            // Bound once here (onadd guard above) rather than per-render.
+            $(document).on("click.fpIntentMenu", function () {
+                $(".fp-intent-menu").addClass("fp-hidden");
+            });
+
+            // Provider management.
+            content.find("#fp-provider-select").on("change", function () {
+                switchProvider($(this).val());
+            });
+            content.find("#fp-add-provider").on("click", function () { addProvider(); });
+            content.find("#fp-remove-provider").on("click", function () { removeProvider(); });
+            content.find("#fp-test-provider").on("click", function () { testProvider(); });
+
+            // Re-enable Test provider live as the user types a model.
+            content.find("#fp-model").on("input", function () {
+                el("#fp-test-provider").prop("disabled", !($(this).val() || "").trim());
+            });
+
+            content.find("#fp-save-settings").on("click", function () {
+                saveSettings();
+            });
+            content.find("#fp-add-intent").on("click", function () {
+                addCustomIntent();
+            });
+
+            // Enter-to-send (Shift+Enter for newline) on the prompt box.
+            content.find("#fp-prompt").on("keydown", function (e) {
+                if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    if (armedExecuteAction === "generate") {
+                        generate();
+                    } else if (armedExecuteAction === "document") {
+                        documentFlow();
+                    } else if (armedExecuteAction === "modify") {
+                        modifyFlow();
+                    } else {
+                        send("chat");
+                    }
+                }
+            });
+
+            // Live selection indicator. RED.events fires this whenever the
+            // user changes what's selected on the canvas.
+            RED.events.on("view:selection-changed", updateSelectionStatus);
+
+            // Build intent buttons from built-in INTENTS plus any user-defined
+            // customIntents (loaded from settings). Rebuilt after settings load
+            // /save via renderIntents() so new custom buttons appear without a
+            // reload.
+            renderIntents(content.find("#fp-intents"));
+
+            RED.sidebar.addTab({
+                id: "flowpilot",
+                label: "FlowPilot",
+                name: "FlowPilot",
+                iconClass: "fa fa-paper-plane",
+                content: content
+            });
+
+            loadSettings();
+            updateSelectionStatus();
+            showChat();
+        }
+    });
+})();
+</script>
+
+<style>
+#fp-root {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    background: var(--red-ui-primary-background, #fff);
+    color: var(--red-ui-primary-text-color, #333);
+    overflow: hidden;
+}
+
+.fp-header {
+    padding: 16px;
+    border-bottom: 1px solid var(--red-ui-secondary-border-color, #ddd);
+    background: var(--red-ui-secondary-background, #f8f8f8);
+}
+
+.fp-header-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.fp-logo {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    background: #1f2f46;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+}
+
+.fp-heading {
+    flex: 1;
+    min-width: 0;
+}
+
+.fp-title {
+    font-size: 20px;
+    font-weight: 700;
+}
+
+.fp-subtitle {
+    font-size: 14px;
+    color: var(--red-ui-secondary-text-color, #777);
+}
+
+.fp-view-buttons {
+    display: flex;
+    gap: 6px;
+}
+
+.fp-panel {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.fp-hidden {
+    display: none !important;
+}
+
+.fp-warning {
+    margin: 16px;
+    padding: 12px 14px;
+    border: 1px solid #ff9800;
+    border-radius: 8px;
+    background: rgba(255, 152, 0, 0.12);
+    line-height: 1.45;
+}
+
+.fp-messages {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0 16px 16px 16px;
+}
+
+.fp-message {
+    margin-bottom: 12px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--red-ui-secondary-border-color, #ddd);
+    background: var(--red-ui-secondary-background, #f7f7f7);
+    line-height: 1.45;
+    white-space: pre-wrap;
+}
+
+.fp-label {
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    color: var(--red-ui-secondary-text-color, #888);
+    margin-bottom: 6px;
+}
+
+.fp-user {
+    background: rgba(80, 130, 255, 0.12);
+    border-color: rgba(80, 130, 255, 0.35);
+}
+
+.fp-error {
+    background: rgba(255, 80, 80, 0.12);
+    border-color: rgba(255, 80, 80, 0.65);
+}
+
+/* Pending "typing" indicator — three bouncing dots. */
+.fp-typing {
+    display: flex;
+    gap: 5px;
+    padding: 4px 0;
+}
+
+.fp-typing span {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--red-ui-secondary-text-color, #999);
+    opacity: 0.4;
+    animation: fp-bounce 1.2s infinite ease-in-out;
+}
+
+.fp-typing span:nth-child(2) { animation-delay: 0.18s; }
+.fp-typing span:nth-child(3) { animation-delay: 0.36s; }
+
+@keyframes fp-bounce {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+    30% { transform: translateY(-5px); opacity: 1; }
+}
+
+.fp-json {
+    margin: 0;
+    padding: 10px;
+    border-radius: 6px;
+    background: var(--red-ui-secondary-background, #f0f0f0);
+    border: 1px solid var(--red-ui-secondary-border-color, #ddd);
+    font-family: monospace;
+    font-size: 12px;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+/* Phase 4 review — bespoke tabs styled to sit comfortably in the editor's
+   theme (--red-ui-* variables) without depending on Node-RED's internal
+   tab/export markup, which is undocumented and fragile across versions. */
+.fp-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 10px;
+    border-bottom: 1px solid var(--red-ui-secondary-border-color, #ddd);
+}
+
+.fp-tab {
+    padding: 6px 14px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    color: var(--red-ui-secondary-text-color, #888);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.fp-tab-active {
+    color: var(--red-ui-primary-text-color, #333);
+    border-bottom-color: #1f88e5;
+    font-weight: 600;
+}
+
+.fp-review-count {
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.fp-review-list {
+    margin: 0 0 10px 0;
+    padding-left: 20px;
+}
+
+.fp-review-list li {
+    margin-bottom: 4px;
+}
+
+.fp-type-flag {
+    color: #b35900;
+    font-size: 11px;
+}
+
+.fp-review-warning ul {
+    margin: 6px 0;
+    padding-left: 20px;
+}
+
+.fp-review-actions {
+    margin-top: 12px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.fp-review-hint {
+    font-size: 12px;
+    color: var(--red-ui-secondary-text-color, #888);
+}
+
+.fp-json-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 6px;
+}
+
+.fp-compose {
+    flex-shrink: 0;
+    padding: 14px 16px;
+    border-top: 1px solid var(--red-ui-secondary-border-color, #ddd);
+}
+
+/* Armed Execute action (e.g. Generate toggled on) — filled, distinct from the
+   chat/settings header accent so the two "active" concepts don't look the same. */
+.fp-intents .red-ui-button.fp-action-armed {
+    background: #2a6f4f !important;
+    border-color: #2a6f4f !important;
+    color: #fff !important;
+}
+
+.fp-action-bar {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.fp-action-group {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.fp-action-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--red-ui-secondary-text-color, #888);
+    margin-bottom: 4px;
+}
+
+.fp-action-divider {
+    align-self: stretch;
+    width: 1px;
+    background: var(--red-ui-secondary-border-color, #ddd);
+}
+
+.fp-intents {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+.fp-intent-more-wrap {
+    position: relative;
+    flex: 0 0 auto;
+}
+
+.fp-intent-more {
+    flex: 0 0 auto;
+}
+
+.fp-intent-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 20;
+    margin-top: 4px;
+    min-width: 140px;
+    background: var(--red-ui-primary-background, #fff);
+    border: 1px solid var(--red-ui-secondary-border-color, #ddd);
+    border-radius: 4px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+    padding: 4px 0;
+}
+
+.fp-intent-menu a {
+    display: block;
+    padding: 6px 12px;
+    color: var(--red-ui-primary-text-color, #333);
+    text-decoration: none;
+    white-space: nowrap;
+    font-size: 12px;
+}
+
+.fp-intent-menu a:hover {
+    background: var(--red-ui-secondary-background, #f0f0f0);
+}
+
+.fp-intent-btn {
+    flex: 0 0 auto;
+}
+
+.fp-intent-custom {
+    border-style: dashed !important;
+}
+
+/* Active view button (chat/settings) — filled, using the header color. */
+.fp-view-buttons .red-ui-button.fp-active {
+    background: #1f2f46 !important;
+    border-color: #1f2f46 !important;
+    color: #fff !important;
+}
+
+.fp-view-buttons .red-ui-button.fp-active i {
+    color: #fff !important;
+}
+
+/* De-emphasize Test relative to the primary Send action. */
+/* Provider selector + actions in settings. */
+#fp-provider-select {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px;
+    border-radius: 5px;
+    border: 1px solid var(--red-ui-form-input-border-color, #ccc);
+    background: var(--red-ui-form-input-background, #fff);
+    color: var(--red-ui-form-input-text-color, #333);
+}
+
+.fp-provider-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.fp-custom-intents {
+    margin: 8px 0;
+}
+
+.fp-custom-intent-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 8px;
+    margin-bottom: 4px;
+    border: 1px solid var(--red-ui-secondary-border-color, #ddd);
+    border-radius: 5px;
+}
+
+.fp-custom-intent-label {
+    font-weight: 600;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.fp-selection-status {
+    font-size: 12px;
+    margin-bottom: 8px;
+    color: var(--red-ui-secondary-text-color, #888);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.fp-selection-status::before {
+    content: "";
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--red-ui-secondary-border-color, #ccc);
+}
+
+.fp-selection-status.fp-has-selection {
+    color: var(--red-ui-primary-text-color, #333);
+    font-weight: 600;
+}
+
+.fp-selection-status.fp-has-selection::before {
+    background: #4caf50;
+}
+
+.fp-size-status {
+    font-size: 12px;
+    margin-bottom: 6px;
+    color: var(--red-ui-secondary-text-color, #888);
+}
+
+.fp-size-status.fp-size-warn {
+    color: #b8860b;
+    font-weight: 600;
+}
+
+.fp-size-status.fp-size-high {
+    color: #c0392b;
+    font-weight: 600;
+}
+
+.fp-secrets-status {
+    font-size: 12px;
+    margin-bottom: 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: rgba(255, 152, 0, 0.12);
+    border: 1px solid rgba(255, 152, 0, 0.5);
+    color: var(--red-ui-primary-text-color, #333);
+    line-height: 1.4;
+}
+
+.fp-settings-section {
+    margin-top: 18px;
+    padding-top: 12px;
+    border-top: 1px solid var(--red-ui-secondary-border-color, #ddd);
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.03em;
+    color: var(--red-ui-secondary-text-color, #777);
+}
+
+.fp-checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    margin-top: 12px;
+}
+
+.fp-checkbox-row input {
+    width: auto;
+}
+
+.fp-consent-hint {
+    font-size: 12px;
+    color: var(--red-ui-secondary-text-color, #888);
+    margin: 6px 0;
+    line-height: 1.4;
+}
+
+#fp-prompt {
+    display: block;
+    width: 100%;
+    min-height: 88px;
+    box-sizing: border-box;
+    resize: vertical;
+    padding: 10px;
+    border-radius: 6px;
+    border: 1px solid var(--red-ui-form-input-border-color, #ccc);
+    background: var(--red-ui-form-input-background, #fff);
+    color: var(--red-ui-form-input-text-color, #333);
+    font-family: inherit;
+    font-size: 14px;
+}
+
+.fp-compose-footer {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-top: 10px;
+}
+
+#fp-provider-status {
+    flex: 1;
+    min-width: 0;
+    color: var(--red-ui-secondary-text-color, #777);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.fp-buttons,
+.fp-settings-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.fp-form {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 16px 16px 16px;
+}
+
+.fp-form label {
+    display: block;
+    margin-top: 12px;
+    margin-bottom: 5px;
+    font-weight: 600;
+}
+
+.fp-form input,
+.fp-form textarea {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid var(--red-ui-form-input-border-color, #ccc);
+    background: var(--red-ui-form-input-background, #fff);
+    color: var(--red-ui-form-input-text-color, #333);
+    border-radius: 5px;
+    padding: 8px;
+}
+
+.fp-form textarea {
+    min-height: 180px;
+    resize: vertical;
+    font-family: monospace;
+}
+
+.fp-settings-actions {
+    margin-top: 16px;
+    padding-bottom: 16px;
+}
+
+/* Phase 5: modify diff review */
+.fp-diff-node {
+    margin-bottom: 14px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--red-ui-secondary-border-color, #ddd);
+    background: var(--red-ui-secondary-background, #f7f7f7);
+}
+
+.fp-diff-node-title {
+    font-weight: 600;
+    font-size: 12px;
+    margin-bottom: 8px;
+    color: var(--red-ui-primary-text-color, #333);
+}
+
+.fp-diff-row {
+    display: grid;
+    grid-template-columns: 120px 1fr 20px 1fr;
+    gap: 4px 8px;
+    align-items: baseline;
+    margin-bottom: 5px;
+    font-size: 12px;
+    font-family: monospace;
+}
+
+.fp-diff-key {
+    font-weight: 600;
+    color: var(--red-ui-secondary-text-color, #666);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fp-diff-old {
+    color: #c0392b;
+    text-decoration: line-through;
+    word-break: break-all;
+}
+
+.fp-diff-arrow {
+    color: var(--red-ui-secondary-text-color, #888);
+    text-align: center;
+}
+
+.fp-diff-new {
+    color: #27ae60;
+    font-weight: 600;
+    word-break: break-all;
+}
+
+.fp-diff-unchanged {
+    font-size: 12px;
+    color: var(--red-ui-secondary-text-color, #888);
+    font-style: italic;
+}
+
+.fp-diff-warn {
+    font-size: 12px;
+    color: #b35900;
+    margin-bottom: 6px;
+}
+</style>

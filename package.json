@@ -1,0 +1,44 @@
+{
+  "name": "node-red-contrib-flowpilot",
+  "version": "0.2.1",
+  "description": "FlowPilot for Node-RED - an AI-powered development assistant sidebar",
+  "main": "flowpilot.js",
+  "keywords": [
+    "node-red",
+    "ai",
+    "localai",
+    "openai",
+    "flowpilot"
+  ],
+  "author": "enmanuelest",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/manny-est/node-red-contrib-flowpilot.git"
+  },
+  "homepage": "https://github.com/manny-est/node-red-contrib-flowpilot#readme",
+  "bugs": {
+    "url": "https://github.com/manny-est/node-red-contrib-flowpilot/issues"
+  },
+  "node-red": {
+    "nodes": {
+      "flowpilot": "flowpilot.js"
+    },
+    "plugins": {
+      "flowpilot": "flowpilot.html"
+    }
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "scripts": {
+    "test:ui": "playwright test",
+    "test:ui:headed": "playwright test --headed",
+    "test:ui:debug": "playwright test --debug",
+    "test:ui:docker": "docker run --rm --network host -v \"$PWD\":/work -w /work mcr.microsoft.com/playwright:v1.54.2-noble npm run test:ui",
+    "test:ui:report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0"
+  }
+}
