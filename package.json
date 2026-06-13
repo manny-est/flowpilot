@@ -14,11 +14,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/manny-est/node-red-contrib-flowpilot.git"
+    "url": "https://github.com/manny-est/flowpilot.git"
   },
-  "homepage": "https://github.com/manny-est/node-red-contrib-flowpilot#readme",
+  "homepage": "https://github.com/manny-est/flowpilot#readme",
   "bugs": {
-    "url": "https://github.com/manny-est/node-red-contrib-flowpilot/issues"
+    "url": "https://github.com/manny-est/flowpilot/issues"
   },
   "node-red": {
     "nodes": {
