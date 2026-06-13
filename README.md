@@ -2,6 +2,9 @@
 
 Package: `node-red-contrib-flowpilot`
 
+FlowPilot: AI assistance for Node-RED, designed for builders who want help
+without giving up control.
+
 FlowPilot is an AI-powered development assistant that lives in the Node-RED
 editor sidebar. It talks to any OpenAI-compatible API (OpenAI, LocalAI,
 Ollama, etc.) and helps you generate, modify, document, and discuss your
