@@ -325,7 +325,13 @@ module.exports = function flowPilotRuntime(RED) {
     const first = s.indexOf("{");
     const last = s.lastIndexOf("}");
     if (first === -1 || last === -1 || last < first) {
-      throw new Error("Provider did not return a JSON object.");
+      // A1: no JSON object found at all — flagged separately from a found-
+      // but-unparseable ({...} present, JSON.parse failed) "garbled" error,
+      // so callers can distinguish "model just answered in prose" (tolerate)
+      // from "model's JSON envelope is broken" (still an error).
+      const err = new Error("Provider did not return a JSON object.");
+      err.noJsonFound = true;
+      throw err;
     }
     return JSON.parse(s.slice(first, last + 1));
   }
@@ -353,6 +359,14 @@ module.exports = function flowPilotRuntime(RED) {
     try {
       parsed = extractJsonObject(content);
     } catch (parseErr) {
+      // A1: a response with no JSON envelope at all, but non-empty prose
+      // (analysis, an answer, a question without the envelope) is tolerated —
+      // render it as a normal assistant message and keep the action armed.
+      // Errors stay reserved for empty responses or a found-but-broken {...}.
+      if (parseErr.noJsonFound && content.trim()) {
+        storage.appendAudit(Object.assign({ action: auditAction + "_prose" }, perf));
+        return { prose: content.trim() };
+      }
       storage.appendAudit(Object.assign({ action: auditAction + "_parse_error", error: parseErr.message }, perf));
       const err = new Error("Could not parse a flow from the response: " + parseErr.message);
       err.status = 422;
@@ -426,6 +440,9 @@ module.exports = function flowPilotRuntime(RED) {
       if (generated.question) {
         return res.json({ explanation: generated.explanation, question: generated.question, flow: null });
       }
+      if (generated.prose) {
+        return res.json({ explanation: generated.prose, prose: true, flow: null });
+      }
       res.json(generated);
     } catch (err) {
       sendGenerationError(res, "generate", err);
@@ -455,6 +472,9 @@ module.exports = function flowPilotRuntime(RED) {
       );
       if (documented.question) {
         return res.json({ explanation: documented.explanation, question: documented.question, flow: null });
+      }
+      if (documented.prose) {
+        return res.json({ explanation: documented.prose, prose: true, flow: null });
       }
       res.json(documented);
     } catch (err) {
@@ -492,6 +512,12 @@ module.exports = function flowPilotRuntime(RED) {
       // validation below, the model is asking a question instead.
       if (result.question) {
         return res.json({ explanation: result.explanation, question: result.question, flow: null });
+      }
+
+      // A1: prose-only response (no JSON envelope at all) — bypass flow
+      // validation, render as a normal assistant message, keep Modify armed.
+      if (result.prose) {
+        return res.json({ explanation: result.prose, prose: true, flow: null });
       }
 
       // Validate removeNodes: all ids must be in the original selection.

@@ -1031,6 +1031,16 @@
                 return;
             }
 
+            // A1: prose-only response (no JSON envelope) — render as a normal
+            // assistant message and leave Generate armed for a follow-up.
+            if (data.prose) {
+                addMessage("assistant", data.explanation || "(no content returned)");
+                pushHistory("assistant", data.explanation || "");
+                setBusy(false);
+                updateSelectionStatus();
+                return;
+            }
+
             // Lay nodes out before review/import — see layoutGeneratedFlow for why.
             var flow = Array.isArray(data.flow) ? layoutGeneratedFlow(data.flow) : data.flow;
             addMessage("assistant", data.explanation || "(no explanation returned)");
@@ -1083,6 +1093,16 @@
                 var qText = (data.explanation ? data.explanation + "\n\n" : "") + data.question;
                 addMessage("assistant", qText);
                 pushHistory("assistant", qText);
+                setBusy(false);
+                updateSelectionStatus();
+                return;
+            }
+
+            // A1: prose-only response (no JSON envelope) — render as a normal
+            // assistant message and leave Document armed for a follow-up.
+            if (data.prose) {
+                addMessage("assistant", data.explanation || "(no content returned)");
+                pushHistory("assistant", data.explanation || "");
                 setBusy(false);
                 updateSelectionStatus();
                 return;
@@ -1997,6 +2017,16 @@
                 var qText = (data.explanation ? data.explanation + "\n\n" : "") + data.question;
                 addMessage("assistant", qText);
                 pushHistory("assistant", qText);
+                setBusy(false);
+                updateSelectionStatus();
+                return;
+            }
+
+            // A1: prose-only response (no JSON envelope) — render as a normal
+            // assistant message and leave Modify armed for a follow-up.
+            if (data.prose) {
+                addMessage("assistant", data.explanation || "(no content returned)");
+                pushHistory("assistant", data.explanation || "");
                 setBusy(false);
                 updateSelectionStatus();
                 return;
