@@ -1224,6 +1224,111 @@
             "to dismiss this notice.");
     }
 
+    // ---- Slash commands ---------------------------------------------------
+    // Typed in the compose box and handled entirely client-side: never sent
+    // to the model, never recorded in conversation history.
+    var HELP_TEXT = "## Captain's briefing\n\n" +
+        "You pick the destination, I help you get there. Here's everything on the panel.\n\n" +
+        "### Modes (one armed at a time)\n\n" +
+        "- **Query** (default) — chat about your flow, ask questions, get explanations. Nothing changes.\n" +
+        "- **Generate** — describe a flow and I'll draft it. Review the diff, then Apply.\n" +
+        "- **Document** — select node(s) and I'll explain what they do.\n" +
+        "- **Modify** — select node(s), tell me what to change, review the diff, then Apply.\n\n" +
+        "The compose area glows orange in Query and blue when an Execute mode is armed, so you always know which one you're flying.\n\n" +
+        "### Shortcuts\n\n" +
+        "- `/help` — show this briefing\n" +
+        "- `/generate` — arm Generate mode\n" +
+        "- `/document` — arm Document mode\n" +
+        "- `/modify` — arm Modify mode\n" +
+        "- `/query` — back to Query (disarm)\n" +
+        "- `/clear` — start a fresh conversation (clears chat and memory)\n" +
+        "- `/history` — open the Flight log (past conversations)\n" +
+        "- `/settings` — open the Hangar (providers, behavior, safety)\n\n" +
+        "Typing a shortcut with extra text, e.g. `/modify add a debug node`, switches mode and leaves the rest in the box so you can review before sending.\n\n" +
+        "### Also worth knowing\n\n" +
+        "- Action chips (paper-plane buttons) offer a one-click follow-up — review and send, nothing fires automatically.\n" +
+        "- \"Pre-flight check\" in the Hangar tests a provider before you rely on it.\n" +
+        "- \"Touchdown\"/\"Landed\" notes confirm an applied or imported change. Ctrl+Z undoes an applied change.";
+
+    // Returns true if `raw` was a recognized "/command" and has been fully
+    // handled (compose box updated, mode/panel switched, etc.) — callers
+    // should NOT also dispatch it as a normal chat/generate/document/modify
+    // send.
+    function handleSlashCommand(raw) {
+        var trimmed = (raw || "").trim();
+        if (trimmed.charAt(0) !== "/") { return false; }
+
+        var command = trimmed.split(/\s+/)[0].toLowerCase();
+        var rest = trimmed.slice(command.length).trim();
+        var $promptBox = el("#fp-prompt");
+
+        switch (command) {
+            case "/help":
+            case "/?":
+                addMessage("assistant", HELP_TEXT);
+                if ($promptBox.length) { $promptBox.val(""); }
+                break;
+            case "/generate":
+                armExecuteAction("generate");
+                addMessage("assistant", "Cleared for **Generate** — describe the flow you'd like me to build, then send.");
+                if ($promptBox.length) { $promptBox.val(rest); }
+                break;
+            case "/document":
+                armExecuteAction("document");
+                addMessage("assistant", "Cleared for **Document** — select the node(s) you want explained, then send.");
+                if ($promptBox.length) { $promptBox.val(rest); }
+                break;
+            case "/modify":
+                armExecuteAction("modify");
+                addMessage("assistant", "Cleared for **Modify** — select the node(s) you want changed, describe the change, then send.");
+                if ($promptBox.length) { $promptBox.val(rest); }
+                break;
+            case "/query":
+            case "/chat":
+                disarmExecuteAction();
+                addMessage("assistant", "Back to **Query** — ask away.");
+                if ($promptBox.length) { $promptBox.val(rest); }
+                break;
+            case "/clear":
+                clearChat();
+                if ($promptBox.length) { $promptBox.val(""); }
+                break;
+            case "/history":
+                showHistory();
+                if ($promptBox.length) { $promptBox.val(""); }
+                break;
+            case "/settings":
+                showSettings();
+                if ($promptBox.length) { $promptBox.val(""); }
+                break;
+            default:
+                addMessage("assistant", "Unrecognized command `" + command + "`. Type `/help` for the full list.");
+                if ($promptBox.length) { $promptBox.val(""); }
+                break;
+        }
+
+        return true;
+    }
+
+    // Single dispatch point for "Send" (button click and Enter key): slash
+    // commands are handled locally first; otherwise route to the armed
+    // Execute action, or a normal chat message.
+    function dispatchSend() {
+        var $promptBox = el("#fp-prompt");
+        var raw = $promptBox.length ? $promptBox.val() : "";
+        if (handleSlashCommand(raw)) { return; }
+
+        if (armedExecuteAction === "generate") {
+            generate();
+        } else if (armedExecuteAction === "document") {
+            documentFlow();
+        } else if (armedExecuteAction === "modify") {
+            modifyFlow();
+        } else {
+            send("chat");
+        }
+    }
+
     // ---- Prompting ------------------------------------------------------
 
     function setBusy(busy) {
@@ -3291,15 +3396,7 @@
             });
 
             content.find("#fp-send").on("click", function () {
-                if (armedExecuteAction === "generate") {
-                    generate();
-                } else if (armedExecuteAction === "document") {
-                    documentFlow();
-                } else if (armedExecuteAction === "modify") {
-                    modifyFlow();
-                } else {
-                    send("chat");
-                }
+                dispatchSend();
             });
             content.find("#fp-generate").on("click", function () {
                 setArmedExecuteAction("generate");
@@ -3341,15 +3438,7 @@
             content.find("#fp-prompt").on("keydown", function (e) {
                 if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
-                    if (armedExecuteAction === "generate") {
-                        generate();
-                    } else if (armedExecuteAction === "document") {
-                        documentFlow();
-                    } else if (armedExecuteAction === "modify") {
-                        modifyFlow();
-                    } else {
-                        send("chat");
-                    }
+                    dispatchSend();
                 }
             });
 
