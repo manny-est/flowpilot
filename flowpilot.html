@@ -1055,6 +1055,253 @@
         }).then(finish, fail);
     }
 
+    // B1: incrementally extracts the value of the JSON envelope's
+    // "explanation" key from raw streamed text. All three generation system
+    // prompts put "explanation" first, so its closing quote arrives well
+    // before any other key streams in. Handles JSON string escapes
+    // (including \uXXXX) that may be split across chunks. push() returns the
+    // decoded text so far, or null if the "explanation" key hasn't started
+    // yet (nothing to render) — e.g. for a prose-only response with no JSON
+    // envelope at all, which never starts.
+    function createExplanationExtractor() {
+        var buffer = "";
+        var phase = "seeking"; // seeking -> in_string -> done
+        var text = "";
+        var ESCAPES = { '"': '"', "\\": "\\", "/": "/", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" };
+
+        return {
+            push: function (delta) {
+                if (phase === "done") { return text; }
+                buffer += delta;
+
+                if (phase === "seeking") {
+                    var m = buffer.match(/"explanation"\s*:\s*"/);
+                    if (!m) { return null; }
+                    buffer = buffer.slice(m.index + m[0].length);
+                    phase = "in_string";
+                }
+
+                var i = 0;
+                while (i < buffer.length) {
+                    var ch = buffer[i];
+                    if (ch === "\\") {
+                        if (i + 1 >= buffer.length) { break; } // incomplete escape, wait for more
+                        var esc = buffer[i + 1];
+                        if (esc === "u") {
+                            if (i + 6 > buffer.length) { break; } // incomplete \uXXXX
+                            text += String.fromCharCode(parseInt(buffer.slice(i + 2, i + 6), 16));
+                            i += 6;
+                            continue;
+                        }
+                        text += (ESCAPES[esc] !== undefined ? ESCAPES[esc] : esc);
+                        i += 2;
+                        continue;
+                    }
+                    if (ch === '"') {
+                        phase = "done";
+                        i += 1;
+                        break;
+                    }
+                    text += ch;
+                    i += 1;
+                }
+                buffer = buffer.slice(i);
+                return text;
+            },
+            isDone: function () { return phase === "done"; }
+        };
+    }
+
+    // Shared error handler for Generate/Document/Modify, used by both the
+    // non-streaming (ajaxJson) and streaming (sendExecuteStream) paths. A 422
+    // with raw text means the model replied but we couldn't parse/validate a
+    // flow; show the raw so the user can see what happened.
+    function handleExecuteError(msg, raw) {
+        addMessage("error", msg);
+        if (raw) { addGeneratedJson(raw, true); }
+        setBusy(false);
+    }
+
+    // Shared by Generate/Document/Modify result handlers: renders the model's
+    // clarifying-question or prose-only envelope as a normal assistant
+    // message and leaves the action armed for a follow-up. Returns true if it
+    // handled the response (caller should stop there), false if the caller
+    // should proceed to its own success rendering (flow review, etc).
+    function renderQuestionOrProse(data) {
+        if (data.question) {
+            var qText = (data.explanation ? data.explanation + "\n\n" : "") + data.question;
+            addMessage("assistant", qText);
+            pushHistory("assistant", qText);
+            setBusy(false);
+            updateSelectionStatus();
+            return true;
+        }
+        if (data.prose) {
+            addMessage("assistant", data.explanation || "(no content returned)");
+            pushHistory("assistant", data.explanation || "");
+            setBusy(false);
+            updateSelectionStatus();
+            return true;
+        }
+        return false;
+    }
+
+    // Shared result handler for /generate and /document — used by both the
+    // non-streaming (ajaxJson) and streaming (sendExecuteStream) paths so
+    // review rendering, history, and busy/selection state can't drift between
+    // the two.
+    function handleSimpleGenerationResult(data) {
+        hidePending();
+        if (renderQuestionOrProse(data)) { return; }
+
+        // Lay nodes out before review/import — see layoutGeneratedFlow for why.
+        var flow = Array.isArray(data.flow) ? layoutGeneratedFlow(data.flow) : data.flow;
+        addMessage("assistant", data.explanation || "(no explanation returned)");
+        pushHistory("assistant", data.explanation || "(no explanation returned)");
+        addGeneratedReview(flow);
+        setBusy(false);
+        updateSelectionStatus();
+    }
+
+    // Shared result handler for /modify — used by both the non-streaming
+    // (ajaxJson) and streaming (sendExecuteStream) paths.
+    function handleModifyResult(data) {
+        hidePending();
+        if (renderQuestionOrProse(data)) { return; }
+
+        addMessage("assistant", data.explanation || "(no explanation returned)");
+        pushHistory("assistant", data.explanation || "(no explanation returned)");
+        addModifyReview(data.flow, data.newNodes || [], data.newWires || [], data.removeNodes || [], applyModifications);
+        setBusy(false);
+        updateSelectionStatus();
+    }
+
+    // B1: streaming variant of Generate/Document/Modify. Posts with
+    // stream:true and progressively renders the envelope's "explanation"
+    // field into a bubble as deltas arrive (via createExplanationExtractor),
+    // using the same getReader/fallback pattern as sendChatStream. Once the
+    // stream ends, removes the streaming bubble and hands the validated
+    // `final` result to resultHandler — the same function the non-streaming
+    // path uses, so review rendering, history, and busy/selection state stay
+    // identical either way.
+    function sendExecuteStream(endpoint, payload, resultHandler) {
+        var $box = el("#fp-messages");
+        if (!$box.length) { return; }
+
+        var $msg = $box.find("#fp-pending");
+        var $text = null;
+        if ($msg.length) {
+            $msg.removeAttr("id").empty();
+            $("<div>").addClass("fp-label").text("FLOWPILOT").appendTo($msg);
+            $text = $("<div>").appendTo($msg);
+        }
+
+        var extractor = createExplanationExtractor();
+        var finalData = null;
+        var errorData = null;
+        var generatingShown = false;
+
+        function ensureBubble() {
+            if ($text) { return; }
+            hidePending();
+            addMessage("assistant", "");
+            $msg = $box.find(".fp-message").last();
+            $text = $msg.find("div").last();
+        }
+
+        function fail(err) {
+            hidePending();
+            if ($msg && $msg.length) { $msg.remove(); }
+            handleExecuteError((err && err.message) ? err.message : String(err), null);
+        }
+
+        if (typeof fetch !== "function") {
+            fail(new Error("Streaming requires a browser with fetch() support. Disable streaming in Settings to use Generate/Document/Modify."));
+            return;
+        }
+
+        function processSseLines(lines) {
+            lines.forEach(function (line) {
+                line = line.trim();
+                if (line.indexOf("data:") !== 0) { return; }
+                var dataStr = line.slice(5).trim();
+                if (!dataStr || dataStr === "[DONE]") { return; }
+                var evt;
+                try { evt = JSON.parse(dataStr); } catch (e) { return; }
+
+                if (evt.delta) {
+                    var text = extractor.push(evt.delta);
+                    if (text !== null) {
+                        ensureBubble();
+                        $text.text(text);
+                        $box.scrollTop($box[0].scrollHeight);
+                    }
+                    // The explanation has fully arrived but the rest of the
+                    // envelope (the "flow" JSON etc.) is still streaming in
+                    // and buffered — show a pending indicator below the
+                    // explanation so the wait for the review block doesn't
+                    // look like nothing is happening.
+                    if (extractor.isDone() && !generatingShown) {
+                        generatingShown = true;
+                        showPending();
+                    }
+                } else if (evt.final) {
+                    finalData = evt.final;
+                } else if (evt.error) {
+                    errorData = evt.error;
+                }
+            });
+        }
+
+        fetch("flowpilot/" + endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        }).then(function (resp) {
+            if (!resp.ok) {
+                return resp.text().then(function (text) {
+                    var msg = text;
+                    try { msg = JSON.parse(text).error || text; } catch (e) { /* not JSON */ }
+                    throw new Error(msg || resp.statusText);
+                });
+            }
+            if (!resp.body || !resp.body.getReader) {
+                return resp.text().then(function (text) {
+                    processSseLines(text.split("\n"));
+                });
+            }
+
+            var reader = resp.body.getReader();
+            var decoder = new TextDecoder();
+            var buf = "";
+
+            function pump() {
+                return reader.read().then(function (step) {
+                    if (step.done) { return; }
+                    buf += decoder.decode(step.value, { stream: true });
+                    var lines = buf.split("\n");
+                    buf = lines.pop();
+                    processSseLines(lines);
+                    return pump();
+                });
+            }
+            return pump();
+        }).then(function () {
+            hidePending();
+            if ($msg && $msg.length) { $msg.remove(); }
+
+            if (errorData) {
+                handleExecuteError(errorData.error, errorData.raw);
+                return;
+            }
+            if (!finalData) {
+                handleExecuteError("No response received from the provider.", null);
+                return;
+            }
+            resultHandler(finalData);
+        }, fail);
+    }
+
     // Phase 4 (first chunk): request a generated flow fragment and show it for
     // review. This cut displays the explanation + raw JSON in the chat; it does
     // NOT yet validate node types or import to the workspace.
@@ -1080,49 +1327,27 @@
 
         setBusy(true);
         showPending();
-        ajaxJson("POST", "flowpilot/generate", {
+        var payload = {
             prompt: prompt, context: context,
             history: historyPayload.messages, historyTruncated: historyPayload.truncated
-        }, function (data) {
-            hidePending();
+        };
 
-            // Phase 6 chunk 3: the model can ask a clarifying question instead
-            // of generating. Render it as a normal assistant message and leave
-            // Generate armed so the user's next Send answers it.
-            if (data.question) {
-                var qText = (data.explanation ? data.explanation + "\n\n" : "") + data.question;
-                addMessage("assistant", qText);
-                pushHistory("assistant", qText);
-                setBusy(false);
-                updateSelectionStatus();
-                return;
-            }
+        // B1: stream the envelope's "explanation" as it's generated; the
+        // "flow" JSON is buffered server-side and arrives as a single
+        // validated `final` event, handled identically to the non-streaming
+        // path via handleSimpleGenerationResult.
+        if (currentSettings.streamingEnabled) {
+            payload.stream = true;
+            sendExecuteStream("generate", payload, handleSimpleGenerationResult);
+            return;
+        }
 
-            // A1: prose-only response (no JSON envelope) — render as a normal
-            // assistant message and leave Generate armed for a follow-up.
-            if (data.prose) {
-                addMessage("assistant", data.explanation || "(no content returned)");
-                pushHistory("assistant", data.explanation || "");
-                setBusy(false);
-                updateSelectionStatus();
-                return;
-            }
-
-            // Lay nodes out before review/import — see layoutGeneratedFlow for why.
-            var flow = Array.isArray(data.flow) ? layoutGeneratedFlow(data.flow) : data.flow;
-            addMessage("assistant", data.explanation || "(no explanation returned)");
-            pushHistory("assistant", data.explanation || "(no explanation returned)");
-            addGeneratedReview(flow);
-            setBusy(false);
-            updateSelectionStatus();
-        }, function (msg, xhr) {
+        ajaxJson("POST", "flowpilot/generate", payload, handleSimpleGenerationResult, function (msg, xhr) {
             hidePending();
             // 422 with raw text means the model replied but we couldn't parse a
             // flow; show the raw so the user can see what happened.
             var raw = xhr && xhr.responseJSON && xhr.responseJSON.raw;
-            addMessage("error", msg);
-            if (raw) { addGeneratedJson(raw, true); }
-            setBusy(false);
+            handleExecuteError(msg, raw);
         });
     }
 
@@ -1152,43 +1377,23 @@
 
         setBusy(true);
         showPending();
-        ajaxJson("POST", "flowpilot/document", {
+        var payload = {
             prompt: notes, context: context,
             history: historyPayload.messages, historyTruncated: historyPayload.truncated
-        }, function (data) {
-            hidePending();
+        };
 
-            if (data.question) {
-                var qText = (data.explanation ? data.explanation + "\n\n" : "") + data.question;
-                addMessage("assistant", qText);
-                pushHistory("assistant", qText);
-                setBusy(false);
-                updateSelectionStatus();
-                return;
-            }
+        // B1: stream the envelope's "explanation" as it's generated; see
+        // generate() for details.
+        if (currentSettings.streamingEnabled) {
+            payload.stream = true;
+            sendExecuteStream("document", payload, handleSimpleGenerationResult);
+            return;
+        }
 
-            // A1: prose-only response (no JSON envelope) — render as a normal
-            // assistant message and leave Document armed for a follow-up.
-            if (data.prose) {
-                addMessage("assistant", data.explanation || "(no content returned)");
-                pushHistory("assistant", data.explanation || "");
-                setBusy(false);
-                updateSelectionStatus();
-                return;
-            }
-
-            var flow = Array.isArray(data.flow) ? layoutGeneratedFlow(data.flow) : data.flow;
-            addMessage("assistant", data.explanation || "(no explanation returned)");
-            pushHistory("assistant", data.explanation || "(no explanation returned)");
-            addGeneratedReview(flow);
-            setBusy(false);
-            updateSelectionStatus();
-        }, function (msg, xhr) {
+        ajaxJson("POST", "flowpilot/document", payload, handleSimpleGenerationResult, function (msg, xhr) {
             hidePending();
             var raw = xhr && xhr.responseJSON && xhr.responseJSON.raw;
-            addMessage("error", msg);
-            if (raw) { addGeneratedJson(raw, true); }
-            setBusy(false);
+            handleExecuteError(msg, raw);
         });
     }
 
@@ -2075,45 +2280,23 @@
 
         setBusy(true);
         showPending();
-        ajaxJson("POST", "flowpilot/modify", {
+        var payload = {
             prompt: instruction, context: context,
             history: historyPayload.messages, historyTruncated: historyPayload.truncated
-        }, function (data) {
-            hidePending();
+        };
 
-            // Phase 6 chunk 3: the model can ask a clarifying question instead
-            // of proposing changes. Render it as a normal assistant message and
-            // leave Modify armed so the user's next Send answers it.
-            if (data.question) {
-                var qText = (data.explanation ? data.explanation + "\n\n" : "") + data.question;
-                addMessage("assistant", qText);
-                pushHistory("assistant", qText);
-                setBusy(false);
-                updateSelectionStatus();
-                return;
-            }
+        // B1: stream the envelope's "explanation" as it's generated; see
+        // generate() for details.
+        if (currentSettings.streamingEnabled) {
+            payload.stream = true;
+            sendExecuteStream("modify", payload, handleModifyResult);
+            return;
+        }
 
-            // A1: prose-only response (no JSON envelope) — render as a normal
-            // assistant message and leave Modify armed for a follow-up.
-            if (data.prose) {
-                addMessage("assistant", data.explanation || "(no content returned)");
-                pushHistory("assistant", data.explanation || "");
-                setBusy(false);
-                updateSelectionStatus();
-                return;
-            }
-
-            addMessage("assistant", data.explanation || "(no explanation returned)");
-            pushHistory("assistant", data.explanation || "(no explanation returned)");
-            addModifyReview(data.flow, data.newNodes || [], data.newWires || [], data.removeNodes || [], applyModifications);
-            setBusy(false);
-            updateSelectionStatus();
-        }, function (msg, xhr) {
+        ajaxJson("POST", "flowpilot/modify", payload, handleModifyResult, function (msg, xhr) {
             hidePending();
             var raw = xhr && xhr.responseJSON && xhr.responseJSON.raw;
-            addMessage("error", msg);
-            if (raw) { addGeneratedJson(raw, true); }
-            setBusy(false);
+            handleExecuteError(msg, raw);
         });
     }
 

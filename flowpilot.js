@@ -337,23 +337,30 @@ module.exports = function flowPilotRuntime(RED) {
   }
 
   // ---------------------------------------------------------------------
-  // Shared helper: ask the model for a { explanation, flow } envelope using
-  // the given system prompt (+ optional selection context), parse and
-  // validate it, audit the result, and return { explanation, flow }. Used by
-  // both /generate and /document — they differ only in system prompt, audit
-  // action name, and how the route validates its inputs beforehand. Throws
-  // an Error with .status and (when applicable) .raw for the route to relay.
+  // Shared helper: resolve the active provider and assemble the messages
+  // array for a generation-style request (generate/document/modify). Split
+  // out from runFlowGeneration so the streaming variant (B1) can build the
+  // same request and swap provider.chat for provider.chatStream.
   // ---------------------------------------------------------------------
-  async function runFlowGeneration(systemPrompt, auditAction, userPrompt, context, history, historyTruncated) {
+  function buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated) {
     const settings = storage.getSettings();
     const activeProvider = storage.getActiveProvider(settings);
-
     const described = describeSelectionContext(context);
     const messages = buildMessages(systemPrompt, history, historyTruncated, described, userPrompt);
+    return { activeProvider, described, messages };
+  }
 
-    const result = await provider.chat(activeProvider, messages);
-    const content = result.content || "";
-    const perf = performanceAuditFields(messages, content, result);
+  // ---------------------------------------------------------------------
+  // Shared helper: parse, validate and audit a completed provider response
+  // for a generation-style request, returning { question } / { prose } /
+  // { explanation, flow, newNodes, newWires }. Used by both the non-streaming
+  // and streaming (B1) paths, which differ only in how `content` and
+  // `providerResult` were obtained (provider.chat vs provider.chatStream).
+  // Throws an Error with .status and (when applicable) .raw for the route to
+  // relay.
+  // ---------------------------------------------------------------------
+  function processGenerationContent(content, providerResult, messages, auditAction, described, activeProvider) {
+    const perf = performanceAuditFields(messages, content, providerResult);
 
     let parsed;
     try {
@@ -410,6 +417,34 @@ module.exports = function flowPilotRuntime(RED) {
     };
   }
 
+  // ---------------------------------------------------------------------
+  // Shared helper: ask the model for a { explanation, flow } envelope using
+  // the given system prompt (+ optional selection context), parse and
+  // validate it, audit the result, and return { explanation, flow }. Used by
+  // both /generate and /document — they differ only in system prompt, audit
+  // action name, and how the route validates its inputs beforehand. Throws
+  // an Error with .status and (when applicable) .raw for the route to relay.
+  // ---------------------------------------------------------------------
+  async function runFlowGeneration(systemPrompt, auditAction, userPrompt, context, history, historyTruncated) {
+    const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated);
+    const result = await provider.chat(activeProvider, messages);
+    return processGenerationContent(result.content || "", result, messages, auditAction, described, activeProvider);
+  }
+
+  // ---------------------------------------------------------------------
+  // B1: streaming variant of runFlowGeneration. Relays each provider delta
+  // via onDelta as it arrives, then runs the SAME parse/validate/audit logic
+  // as the non-streaming path once the full response is in. The frontend
+  // uses onDelta to progressively render the envelope's "explanation" field
+  // while the rest of the JSON (the "flow" array etc.) is buffered until
+  // this resolves.
+  // ---------------------------------------------------------------------
+  async function runFlowGenerationStream(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, onDelta) {
+    const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated);
+    const result = await provider.chatStream(activeProvider, messages, onDelta);
+    return processGenerationContent(result.content || "", result, messages, auditAction, described, activeProvider);
+  }
+
   // Relays a runFlowGeneration error to the client with the right status,
   // falling back to 500 for anything that didn't set .status itself.
   function sendGenerationError(res, auditAction, err) {
@@ -422,6 +457,198 @@ module.exports = function flowPilotRuntime(RED) {
     res.status(500).json({ error: err.message });
   }
 
+  // ---------------------------------------------------------------------
+  // B1: turn a runFlowGeneration(Stream) result into a { status, body }
+  // response for /generate and /document — they share identical
+  // post-processing (question/prose passthrough, else the envelope as-is).
+  // Used by both the non-streaming route (res.status(status).json(body)) and
+  // the streaming route (relayed as the final SSE event).
+  // ---------------------------------------------------------------------
+  function finalizeSimpleGeneration(result) {
+    if (result.question) {
+      return { status: 200, body: { explanation: result.explanation, question: result.question, flow: null } };
+    }
+    if (result.prose) {
+      return { status: 200, body: { explanation: result.prose, prose: true, flow: null } };
+    }
+    return { status: 200, body: result };
+  }
+
+  // ---------------------------------------------------------------------
+  // B1: turn a runFlowGeneration(Stream) result into a { status, body }
+  // response for /modify — question/prose passthrough, else the full
+  // removeNodes/newNodes/newWires validation that previously lived inline in
+  // the /flowpilot/modify route handler. Used by both the non-streaming and
+  // streaming routes.
+  // ---------------------------------------------------------------------
+  function finalizeModifyResult(result, originalIds) {
+    if (result.question) {
+      return { status: 200, body: { explanation: result.explanation, question: result.question, flow: null } };
+    }
+    if (result.prose) {
+      return { status: 200, body: { explanation: result.prose, prose: true, flow: null } };
+    }
+
+    // Validate removeNodes: all ids must be in the original selection.
+    const removeNodes = Array.isArray(result.removeNodes) ? result.removeNodes : [];
+    if (removeNodes.length > 0) {
+      const badRemove = removeNodes.filter(function (id) { return !originalIds.has(String(id)); });
+      if (badRemove.length > 0) {
+        storage.appendAudit({ action: "modify_remove_ref_error", ids: badRemove });
+        return {
+          status: 422,
+          body: {
+            error: "removeNodes contains id(s) not in the selection: " + badRemove.join(", "),
+            raw: JSON.stringify(result)
+          }
+        };
+      }
+    }
+
+    // Build the set of ids that should remain in flow (original minus removals).
+    const removeSet = new Set(removeNodes.map(String));
+    const returnedIds = result.flow.map(function (n) { return n.id; });
+    const returnedIdSet = new Set(returnedIds);
+
+    // Models often drop a node from "flow" to remove it without also listing
+    // it in "removeNodes" (despite the prompt's instructions). Treat any
+    // original id that's missing from flow and not already in removeNodes as
+    // an implicit removal rather than a hard error — the review UI surfaces
+    // every removal for the user to approve before anything is applied.
+    const implicitRemovals = Array.from(originalIds).filter(function (id) {
+      return !returnedIdSet.has(id) && !removeSet.has(id);
+    });
+    if (implicitRemovals.length > 0) {
+      storage.appendAudit({ action: "modify_implicit_remove", ids: implicitRemovals });
+      implicitRemovals.forEach(function (id) { removeSet.add(id); });
+    }
+
+    // Validate that flow contains no hallucinated ids, and that no id is both
+    // kept in flow and marked for removal.
+    const extraIds = returnedIds.filter(function (id) { return !originalIds.has(id); });
+    const wronglyKeptIds = returnedIds.filter(function (id) { return removeSet.has(id); });
+
+    const idProblems = [];
+    if (extraIds.length) { idProblems.push("unexpected id(s) in flow: " + extraIds.join(", ")); }
+    if (wronglyKeptIds.length) { idProblems.push("id(s) in both flow and removeNodes: " + wronglyKeptIds.join(", ")); }
+
+    if (idProblems.length > 0) {
+      storage.appendAudit({ action: "modify_id_mismatch", problems: idProblems });
+      return {
+        status: 422,
+        body: {
+          error: "The model returned inconsistent node ids (" + idProblems.join("; ") + "). Try again.",
+          raw: JSON.stringify(result.flow)
+        }
+      };
+    }
+
+    const finalRemoveNodes = Array.from(removeSet);
+
+    // "group" nodes aren't supported yet (the editor's group API needs
+    // bounding-box computation + group-aware undo that applyInsertions
+    // doesn't implement). The system prompt tells the model not to propose
+    // them, but strip any that slip through anyway, and drop any newWires
+    // that reference a stripped group's placeholder id.
+    const allNewNodes = result.newNodes || [];
+    const groupNodes = allNewNodes.filter(function (n) { return n && n.type === "group"; });
+    const newNodes = allNewNodes.filter(function (n) { return !(n && n.type === "group"); });
+    const newNodeIdSet = new Set(newNodes.map(function (n) { return n && n.id; }).filter(Boolean));
+
+    // Validate newWires references: each from/to must be either an existing
+    // context node id or a placeholder id present in newNodes.
+    let newWires = result.newWires || [];
+    if (groupNodes.length > 0) {
+      const groupIdSet = new Set(groupNodes.map(function (n) { return n && n.id; }).filter(Boolean));
+      newWires = newWires.filter(function (wire) {
+        return !groupIdSet.has(String(wire.from)) && !groupIdSet.has(String(wire.to));
+      });
+    }
+    if (newWires.length > 0) {
+      const wireProblems = [];
+      newWires.forEach(function (wire, i) {
+        [wire.from, wire.to].forEach(function (ref) {
+          if (!ref) { wireProblems.push("wire " + i + " missing ref"); return; }
+          if (!originalIds.has(String(ref)) && !newNodeIdSet.has(String(ref))) {
+            wireProblems.push("wire " + i + " ref '" + ref + "' not in existing or new nodes");
+          }
+        });
+      });
+      if (wireProblems.length > 0) {
+        storage.appendAudit({ action: "modify_wire_ref_error", problems: wireProblems });
+        return {
+          status: 422,
+          body: {
+            error: "Invalid wire references in newWires: " + wireProblems.join("; "),
+            raw: JSON.stringify(result)
+          }
+        };
+      }
+    }
+
+    let explanation = result.explanation;
+    if (groupNodes.length > 0) {
+      storage.appendAudit({ action: "modify_group_stripped", count: groupNodes.length });
+      explanation = (explanation ? explanation + "\n\n" : "") +
+        "Note: grouping nodes into a visual group isn't supported yet, so that part of the request was skipped.";
+    }
+
+    return {
+      status: 200,
+      body: {
+        explanation: explanation,
+        flow: result.flow,
+        newNodes: newNodes,
+        newWires: newWires,
+        removeNodes: finalRemoveNodes
+      }
+    };
+  }
+
+  // ---------------------------------------------------------------------
+  // B1: streaming variant of /generate, /document and /modify. Opens an SSE
+  // response, relays each provider delta as `data: {"delta":...}` (the
+  // frontend uses these to progressively render the envelope's
+  // "explanation" field), then runs `finalize` (finalizeSimpleGeneration or
+  // finalizeModifyResult) on the completed result and sends it as a single
+  // `data: {"final": <body>, "status": <status>}` event — the same
+  // {status, body} shape the non-streaming routes pass to
+  // res.status(status).json(body). A provider/parse error (which may carry
+  // .status/.raw, e.g. a 422 parse failure) is relayed the same way, as
+  // `data: {"error": <body>, "status": <status>}`, since SSE responses can't
+  // change their HTTP status after headers are sent.
+  // ---------------------------------------------------------------------
+  async function runExecuteStream(req, res, systemPrompt, auditAction, userPrompt, context, history, historyTruncated, finalize) {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no"
+    });
+    if (typeof res.flushHeaders === "function") { res.flushHeaders(); }
+
+    let result;
+    try {
+      result = await runFlowGenerationStream(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, function (delta) {
+        res.write("data: " + JSON.stringify({ delta: delta }) + "\n\n");
+      });
+    } catch (err) {
+      const status = err && err.status ? err.status : 500;
+      const body = { error: err.message };
+      if (err && err.raw) { body.raw = err.raw; }
+      if (!err || !err.status) { storage.appendAudit({ action: auditAction + "_error", error: err.message }); }
+      res.write("data: " + JSON.stringify({ error: body, status: status }) + "\n\n");
+      res.write("data: [DONE]\n\n");
+      res.end();
+      return;
+    }
+
+    const final = finalize(result);
+    res.write("data: " + JSON.stringify({ final: final.body, status: final.status }) + "\n\n");
+    res.write("data: [DONE]\n\n");
+    res.end();
+  }
+
   RED.httpAdmin.post("/flowpilot/generate", RED.auth.needsPermission("settings.write"), async function (req, res) {
     const prompt = req.body && req.body.prompt;
 
@@ -432,18 +659,20 @@ module.exports = function flowPilotRuntime(RED) {
     const history = sanitizeHistory(req.body.history);
     const historyTruncated = !!req.body.historyTruncated;
 
+    if (req.body.stream) {
+      return runExecuteStream(
+        req, res, generationSystemPrompt, "generate", prompt, req.body && req.body.context,
+        history, historyTruncated, finalizeSimpleGeneration
+      );
+    }
+
     try {
       const generated = await runFlowGeneration(
         generationSystemPrompt, "generate", prompt, req.body && req.body.context,
         history, historyTruncated
       );
-      if (generated.question) {
-        return res.json({ explanation: generated.explanation, question: generated.question, flow: null });
-      }
-      if (generated.prose) {
-        return res.json({ explanation: generated.prose, prose: true, flow: null });
-      }
-      res.json(generated);
+      const { status, body } = finalizeSimpleGeneration(generated);
+      res.status(status).json(body);
     } catch (err) {
       sendGenerationError(res, "generate", err);
     }
@@ -465,18 +694,20 @@ module.exports = function flowPilotRuntime(RED) {
     const history = sanitizeHistory(req.body.history);
     const historyTruncated = !!req.body.historyTruncated;
 
+    if (req.body.stream) {
+      return runExecuteStream(
+        req, res, documentSystemPrompt, "document", userPrompt, context,
+        history, historyTruncated, finalizeSimpleGeneration
+      );
+    }
+
     try {
       const documented = await runFlowGeneration(
         documentSystemPrompt, "document", userPrompt, context,
         history, historyTruncated
       );
-      if (documented.question) {
-        return res.json({ explanation: documented.explanation, question: documented.question, flow: null });
-      }
-      if (documented.prose) {
-        return res.json({ explanation: documented.prose, prose: true, flow: null });
-      }
-      res.json(documented);
+      const { status, body } = finalizeSimpleGeneration(documented);
+      res.status(status).json(body);
     } catch (err) {
       sendGenerationError(res, "document", err);
     }
@@ -502,126 +733,22 @@ module.exports = function flowPilotRuntime(RED) {
     const history = sanitizeHistory(req.body.history);
     const historyTruncated = !!req.body.historyTruncated;
 
+    const finalize = function (result) { return finalizeModifyResult(result, originalIds); };
+
+    if (req.body.stream) {
+      return runExecuteStream(
+        req, res, modifySystemPrompt, "modify", String(prompt).trim(), context,
+        history, historyTruncated, finalize
+      );
+    }
+
     try {
       const result = await runFlowGeneration(
         modifySystemPrompt, "modify", String(prompt).trim(), context,
         history, historyTruncated
       );
-
-      // Phase 6 chunk 3: clarifying-question envelope — bypass all flow
-      // validation below, the model is asking a question instead.
-      if (result.question) {
-        return res.json({ explanation: result.explanation, question: result.question, flow: null });
-      }
-
-      // A1: prose-only response (no JSON envelope at all) — bypass flow
-      // validation, render as a normal assistant message, keep Modify armed.
-      if (result.prose) {
-        return res.json({ explanation: result.prose, prose: true, flow: null });
-      }
-
-      // Validate removeNodes: all ids must be in the original selection.
-      const removeNodes = Array.isArray(result.removeNodes) ? result.removeNodes : [];
-      if (removeNodes.length > 0) {
-        const badRemove = removeNodes.filter(function (id) { return !originalIds.has(String(id)); });
-        if (badRemove.length > 0) {
-          storage.appendAudit({ action: "modify_remove_ref_error", ids: badRemove });
-          return res.status(422).json({
-            error: "removeNodes contains id(s) not in the selection: " + badRemove.join(", "),
-            raw: JSON.stringify(result)
-          });
-        }
-      }
-
-      // Build the set of ids that should remain in flow (original minus removals).
-      const removeSet = new Set(removeNodes.map(String));
-      const returnedIds = result.flow.map(function (n) { return n.id; });
-      const returnedIdSet = new Set(returnedIds);
-
-      // Models often drop a node from "flow" to remove it without also listing
-      // it in "removeNodes" (despite the prompt's instructions). Treat any
-      // original id that's missing from flow and not already in removeNodes as
-      // an implicit removal rather than a hard error — the review UI surfaces
-      // every removal for the user to approve before anything is applied.
-      const implicitRemovals = Array.from(originalIds).filter(function (id) {
-        return !returnedIdSet.has(id) && !removeSet.has(id);
-      });
-      if (implicitRemovals.length > 0) {
-        storage.appendAudit({ action: "modify_implicit_remove", ids: implicitRemovals });
-        implicitRemovals.forEach(function (id) { removeSet.add(id); });
-      }
-
-      // Validate that flow contains no hallucinated ids, and that no id is both
-      // kept in flow and marked for removal.
-      const extraIds = returnedIds.filter(function (id) { return !originalIds.has(id); });
-      const wronglyKeptIds = returnedIds.filter(function (id) { return removeSet.has(id); });
-
-      const idProblems = [];
-      if (extraIds.length) { idProblems.push("unexpected id(s) in flow: " + extraIds.join(", ")); }
-      if (wronglyKeptIds.length) { idProblems.push("id(s) in both flow and removeNodes: " + wronglyKeptIds.join(", ")); }
-
-      if (idProblems.length > 0) {
-        storage.appendAudit({ action: "modify_id_mismatch", problems: idProblems });
-        return res.status(422).json({
-          error: "The model returned inconsistent node ids (" + idProblems.join("; ") + "). Try again.",
-          raw: JSON.stringify(result.flow)
-        });
-      }
-
-      const finalRemoveNodes = Array.from(removeSet);
-
-      // "group" nodes aren't supported yet (the editor's group API needs
-      // bounding-box computation + group-aware undo that applyInsertions
-      // doesn't implement). The system prompt tells the model not to propose
-      // them, but strip any that slip through anyway, and drop any newWires
-      // that reference a stripped group's placeholder id.
-      const allNewNodes = result.newNodes || [];
-      const groupNodes = allNewNodes.filter(function (n) { return n && n.type === "group"; });
-      const newNodes = allNewNodes.filter(function (n) { return !(n && n.type === "group"); });
-      const newNodeIdSet = new Set(newNodes.map(function (n) { return n && n.id; }).filter(Boolean));
-
-      // Validate newWires references: each from/to must be either an existing
-      // context node id or a placeholder id present in newNodes.
-      let newWires = result.newWires || [];
-      if (groupNodes.length > 0) {
-        const groupIdSet = new Set(groupNodes.map(function (n) { return n && n.id; }).filter(Boolean));
-        newWires = newWires.filter(function (wire) {
-          return !groupIdSet.has(String(wire.from)) && !groupIdSet.has(String(wire.to));
-        });
-      }
-      if (newWires.length > 0) {
-        const wireProblems = [];
-        newWires.forEach(function (wire, i) {
-          [wire.from, wire.to].forEach(function (ref) {
-            if (!ref) { wireProblems.push("wire " + i + " missing ref"); return; }
-            if (!originalIds.has(String(ref)) && !newNodeIdSet.has(String(ref))) {
-              wireProblems.push("wire " + i + " ref '" + ref + "' not in existing or new nodes");
-            }
-          });
-        });
-        if (wireProblems.length > 0) {
-          storage.appendAudit({ action: "modify_wire_ref_error", problems: wireProblems });
-          return res.status(422).json({
-            error: "Invalid wire references in newWires: " + wireProblems.join("; "),
-            raw: JSON.stringify(result)
-          });
-        }
-      }
-
-      let explanation = result.explanation;
-      if (groupNodes.length > 0) {
-        storage.appendAudit({ action: "modify_group_stripped", count: groupNodes.length });
-        explanation = (explanation ? explanation + "\n\n" : "") +
-          "Note: grouping nodes into a visual group isn't supported yet, so that part of the request was skipped.";
-      }
-
-      res.json({
-        explanation: explanation,
-        flow: result.flow,
-        newNodes: newNodes,
-        newWires: newWires,
-        removeNodes: finalRemoveNodes
-      });
+      const { status, body } = finalize(result);
+      res.status(status).json(body);
     } catch (err) {
       sendGenerationError(res, "modify", err);
     }
