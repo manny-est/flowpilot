@@ -344,6 +344,16 @@ module.exports = function flowPilotRuntime(RED) {
     }
   });
 
+  // ---- Settings: default system prompt (for "Reset to default") -------
+
+  RED.httpAdmin.get("/flowpilot/default-system-prompt", RED.auth.needsPermission("settings.read"), function (req, res) {
+    try {
+      res.json({ systemPrompt: storage.getDefaultSystemPrompt() });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ---- Settings: write -------------------------------------------------
 
   RED.httpAdmin.post("/flowpilot/settings", RED.auth.needsPermission("settings.write"), function (req, res) {

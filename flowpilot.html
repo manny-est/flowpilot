@@ -908,6 +908,23 @@
         fillProviderFields(activeProvider());
     }
 
+    // Replace the System Prompt textarea with FlowPilot's current built-in
+    // default. Settings.json can carry a snapshot saved by an older version
+    // that predates newer instructions (chips, clarifying questions, etc.) —
+    // this lets the user pick up those updates without losing the ability to
+    // customize the prompt afterwards. Not saved until the user clicks Save.
+    function resetSystemPrompt() {
+        if (!window.confirm("Replace the System Prompt text with FlowPilot's current default? This discards any customizations in the box until you save.")) {
+            return;
+        }
+        ajaxJson("GET", "flowpilot/default-system-prompt", null, function (data) {
+            el("#fp-system-prompt").val(data.systemPrompt || "");
+            addMessage("assistant", "System prompt reset to the current default. Click Save Settings to apply.");
+        }, function (msg) {
+            addMessage("error", "Unable to load the default system prompt: " + msg);
+        });
+    }
+
     // Test provider: switch to chat, fill the test prompt, and send it.
     function testProvider() {
         // Make sure the active provider reflects unsaved form edits, then save
@@ -3617,6 +3634,9 @@
                 '      <summary>Behavior</summary>' +
                 '      <div class="fp-settings-section">System Prompt</div>' +
                 '      <textarea id="fp-system-prompt"></textarea>' +
+                '      <div class="fp-settings-actions">' +
+                '        <button id="fp-reset-system-prompt" class="red-ui-button" type="button" title="Replace this text with FlowPilot\'s current built-in default — useful after an update adds new instructions">Reset to default</button>' +
+                '      </div>' +
 
                 '      <div class="fp-settings-section">Conversation memory</div>' +
                 '      <label>Remember last N exchanges</label>' +
@@ -3729,6 +3749,7 @@
             content.find("#fp-add-provider").on("click", function () { addProvider(); });
             content.find("#fp-remove-provider").on("click", function () { removeProvider(); });
             content.find("#fp-test-provider").on("click", function () { testProvider(); });
+            content.find("#fp-reset-system-prompt").on("click", function () { resetSystemPrompt(); });
 
             // Re-enable Test provider live as the user types a model.
             content.find("#fp-model").on("input", function () {
