@@ -4447,11 +4447,14 @@
 /* Custom resize handle, top-right: native `resize: vertical` puts its grip
    at the bottom-right corner, right next to the Send/Clear buttons, which
    makes it fiddly to grab. This sits in the clear space below the context
-   strip instead, and dragging it changes #fp-prompt's height directly. */
+   strip instead, and dragging it changes #fp-prompt's height directly.
+   Offset further from the edge (right: 20px) so it doesn't sit on top of
+   the textarea's scrollbar arrows when the prompt overflows, and hidden
+   until the prompt area is hovered so it doesn't clutter that corner. */
 .fp-resize-handle {
     position: absolute;
     top: 4px;
-    right: 4px;
+    right: 20px;
     width: 18px;
     height: 18px;
     display: flex;
@@ -4459,10 +4462,15 @@
     justify-content: center;
     border-radius: 3px;
     color: var(--red-ui-secondary-text-color, #999);
-    opacity: 0.5;
+    opacity: 0;
     cursor: ns-resize;
     font-size: 11px;
     user-select: none;
+    transition: opacity 0.15s;
+}
+
+.fp-prompt-wrap:hover .fp-resize-handle {
+    opacity: 0.5;
 }
 
 .fp-resize-handle:hover,
