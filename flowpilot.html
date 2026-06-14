@@ -86,7 +86,7 @@
         el("#fp-generate").removeClass("fp-action-armed");
         el("#fp-document").removeClass("fp-action-armed");
         el("#fp-modify").removeClass("fp-action-armed");
-        el("#fp-send").text("Send");
+        el("#fp-send").text("Send").removeClass("fp-send-armed");
     }
 
     function setArmedExecuteAction(action) {
@@ -100,7 +100,16 @@
         if (armedExecuteAction === "generate") { label = "Send (Generate)"; }
         else if (armedExecuteAction === "document") { label = "Send (Document)"; }
         else if (armedExecuteAction === "modify") { label = "Send (Modify)"; }
-        el("#fp-send").text(label);
+        el("#fp-send").text(label).addClass("fp-send-armed");
+    }
+
+    // Workstream C: arms the given Execute action regardless of current
+    // state. Unlike setArmedExecuteAction (which TOGGLES an already-armed
+    // action back off), an action chip always means "switch to this mode" —
+    // never "disarm."
+    function armExecuteAction(action) {
+        if (armedExecuteAction === action) { return; }
+        setArmedExecuteAction(action);
     }
 
     // ---- Phase 3 intent modes -------------------------------------------
@@ -1128,6 +1137,56 @@
         setBusy(false);
     }
 
+    // Workstream C: clicking an action chip switches Send to the suggested
+    // mode and pre-fills the compose box with the prepared prompt. The user
+    // reviews it and hits Send themselves — nothing is sent automatically,
+    // and the change still goes through the normal diff review like any
+    // other Execute action.
+    function applySuggestedAction(suggestedAction) {
+        if (!suggestedAction || !suggestedAction.mode || !suggestedAction.prompt) { return; }
+        armExecuteAction(suggestedAction.mode);
+        var $promptBox = el("#fp-prompt");
+        if ($promptBox.length) {
+            $promptBox.val(suggestedAction.prompt);
+            $promptBox.focus();
+        }
+    }
+
+    // Workstream C: renders an optional "suggestedAction" (action chip) below
+    // the latest message — a tappable next-step the model proposed. Same
+    // chip shape/renderer regardless of whether an envelope or (Phase 7) a
+    // tool call produced it.
+    function renderActionChip(suggestedAction) {
+        if (!suggestedAction || !suggestedAction.mode || !suggestedAction.prompt) { return; }
+        var $box = el("#fp-messages");
+        if (!$box.length) { return; }
+
+        var modeLabel = suggestedAction.mode === "generate" ? "Generate"
+            : suggestedAction.mode === "document" ? "Document"
+            : suggestedAction.mode === "modify" ? "Modify" : suggestedAction.mode;
+
+        var preview = suggestedAction.prompt.length > 60
+            ? suggestedAction.prompt.slice(0, 57) + "…"
+            : suggestedAction.prompt;
+
+        var $row = $("<div>").addClass("fp-chip-row");
+        $("<button>")
+            .addClass("red-ui-button red-ui-button-small fp-chip")
+            .attr("type", "button")
+            .attr("title", suggestedAction.prompt)
+            .append($("<i>").addClass("fa fa-paper-plane"))
+            .append($("<span>").text(" " + modeLabel + ": " + preview))
+            .on("click", function () { applySuggestedAction(suggestedAction); })
+            .appendTo($row);
+
+        if (suggestedAction.selectionHint) {
+            $("<div>").addClass("fp-chip-hint").text("Tip: " + suggestedAction.selectionHint).appendTo($row);
+        }
+
+        $box.append($row);
+        $box.scrollTop($box[0].scrollHeight);
+    }
+
     // Shared by Generate/Document/Modify result handlers: renders the model's
     // clarifying-question or prose-only envelope as a normal assistant
     // message and leaves the action armed for a follow-up. Returns true if it
@@ -1138,6 +1197,7 @@
             var qText = (data.explanation ? data.explanation + "\n\n" : "") + data.question;
             addMessage("assistant", qText);
             pushHistory("assistant", qText);
+            renderActionChip(data.suggestedAction);
             setBusy(false);
             updateSelectionStatus();
             return true;
@@ -1165,6 +1225,7 @@
         addMessage("assistant", data.explanation || "(no explanation returned)");
         pushHistory("assistant", data.explanation || "(no explanation returned)");
         addGeneratedReview(flow);
+        renderActionChip(data.suggestedAction);
         setBusy(false);
         updateSelectionStatus();
     }
@@ -1178,6 +1239,7 @@
         addMessage("assistant", data.explanation || "(no explanation returned)");
         pushHistory("assistant", data.explanation || "(no explanation returned)");
         addModifyReview(data.flow, data.newNodes || [], data.newWires || [], data.removeNodes || [], applyModifications);
+        renderActionChip(data.suggestedAction);
         setBusy(false);
         updateSelectionStatus();
     }
@@ -3006,6 +3068,25 @@
     30% { transform: translateY(-5px); opacity: 1; }
 }
 
+/* Workstream C: action chips ("paper plane" actions) — a tappable next-step
+   the model suggests, rendered below the message that proposed it. */
+.fp-chip-row {
+    margin: -4px 0 12px 4px;
+}
+
+.fp-chip {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fp-chip-hint {
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--red-ui-secondary-text-color, #888);
+}
+
 .fp-json {
     margin: 0;
     padding: 10px;
@@ -3102,6 +3183,13 @@
     background: #2a6f4f !important;
     border-color: #2a6f4f !important;
     color: #fff !important;
+}
+
+/* Send gets the same accent as an armed Execute action so it's clear that
+   clicking it now proposes a change rather than chatting — especially after
+   an action chip pre-fills the prompt and switches modes (Workstream C). */
+#fp-send.fp-send-armed {
+    box-shadow: 0 0 0 2px #2a6f4f;
 }
 
 .fp-action-bar {

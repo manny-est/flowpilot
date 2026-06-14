@@ -376,13 +376,34 @@ module.exports = function flowPilotRuntime(RED) {
   }
 
   // ---------------------------------------------------------------------
+  // Workstream C: pull an optional "suggestedAction" (action chip) out of a
+  // parsed envelope. Validated but non-critical — a malformed or missing
+  // suggestion is just dropped (returns null), never an error, since chips
+  // are an additive hint on top of the real response.
+  //   { mode: "generate"|"document"|"modify", prompt: "...", selectionHint?: "..." }
+  // ---------------------------------------------------------------------
+  function extractSuggestedAction(parsed) {
+    const sa = parsed && parsed.suggestedAction;
+    if (!sa || typeof sa !== "object") { return null; }
+    if (["generate", "document", "modify"].indexOf(sa.mode) === -1) { return null; }
+    if (typeof sa.prompt !== "string" || !sa.prompt.trim()) { return null; }
+
+    const result = { mode: sa.mode, prompt: sa.prompt.trim() };
+    if (typeof sa.selectionHint === "string" && sa.selectionHint.trim()) {
+      result.selectionHint = sa.selectionHint.trim();
+    }
+    return result;
+  }
+
+  // ---------------------------------------------------------------------
   // Shared helper: parse, validate and audit a completed provider response
   // for a generation-style request, returning { question } / { prose } /
-  // { explanation, flow, newNodes, newWires }. Used by both the non-streaming
-  // and streaming (B1) paths, which differ only in how `content` and
-  // `providerResult` were obtained (provider.chat vs provider.chatStream).
-  // Throws an Error with .status and (when applicable) .raw for the route to
-  // relay.
+  // { explanation, flow, newNodes, newWires }, each optionally carrying a
+  // `suggestedAction` (Workstream C action chip). Used by both the
+  // non-streaming and streaming (B1) paths, which differ only in how
+  // `content` and `providerResult` were obtained (provider.chat vs
+  // provider.chatStream). Throws an Error with .status and (when applicable)
+  // .raw for the route to relay.
   // ---------------------------------------------------------------------
   function processGenerationContent(content, providerResult, messages, auditAction, described, activeProvider) {
     const perf = performanceAuditFields(messages, content, providerResult);
@@ -413,7 +434,10 @@ module.exports = function flowPilotRuntime(RED) {
     if (typeof parsed.question === "string" && parsed.question.trim() &&
         (!Array.isArray(parsed.flow) || parsed.flow.length === 0)) {
       storage.appendAudit(Object.assign({ action: auditAction + "_question" }, perf));
-      return { question: parsed.question, explanation: parsed.explanation || "" };
+      const questionResult = { question: parsed.question, explanation: parsed.explanation || "" };
+      const questionAction = extractSuggestedAction(parsed);
+      if (questionAction) { questionResult.suggestedAction = questionAction; }
+      return questionResult;
     }
 
     const flow = Array.isArray(parsed.flow) ? parsed.flow : null;
@@ -434,12 +458,15 @@ module.exports = function flowPilotRuntime(RED) {
       contextConnectionCount: described ? described.connectionCount : 0
     }, perf));
 
-    return {
+    const flowResult = {
       explanation: parsed.explanation || "",
       flow: flow,
       newNodes: Array.isArray(parsed.newNodes) ? parsed.newNodes : [],
       newWires: Array.isArray(parsed.newWires) ? parsed.newWires : []
     };
+    const flowAction = extractSuggestedAction(parsed);
+    if (flowAction) { flowResult.suggestedAction = flowAction; }
+    return flowResult;
   }
 
   // ---------------------------------------------------------------------
@@ -491,7 +518,9 @@ module.exports = function flowPilotRuntime(RED) {
   // ---------------------------------------------------------------------
   function finalizeSimpleGeneration(result) {
     if (result.question) {
-      return { status: 200, body: { explanation: result.explanation, question: result.question, flow: null } };
+      const body = { explanation: result.explanation, question: result.question, flow: null };
+      if (result.suggestedAction) { body.suggestedAction = result.suggestedAction; }
+      return { status: 200, body: body };
     }
     if (result.prose) {
       return { status: 200, body: { explanation: result.prose, prose: true, flow: null } };
@@ -508,7 +537,9 @@ module.exports = function flowPilotRuntime(RED) {
   // ---------------------------------------------------------------------
   function finalizeModifyResult(result, originalIds) {
     if (result.question) {
-      return { status: 200, body: { explanation: result.explanation, question: result.question, flow: null } };
+      const questionBody = { explanation: result.explanation, question: result.question, flow: null };
+      if (result.suggestedAction) { questionBody.suggestedAction = result.suggestedAction; }
+      return { status: 200, body: questionBody };
     }
     if (result.prose) {
       return { status: 200, body: { explanation: result.prose, prose: true, flow: null } };
@@ -618,16 +649,16 @@ module.exports = function flowPilotRuntime(RED) {
         "Note: grouping nodes into a visual group isn't supported yet, so that part of the request was skipped.";
     }
 
-    return {
-      status: 200,
-      body: {
-        explanation: explanation,
-        flow: result.flow,
-        newNodes: newNodes,
-        newWires: newWires,
-        removeNodes: finalRemoveNodes
-      }
+    const body = {
+      explanation: explanation,
+      flow: result.flow,
+      newNodes: newNodes,
+      newWires: newWires,
+      removeNodes: finalRemoveNodes
     };
+    if (result.suggestedAction) { body.suggestedAction = result.suggestedAction; }
+
+    return { status: 200, body: body };
   }
 
   // ---------------------------------------------------------------------
