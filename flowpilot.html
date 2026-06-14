@@ -57,9 +57,32 @@
     // armed one again disarms it back to chat.
     var armedExecuteAction = null;
 
+    // A2: ids of the selection PINNED for the current armed session. Set when
+    // arming with a selection, or refreshed whenever the live selection
+    // changes while armed (non-empty only — deselecting keeps the pin so
+    // follow-up turns need no reselection). Cleared on disarm/Clear Chat.
+    var pinnedSelectionIds = null;
+
+    function pinCurrentSelection() {
+        var sel = (RED.view && RED.view.selection) ? RED.view.selection() : null;
+        var ids = (sel && sel.nodes) ? sel.nodes.map(function (n) { return n.id; }) : [];
+        if (ids.length) { pinnedSelectionIds = ids; }
+    }
+
+    // The node ids to use for context: the live selection if non-empty,
+    // else the pinned selection from earlier in this armed session (or null
+    // if neither — Generate works fine with no context).
+    function activeSelectionIds() {
+        var sel = (RED.view && RED.view.selection) ? RED.view.selection() : null;
+        var liveIds = (sel && sel.nodes && sel.nodes.length)
+            ? sel.nodes.map(function (n) { return n.id; }) : null;
+        return liveIds || pinnedSelectionIds;
+    }
+
     function disarmExecuteAction() {
         if (!armedExecuteAction) { return; }
         armedExecuteAction = null;
+        pinnedSelectionIds = null;
         el("#fp-generate").removeClass("fp-action-armed");
         el("#fp-document").removeClass("fp-action-armed");
         el("#fp-modify").removeClass("fp-action-armed");
@@ -69,6 +92,7 @@
     function setArmedExecuteAction(action) {
         if (armedExecuteAction === action) { disarmExecuteAction(); return; }
         armedExecuteAction = action;
+        pinCurrentSelection();
         el("#fp-generate").toggleClass("fp-action-armed", armedExecuteAction === "generate");
         el("#fp-document").toggleClass("fp-action-armed", armedExecuteAction === "document");
         el("#fp-modify").toggleClass("fp-action-armed", armedExecuteAction === "modify");
@@ -286,6 +310,7 @@
     function clearChat() {
         el("#fp-messages").empty();
         conversationHistory = [];
+        pinnedSelectionIds = null;
         updateSelectionStatus();
     }
 
@@ -692,11 +717,35 @@
     }
 
     // Returns { nodes, connections } or null if nothing selected.
-    function collectSelectionContext() {
-        var sel = (RED.view && RED.view.selection) ? RED.view.selection() : null;
-        var rawNodes = (sel && sel.nodes) ? sel.nodes : [];
-        var rawLinks = (sel && sel.links) ? sel.links : [];
-        if (!rawNodes.length) { return null; }
+    // A2: with nodeIds (an array of node ids — e.g. a pinned selection),
+    // builds context from those live nodes via RED.nodes instead of the
+    // current view selection. Nodes that no longer exist are dropped; links
+    // are gathered from the workspace's full link list, same shape as
+    // RED.view.selection().links (sourceInSelection/targetInSelection in
+    // buildConnections still works against this nodeIds set).
+    function collectSelectionContext(nodeIds) {
+        var rawNodes, rawLinks;
+        if (Array.isArray(nodeIds)) {
+            rawNodes = nodeIds.map(function (id) { return RED.nodes.node(id); })
+                              .filter(function (n) { return !!n; });
+            if (!rawNodes.length) { return null; }
+            var idSet = rawNodes.map(function (n) { return n.id; });
+            rawLinks = [];
+            if (RED.nodes.eachLink) {
+                RED.nodes.eachLink(function (l) {
+                    var srcId = l.source && l.source.id;
+                    var tgtId = l.target && l.target.id;
+                    if (idSet.indexOf(srcId) !== -1 || idSet.indexOf(tgtId) !== -1) {
+                        rawLinks.push(l);
+                    }
+                });
+            }
+        } else {
+            var sel = (RED.view && RED.view.selection) ? RED.view.selection() : null;
+            rawNodes = (sel && sel.nodes) ? sel.nodes : [];
+            rawLinks = (sel && sel.links) ? sel.links : [];
+            if (!rawNodes.length) { return null; }
+        }
         return {
             nodes: rawNodes.map(sanitizeNode),
             connections: buildConnections(rawNodes, rawLinks)
@@ -722,13 +771,28 @@
         if (!$status.length) { return; }
 
         var sel = (RED.view && RED.view.selection) ? RED.view.selection() : null;
-        var count = (sel && sel.nodes) ? sel.nodes.length : 0;
+        var liveCount = (sel && sel.nodes) ? sel.nodes.length : 0;
 
         var $size = el("#fp-size-status");
         var $secrets = el("#fp-secrets-status");
 
+        // A2: while armed, a pinned selection is sent as context even with
+        // nothing currently selected — re-resolve against live nodes so
+        // deleted nodes drop out of the count.
+        var pinnedContext = (armedExecuteAction && liveCount === 0 && pinnedSelectionIds)
+            ? collectSelectionContext(pinnedSelectionIds) : null;
+        var pinnedCount = pinnedContext ? pinnedContext.nodes.length : 0;
+        var count = liveCount || pinnedCount;
+
         if (count === 0) {
             $status.text("No nodes selected").removeClass("fp-has-selection");
+        } else if (liveCount === 0 && pinnedCount > 0) {
+            var actionLabel = armedExecuteAction === "generate" ? "Generate"
+                : armedExecuteAction === "document" ? "Document"
+                : armedExecuteAction === "modify" ? "Modify" : "Execute";
+            $status.text("Pinned: " + count + (count === 1 ? " node" : " nodes") +
+                         " for " + actionLabel + " — will be sent as context")
+                   .addClass("fp-has-selection");
         } else {
             $status.text(count + (count === 1 ? " node" : " nodes") +
                          " selected — will be sent as context")
@@ -737,7 +801,8 @@
 
         // Size line: selection context (Phase 2) + conversation history
         // (Phase 6) — whichever of the two apply right now.
-        var contextTokens = count > 0 ? estimateTokens(collectSelectionContext()) : 0;
+        var contextTokens = liveCount > 0 ? estimateTokens(collectSelectionContext())
+            : pinnedContext ? estimateTokens(pinnedContext) : 0;
         var historyPayload = buildHistoryPayload();
         var historyTokens = estimateTokens(historyPayload.messages);
         var tokens = contextTokens + historyTokens;
@@ -1003,7 +1068,9 @@
 
         // Selection context lets the model generate something that fits with
         // the nodes you've selected (e.g. "wire this into my MQTT setup").
-        var context = collectSelectionContext();
+        // A2: falls back to the pinned selection if nothing is currently
+        // selected, so follow-up turns need no reselection.
+        var context = collectSelectionContext(activeSelectionIds());
         var label = "Generate: " + prompt + contextAttachmentNote(context);
         addMessage("user", label);
         // #8: snapshot history before pushing this turn (see send()).
@@ -1066,7 +1133,9 @@
     // nothing import-mechanism-specific to build here. The prompt box holds
     // OPTIONAL notes to steer the explanation; the selection is the real input.
     function documentFlow() {
-        var context = collectSelectionContext();
+        // A2: falls back to the pinned selection if nothing is currently
+        // selected, so follow-up turns need no reselection.
+        var context = collectSelectionContext(activeSelectionIds());
         if (!context || !Array.isArray(context.nodes) || context.nodes.length === 0) {
             addMessage("error", "Select the node(s) you want documented first.");
             return;
@@ -1984,7 +2053,9 @@
     }
 
     function modifyFlow() {
-        var context = collectSelectionContext();
+        // A2: falls back to the pinned selection if nothing is currently
+        // selected, so follow-up turns need no reselection.
+        var context = collectSelectionContext(activeSelectionIds());
         if (!context || !Array.isArray(context.nodes) || context.nodes.length === 0) {
             addMessage("error", "Select the node(s) you want to modify first.");
             return;
@@ -2582,8 +2653,14 @@
             });
 
             // Live selection indicator. RED.events fires this whenever the
-            // user changes what's selected on the canvas.
-            RED.events.on("view:selection-changed", updateSelectionStatus);
+            // user changes what's selected on the canvas. A2: while armed, a
+            // new non-empty selection refreshes the pinned context (an empty
+            // selection does NOT clear it — that's what lets follow-ups skip
+            // reselection).
+            RED.events.on("view:selection-changed", function () {
+                if (armedExecuteAction) { pinCurrentSelection(); }
+                updateSelectionStatus();
+            });
 
             // Build intent buttons from built-in INTENTS plus any user-defined
             // customIntents (loaded from settings). Rebuilt after settings load
