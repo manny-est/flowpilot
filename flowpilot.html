@@ -204,12 +204,13 @@
         // Picking a Query action means "chat with this template" — an armed
         // Execute action (e.g. Generate) would otherwise hijack the next Send.
         disarmExecuteAction();
+        // Replace rather than append/prepend: appending let alternating
+        // clicks between two intents stack both texts repeatedly (each click
+        // only guarded against re-adding ITSELF, not the other one already
+        // in the box). A clean replace is simple and predictable — use the
+        // clear button (✕) if you want an empty box again.
         var $box = el("#fp-prompt");
-        var existing = ($box.val() || "").trim();
-        // Guard against accidental re-clicks: if the box already starts with
-        // this intent's text, do nothing rather than stacking duplicates.
-        if (existing.indexOf(text) === 0) { $box.focus(); return; }
-        $box.val(existing ? (text + "\n\n" + existing) : text);
+        $box.val(text);
         $box.focus();
     }
 
