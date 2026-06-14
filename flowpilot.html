@@ -1245,10 +1245,53 @@
         "- `/history` — open the Flight log (past conversations)\n" +
         "- `/settings` — open the Hangar (providers, behavior, safety)\n\n" +
         "Typing a shortcut with extra text, e.g. `/modify add a debug node`, switches mode and leaves the rest in the box so you can review before sending.\n\n" +
+        "- `/demo` — load a sample Generate request (a trivia game flow) into the compose box\n\n" +
         "### Also worth knowing\n\n" +
         "- Action chips (paper-plane buttons) offer a one-click follow-up — review and send, nothing fires automatically.\n" +
         "- \"Pre-flight check\" in the Hangar tests a provider before you rely on it.\n" +
         "- \"Touchdown\"/\"Landed\" notes confirm an applied or imported change. Ctrl+Z undoes an applied change.";
+
+    // /demo: a ready-made Generate request, used to show off FlowPilot's
+    // flow-generation capability end to end (HTTP polling, context state,
+    // multiple endpoints, normalization, hashing).
+    var DEMO_PROMPT = "Create a new Node-RED flow that implements a fully functional Open Trivia DB trivia game with the following behavior:\n\n" +
+        "- Every 5 minutes, automatically fetch a new API token from https://opentdb.com/api_token.php?command=request, then request one new trivia question using that token (with URL encoding and amount=1).\n" +
+        "- On demand (e.g. via a manual inject node), also allow fetching a new question immediately.\n" +
+        "- Store the current question and token in flow context.\n" +
+        "- Provide three HTTP endpoints:\n" +
+        "  - POST /trivia/answer - accepts { question_id, answer_index } and evaluates correctness using the stored question; updates per-user scores (attempts, correct, last) in flow context.\n" +
+        "  - GET /trivia/score - returns the current scoreboard, keyed by user.\n" +
+        "  - GET /trivia/current - returns the current question, or 404 if none.\n" +
+        "- Normalize question/answer fields: decode URL-encoded strings, sort answers alphabetically, and compute correct_index_sorted.\n" +
+        "- Use a simple hash (e.g. djb2) to generate a stable question_id.\n" +
+        "- Include debug nodes to inspect the token, the normalized question, and answer evaluation.\n" +
+        "- All HTTP responses should return appropriate status codes (200/400/404/409) with JSON payloads.\n" +
+        "- Keep the flow readable: group related nodes, give them helpful names, and add comments in function nodes where useful.";
+
+    var demoTypeTimer = null;
+
+    // Streams `text` into the prompt box a few characters at a time, as if
+    // it were being typed, then calls `onDone`. Disabled while typing so the
+    // user doesn't fight the animation; cancels any in-progress run first.
+    function typeIntoPrompt(text, onDone) {
+        var $promptBox = el("#fp-prompt");
+        if (demoTypeTimer) { clearInterval(demoTypeTimer); demoTypeTimer = null; }
+        if (!$promptBox.length) { if (onDone) { onDone(); } return; }
+        $promptBox.val("").prop("disabled", true);
+        var i = 0;
+        var CHARS_PER_TICK = 3;
+        demoTypeTimer = setInterval(function () {
+            i = Math.min(text.length, i + CHARS_PER_TICK);
+            $promptBox.val(text.slice(0, i));
+            $promptBox.scrollTop($promptBox[0].scrollHeight);
+            if (i >= text.length) {
+                clearInterval(demoTypeTimer);
+                demoTypeTimer = null;
+                $promptBox.prop("disabled", false).focus();
+                if (onDone) { onDone(); }
+            }
+        }, 12);
+    }
 
     // Returns true if `raw` was a recognized "/command" and has been fully
     // handled (compose box updated, mode/panel switched, etc.) — callers
@@ -1301,6 +1344,13 @@
                 showSettings();
                 if ($promptBox.length) { $promptBox.val(""); }
                 break;
+            case "/demo":
+                armExecuteAction("generate");
+                addMessage("assistant", "Cleared for **Generate** — loading a demo request into the compose box.");
+                typeIntoPrompt(DEMO_PROMPT, function () {
+                    el("#fp-send").addClass("fp-send-breathe");
+                });
+                break;
             default:
                 addMessage("assistant", "Unrecognized command `" + command + "`. Type `/help` for the full list.");
                 if ($promptBox.length) { $promptBox.val(""); }
@@ -1314,6 +1364,7 @@
     // commands are handled locally first; otherwise route to the armed
     // Execute action, or a normal chat message.
     function dispatchSend() {
+        el("#fp-send").removeClass("fp-send-breathe");
         var $promptBox = el("#fp-prompt");
         var raw = $promptBox.length ? $promptBox.val() : "";
         if (handleSlashCommand(raw)) { return; }
@@ -3445,6 +3496,13 @@
                 }
             });
 
+            // /demo's "breathe" cue on Send is meant to draw the eye right
+            // after the prompt is filled in — once the user starts editing
+            // it themselves, the nudge has done its job.
+            content.find("#fp-prompt").on("input", function () {
+                el("#fp-send").removeClass("fp-send-breathe");
+            });
+
             // Live selection indicator. RED.events fires this whenever the
             // user changes what's selected on the canvas. A2: while armed, a
             // new non-empty selection refreshes the pinned context (an empty
@@ -3863,6 +3921,17 @@
    an action chip pre-fills the prompt and switches modes (Workstream C). */
 #fp-send.fp-send-armed {
     box-shadow: 0 0 0 2px #2a6f4f;
+}
+
+/* /demo: once the sample prompt has finished typing in, gently pulse Send
+   to draw the eye towards it. Stops the moment the user sends or edits. */
+#fp-send.fp-send-breathe {
+    animation: fp-breathe 1.6s ease-in-out infinite;
+}
+
+@keyframes fp-breathe {
+    0%, 100% { box-shadow: 0 0 0 2px #2a6f4f; transform: scale(1); }
+    50% { box-shadow: 0 0 0 6px rgba(42, 111, 79, 0.35); transform: scale(1.05); }
 }
 
 .fp-action-bar {
