@@ -197,34 +197,45 @@ module.exports = function flowPilotRuntime(RED) {
   // ---------------------------------------------------------------------
   function describeSelectionContext(context) {
     const nodes = context && Array.isArray(context.nodes) ? context.nodes : [];
-    if (nodes.length === 0) { return null; }
+    const debugMessages = context && Array.isArray(context.debugMessages) ? context.debugMessages : [];
+    if (nodes.length === 0 && debugMessages.length === 0) { return null; }
 
     const connections = (context && context.connections) ? context.connections : {};
     const edges = Array.isArray(connections.edges) ? connections.edges : [];
     const perNode = Array.isArray(connections.perNode) ? connections.perNode : [];
     const subFlowCount = (typeof connections.subFlowCount === "number") ? connections.subFlowCount : 0;
 
-    let content = "The user has selected the following Node-RED nodes as context. " +
-              "This is sanitized configuration; credentials are redacted.\n\n" +
-              "Nodes:\n```json\n" + JSON.stringify(nodes) + "\n```";
-    if (edges.length > 0) {
-      content += "\n\nConnections — directed edges by node id (a node's wires " +
-             "describe its OUTPUTS; one edge per output port; fromId/toId refer " +
-             "to the \"id\" fields in Nodes above):\n```json\n" +
-             JSON.stringify(edges) + "\n```";
-      content += "\n\nPer-node wiring summary, with readable \"Name [type]\" " +
-             "labels (inputs are reconstructed, since Node-RED nodes do not " +
-             "store their own inputs; subFlow groups nodes into connected " +
-             "sub-flows):\n```json\n" +
-             JSON.stringify(perNode) + "\n```";
-    }
-    if (subFlowCount > 1) {
-      content += "\n\nNote: the selection contains " + subFlowCount + " separate, " +
-             "unconnected sub-flows (see each node's subFlow number). Treat " +
-             "them as distinct unless the user says otherwise.";
+    let content = "";
+    if (nodes.length > 0) {
+      content += "The user has selected the following Node-RED nodes as context. " +
+                "This is sanitized configuration; credentials are redacted.\n\n" +
+                "Nodes:\n```json\n" + JSON.stringify(nodes) + "\n```";
+      if (edges.length > 0) {
+        content += "\n\nConnections — directed edges by node id (a node's wires " +
+               "describe its OUTPUTS; one edge per output port; fromId/toId refer " +
+               "to the \"id\" fields in Nodes above):\n```json\n" +
+               JSON.stringify(edges) + "\n```";
+        content += "\n\nPer-node wiring summary, with readable \"Name [type]\" " +
+               "labels (inputs are reconstructed, since Node-RED nodes do not " +
+               "store their own inputs; subFlow groups nodes into connected " +
+               "sub-flows):\n```json\n" +
+               JSON.stringify(perNode) + "\n```";
+      }
+      if (subFlowCount > 1) {
+        content += "\n\nNote: the selection contains " + subFlowCount + " separate, " +
+               "unconnected sub-flows (see each node's subFlow number). Treat " +
+               "them as distinct unless the user says otherwise.";
+      }
     }
 
-    return { content: content, nodeCount: nodes.length, connectionCount: edges.length };
+    if (debugMessages.length > 0) {
+      content += (content ? "\n\n" : "") +
+             "The user attached recent Node-RED Debug sidebar output for " +
+             "troubleshooting (runtime data, may be truncated):\n```json\n" +
+             JSON.stringify(debugMessages) + "\n```";
+    }
+
+    return { content: content, nodeCount: nodes.length, connectionCount: edges.length, debugMessageCount: debugMessages.length };
   }
 
   // ---------------------------------------------------------------------
@@ -366,6 +377,29 @@ module.exports = function flowPilotRuntime(RED) {
         model: saved.model
       });
       res.json(saved);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ---- Models: list models via the active provider's /v1/models -------
+  // Always acts on the SAVED active provider (the frontend saves the form
+  // first, mirroring Pre-flight check), and never errors out for a provider
+  // that doesn't support /v1/models — see listModels().
+
+  RED.httpAdmin.post("/flowpilot/models", RED.auth.needsPermission("settings.write"), async function (req, res) {
+    try {
+      const settings = storage.getSettings();
+      const activeProvider = storage.getActiveProvider(settings);
+      const result = await provider.listModels(activeProvider);
+      storage.appendAudit({
+        action: "list_models",
+        providerName: activeProvider.providerName,
+        baseUrl: activeProvider.baseUrl,
+        modelCount: result.models.length,
+        error: result.error || null
+      });
+      res.json(result);
     } catch (err) {
       res.status(500).json({ error: err.message });
     }

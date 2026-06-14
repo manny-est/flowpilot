@@ -61,6 +61,82 @@
         conversationHistory.push({ role: role, content: String(content) });
     }
 
+    // ---------------------------------------------------------------------
+    // Live debug-message context: a rolling local-only buffer of recent
+    // Node-RED Debug sidebar output (populated via RED.comms "debug"
+    // subscription, see plugin onadd), plus the subset the user has
+    // explicitly attached as context for upcoming requests — "select it like
+    // Recall messages" (sticky, like conversationHistory, until removed or
+    // Clear Chat). Nothing here is sent anywhere until attached AND a
+    // request is sent.
+    // ---------------------------------------------------------------------
+    var DEBUG_BUFFER_MAX = 50;
+    var DEBUG_VALUE_MAX_CHARS = 500;
+    var debugMessageBuffer = [];
+    var attachedDebugMessages = [];
+    var nextDebugMessageId = 1;
+
+    function truncateForDebug(text, max) {
+        text = String(text);
+        return text.length > max ? text.slice(0, max - 1) + "…" : text;
+    }
+
+    // Best-effort stringify for a debug message's value — may be any type
+    // (string, number, object, undefined for "complete msg" mode where the
+    // value lives one level down, etc.).
+    function stringifyDebugValue(value) {
+        if (typeof value === "string") { return value; }
+        try { return JSON.stringify(value); } catch (e) { return String(value); }
+    }
+
+    // RED.comms.subscribe callbacks receive (topic, msg) — the topic is
+    // always "debug" here since that's the only topic we subscribed to.
+    function onDebugMessage(topic, msg) {
+        if (!msg) { return; }
+        var entry = {
+            id: nextDebugMessageId++,
+            timestamp: Date.now(),
+            name: msg.name || msg.id || "(unnamed node)",
+            topic: msg.topic || "",
+            value: truncateForDebug(stringifyDebugValue(msg.msg), DEBUG_VALUE_MAX_CHARS)
+        };
+        debugMessageBuffer.push(entry);
+        if (debugMessageBuffer.length > DEBUG_BUFFER_MAX) {
+            debugMessageBuffer = debugMessageBuffer.slice(-DEBUG_BUFFER_MAX);
+        }
+    }
+
+    // Merges any attached debug messages into a request's context object —
+    // called right after collectSelectionContext() in send/generate/
+    // documentFlow/modifyFlow. Leaves context untouched (including null) when
+    // nothing is attached.
+    function attachDebugContext(context) {
+        if (!attachedDebugMessages.length) { return context; }
+        context = context || { nodes: [], connections: {} };
+        return Object.assign({}, context, { debugMessages: attachedDebugMessages.slice() });
+    }
+
+    // Updates the "🐛 N debug message(s) attached" indicator in the context
+    // strip, shown only when something is attached.
+    function updateDebugStatus() {
+        var $status = el("#fp-debug-status");
+        if (!$status.length) { return; }
+        if (!attachedDebugMessages.length) {
+            $status.addClass("fp-hidden").empty();
+            return;
+        }
+        $status.removeClass("fp-hidden").empty();
+        var n = attachedDebugMessages.length;
+        $status.append(document.createTextNode("🐛 " + n + " debug message" + (n === 1 ? "" : "s") + " attached "));
+        var $clear = $("<a>").attr("href", "#").text("✕").attr("title", "Remove all attached debug messages");
+        $clear.on("click", function (ev) {
+            ev.preventDefault();
+            attachedDebugMessages = [];
+            updateDebugStatus();
+        });
+        $status.append($clear);
+    }
+
     function getHistoryMaxExchanges() {
         var n = Number(currentSettings.historyMaxExchanges);
         return (isFinite(n) && n >= 0) ? n : 10;
@@ -391,10 +467,12 @@
     function clearChat() {
         el("#fp-messages").empty();
         conversationHistory = [];
+        attachedDebugMessages = [];
         pinnedSelectionIds = null;
         conversationId = newConversationId();
         fpChatSnappedToBottom = true;
         updateSelectionStatus();
+        updateDebugStatus();
     }
 
     // D6: "Flight log" — a conversation list layered over the A3 transcript
@@ -548,6 +626,53 @@
                 if (r.user) { conversationHistory.push({ role: "user", content: String(r.user) }); }
                 if (r.assistant) { conversationHistory.push({ role: "assistant", content: String(r.assistant) }); }
                 $use.prop("disabled", true).text("Added to context");
+            });
+            $item.append($use);
+
+            $msg.append($item);
+        });
+
+        $box.append($msg);
+        scrollMessagesToBottom();
+    }
+
+    // Debug log: shows the recent Debug-sidebar messages buffered via
+    // RED.comms (most recent first), each with an "Attach" button — same
+    // interaction as Recall's "Use this" (renderRecallResults above), per
+    // the user's preference for that pattern. Attaching adds the entry to
+    // attachedDebugMessages, which is merged into the next request(s)'
+    // context by attachDebugContext().
+    function showDebugMessages() {
+        var $box = el("#fp-messages");
+        if (!$box.length) { return; }
+
+        if (!debugMessageBuffer.length) {
+            addMessage("assistant", "No debug messages captured yet. Trigger a flow with a Debug node wired to the sidebar, then try again.");
+            return;
+        }
+
+        var attachedIds = {};
+        attachedDebugMessages.forEach(function (m) { attachedIds[m.id] = true; });
+
+        var $msg = $("<div>").addClass("fp-message fp-recall");
+        $("<div>").addClass("fp-label").text("DEBUG LOG").appendTo($msg);
+
+        debugMessageBuffer.slice().reverse().forEach(function (entry) {
+            var $item = $("<div>").addClass("fp-recall-item");
+            var when = new Date(entry.timestamp).toLocaleTimeString();
+            var meta = when + " · " + entry.name + (entry.topic ? " · topic: " + entry.topic : "");
+            $("<div>").addClass("fp-recall-meta").text(meta).appendTo($item);
+            $("<div>").addClass("fp-recall-text").text(entry.value).appendTo($item);
+
+            var already = !!attachedIds[entry.id];
+            var $use = $("<button>").addClass("fp-recall-use red-ui-button red-ui-button-small")
+                .attr("type", "button")
+                .prop("disabled", already)
+                .text(already ? "Attached" : "Attach");
+            $use.on("click", function () {
+                attachedDebugMessages.push(entry);
+                $use.prop("disabled", true).text("Attached");
+                updateDebugStatus();
             });
             $item.append($use);
 
@@ -923,6 +1048,43 @@
             addMessage("assistant", "System prompt reset to the current default. Click Save Settings to apply.");
         }, function (msg) {
             addMessage("error", "Unable to load the default system prompt: " + msg);
+        });
+    }
+
+    // Models dropdown: populate #fp-model-options from a /flowpilot/models
+    // result, and show a hint explaining what happened. #fp-model stays
+    // free-text (list="fp-model-options") — providers that don't implement
+    // /v1/models (or return nothing useful) just leave the field as-is.
+    function populateModelOptions(models, error) {
+        var $list = el("#fp-model-options");
+        $list.empty();
+        (models || []).forEach(function (m) {
+            $("<option>").attr("value", m).appendTo($list);
+        });
+        var $hint = el("#fp-models-hint").removeClass("fp-hidden");
+        if (error) {
+            $hint.text("Couldn't load model list: " + error + ". You can still type a model name manually.");
+        } else if (!models || !models.length) {
+            $hint.text("Provider returned no models. You can still type a model name manually.");
+        } else {
+            $hint.text(models.length + " model(s) loaded — pick from the dropdown or type your own.");
+        }
+    }
+
+    // Refresh models: save the form first (like Pre-flight check, so the
+    // backend queries the provider the user is looking at), then fetch
+    // GET /v1/models via the backend and populate the datalist.
+    function refreshModels() {
+        saveSettings(function () {
+            var $btn = el("#fp-refresh-models");
+            $btn.prop("disabled", true);
+            ajaxJson("POST", "flowpilot/models", {}, function (data) {
+                $btn.prop("disabled", false);
+                populateModelOptions(data.models, data.error);
+            }, function (msg) {
+                $btn.prop("disabled", false);
+                populateModelOptions([], msg);
+            });
         });
     }
 
@@ -1428,11 +1590,16 @@
         var nodeCount = (context && context.nodes) ? context.nodes.length : 0;
         var connCount = (context && context.connections && context.connections.edges)
             ? context.connections.edges.length : 0;
-        return nodeCount
-            ? "\n\n[+ " + nodeCount + " node(s)" +
-              (connCount ? ", " + connCount + " connection(s)" : "") +
-              " attached as context]"
-            : "";
+        var debugCount = (context && context.debugMessages) ? context.debugMessages.length : 0;
+
+        var parts = [];
+        if (nodeCount) {
+            parts.push(nodeCount + " node(s)" + (connCount ? ", " + connCount + " connection(s)" : ""));
+        }
+        if (debugCount) {
+            parts.push(debugCount + " debug message(s)");
+        }
+        return parts.length ? "\n\n[+ " + parts.join(", ") + " attached as context]" : "";
     }
 
     // endpoint is "chat" (real prompt) or "test" (connectivity check)
@@ -1448,7 +1615,7 @@
         // Connectivity test never carries flow context or conversation
         // history; keep it minimal and out of the conversation entirely.
         var isChat = endpoint === "chat";
-        var context = (endpoint === "test") ? null : collectSelectionContext();
+        var context = (endpoint === "test") ? null : attachDebugContext(collectSelectionContext());
         var note = contextAttachmentNote(context);
         addMessage("user", prompt + note);
         // #8: build the history payload BEFORE pushing this turn, so
@@ -2017,7 +2184,7 @@
         // the nodes you've selected (e.g. "wire this into my MQTT setup").
         // A2: falls back to the pinned selection if nothing is currently
         // selected, so follow-up turns need no reselection.
-        var context = collectSelectionContext(activeSelectionIds());
+        var context = attachDebugContext(collectSelectionContext(activeSelectionIds()));
         var label = "Generate: " + prompt + contextAttachmentNote(context);
         addMessage("user", label);
         if (prompt === DEMO_PROMPT) {
@@ -2069,6 +2236,7 @@
             addMessage("error", "Select the node(s) you want documented first.");
             return;
         }
+        context = attachDebugContext(context);
 
         var $promptBox = el("#fp-prompt");
         var notes = $promptBox.length ? $promptBox.val().trim() : "";
@@ -3029,6 +3197,7 @@
             addMessage("error", "Select the node(s) you want to modify first.");
             return;
         }
+        context = attachDebugContext(context);
         var $promptBox = el("#fp-prompt");
         var instruction = $promptBox.length ? $promptBox.val().trim() : "";
         if (!instruction) {
@@ -3540,6 +3709,7 @@
                 '      <div class="fp-view-buttons">' +
                 '        <button id="fp-clear-chat" class="red-ui-button red-ui-button-small" type="button" title="Clear chat and start a fresh conversation (resets memory)"><i class="fa fa-eraser"></i></button>' +
                 '        <button id="fp-recall" class="red-ui-button red-ui-button-small" type="button" title="Recall: search earlier conversations for the text in the prompt box"><i class="fa fa-search"></i></button>' +
+                '        <button id="fp-debug-log" class="red-ui-button red-ui-button-small" type="button" title="Debug log: view recent Debug sidebar output and attach messages as context"><i class="fa fa-bug"></i></button>' +
                 '        <button id="fp-show-chat" class="red-ui-button red-ui-button-small" type="button" title="Chat"><i class="fa fa-comments"></i></button>' +
                 '        <button id="fp-show-history" class="red-ui-button red-ui-button-small" type="button" title="Flight log — past conversations"><i class="fa fa-history"></i></button>' +
                 '        <button id="fp-show-settings" class="red-ui-button red-ui-button-small" type="button" title="Settings"><i class="fa fa-cog"></i></button>' +
@@ -3574,6 +3744,7 @@
                 '        <span id="fp-selection-status" class="fp-selection-status">No nodes selected</span>' +
                 '        <span id="fp-size-status" class="fp-size-status fp-hidden"></span>' +
                 '        <span id="fp-secrets-status" class="fp-secrets-status fp-hidden" title="Context may include node config and code. Don\'t send credentials or proprietary data. Local/private AI recommended.">⚠</span>' +
+                '        <span id="fp-debug-status" class="fp-debug-status fp-hidden"></span>' +
                 '      </div>' +
                 '      <div class="fp-prompt-wrap">' +
                 '        <textarea id="fp-prompt" placeholder="Select nodes for context, or just type a question…"></textarea>' +
@@ -3611,11 +3782,14 @@
                 '      <label>API Key</label>' +
                 '      <input id="fp-api-key" type="password" placeholder="Optional">' +
                 '      <label>Model</label>' +
-                '      <input id="fp-model" type="text" placeholder="Model name for this provider">' +
+                '      <input id="fp-model" type="text" list="fp-model-options" placeholder="Model name for this provider">' +
+                '      <datalist id="fp-model-options"></datalist>' +
+                '      <div id="fp-models-hint" class="fp-consent-hint fp-hidden"></div>' +
                 '      <label>Temperature</label>' +
                 '      <input id="fp-temperature" type="number" min="0" max="2" step="0.1" placeholder="0.2">' +
                 '      <div class="fp-settings-actions">' +
                 '        <button id="fp-test-provider" class="red-ui-button" type="button" title="Pre-flight check — save and send a quick test to this provider">Pre-flight check</button>' +
+                '        <button id="fp-refresh-models" class="red-ui-button" type="button" title="Save settings, then fetch this provider\'s model list via GET /v1/models">Refresh models</button>' +
                 '      </div>' +
                 '      </details>' +
 
@@ -3700,6 +3874,14 @@
             content.find("#fp-show-history").on("click", showHistory);
             content.find("#fp-clear-chat").on("click", clearChat);
             content.find("#fp-recall").on("click", recallSearch);
+            content.find("#fp-debug-log").on("click", showDebugMessages);
+
+            // Subscribe once to the same RED.comms "debug" topic the built-in
+            // Debug sidebar uses, to buffer recent messages locally for
+            // optional attachment (showDebugMessages/attachDebugContext).
+            // Nothing is sent to the backend until the user explicitly
+            // attaches a message and sends a request.
+            try { RED.comms.subscribe("debug", onDebugMessage); } catch (e) { /* comms unavailable */ }
 
             // Track whether the user is scrolled to the bottom of the chat,
             // so "Cruising…"/streaming updates only auto-follow when they
@@ -3738,6 +3920,7 @@
             content.find("#fp-add-provider").on("click", function () { addProvider(); });
             content.find("#fp-remove-provider").on("click", function () { removeProvider(); });
             content.find("#fp-test-provider").on("click", function () { testProvider(); });
+            content.find("#fp-refresh-models").on("click", function () { refreshModels(); });
             content.find("#fp-reset-system-prompt").on("click", function () { resetSystemPrompt(); });
 
             // Re-enable Test provider live as the user types a model.
@@ -4466,6 +4649,23 @@
     color: #b35900;
     cursor: default;
     flex: 0 0 auto;
+}
+
+.fp-debug-status {
+    font-size: 12px;
+    color: var(--red-ui-secondary-text-color, #888);
+    padding-left: 8px;
+    border-left: 1px solid var(--red-ui-secondary-border-color, #ddd);
+}
+
+.fp-debug-status a {
+    margin-left: 4px;
+    color: inherit;
+    text-decoration: none;
+}
+
+.fp-debug-status a:hover {
+    text-decoration: underline;
 }
 
 .fp-settings-section {
