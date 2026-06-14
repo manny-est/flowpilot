@@ -133,6 +133,7 @@
         el("#fp-document").removeClass("fp-action-armed");
         el("#fp-modify").removeClass("fp-action-armed");
         el("#fp-send").text("Send").removeClass("fp-send-armed");
+        el(".fp-compose").removeClass("fp-mode-execute");
     }
 
     function setArmedExecuteAction(action) {
@@ -147,6 +148,7 @@
         else if (armedExecuteAction === "document") { label = "Send (Document)"; }
         else if (armedExecuteAction === "modify") { label = "Send (Modify)"; }
         el("#fp-send").text(label).addClass("fp-send-armed");
+        el(".fp-compose").addClass("fp-mode-execute");
     }
 
     // Workstream C: arms the given Execute action regardless of current
@@ -331,8 +333,17 @@
             addMessage("error", "A custom button needs both a label and instruction text.");
             return;
         }
+        // D5: catch label collisions with the built-in Query buttons (Explain/
+        // Troubleshoot/Review/Suggest) or an existing custom button — two
+        // same-named buttons in the action bar are confusingly ambiguous.
         var list = Array.isArray(currentSettings.customIntents)
             ? currentSettings.customIntents.slice() : [];
+        var taken = INTENTS.map(function (i) { return i.label.toLowerCase(); })
+            .concat(list.map(function (c) { return (c.label || "").toLowerCase(); }));
+        if (taken.indexOf(label.toLowerCase()) !== -1) {
+            addMessage("error", "A button named \"" + label + "\" already exists. Choose a different label.");
+            return;
+        }
         list.push({ label: label, text: text });
         currentSettings.customIntents = list;
         el("#fp-new-intent-label").val("");
@@ -349,15 +360,29 @@
     function showChat() {
         el("#fp-chat-panel").removeClass("fp-hidden");
         el("#fp-settings-panel").addClass("fp-hidden");
+        el("#fp-history-panel").addClass("fp-hidden");
         el("#fp-show-chat").addClass("fp-active");
         el("#fp-show-settings").removeClass("fp-active");
+        el("#fp-show-history").removeClass("fp-active");
     }
 
     function showSettings() {
         el("#fp-settings-panel").removeClass("fp-hidden");
         el("#fp-chat-panel").addClass("fp-hidden");
+        el("#fp-history-panel").addClass("fp-hidden");
         el("#fp-show-settings").addClass("fp-active");
         el("#fp-show-chat").removeClass("fp-active");
+        el("#fp-show-history").removeClass("fp-active");
+    }
+
+    function showHistory() {
+        el("#fp-history-panel").removeClass("fp-hidden");
+        el("#fp-chat-panel").addClass("fp-hidden");
+        el("#fp-settings-panel").addClass("fp-hidden");
+        el("#fp-show-history").addClass("fp-active");
+        el("#fp-show-chat").removeClass("fp-active");
+        el("#fp-show-settings").removeClass("fp-active");
+        loadConversationList();
     }
 
     // Clears the visible chat AND resets the conversation history the model
@@ -368,6 +393,97 @@
         pinnedSelectionIds = null;
         conversationId = newConversationId();
         updateSelectionStatus();
+    }
+
+    // D6: "Flight log" — a conversation list layered over the A3 transcript
+    // files. Loading a conversation rehydrates conversationHistory and the
+    // visible chat from its saved transcript, so a follow-up message picks
+    // up that conversation's memory rather than starting a fresh one.
+    function formatRelativeTime(timestamp) {
+        var then = new Date(timestamp).getTime();
+        if (!isFinite(then)) { return ""; }
+        var seconds = Math.max(0, (Date.now() - then) / 1000);
+        if (seconds < 60) { return "just now"; }
+        var minutes = seconds / 60;
+        if (minutes < 60) { return Math.floor(minutes) + " min ago"; }
+        var hours = minutes / 60;
+        if (hours < 24) { return Math.floor(hours) + " hr ago"; }
+        var days = hours / 24;
+        if (days < 30) { return Math.floor(days) + " day" + (Math.floor(days) === 1 ? "" : "s") + " ago"; }
+        return new Date(timestamp).toLocaleDateString();
+    }
+
+    function loadConversationList() {
+        var $list = el("#fp-history-list");
+        if (!$list.length) { return; }
+        $list.empty().append($("<div>").addClass("fp-consent-hint").text("Loading…"));
+
+        ajaxJson("GET", "flowpilot/conversations", null, function (data) {
+            renderHistoryList(data.conversations || []);
+        }, function (msg) {
+            $list.empty();
+            $("<div>").addClass("fp-consent-hint").text("Unable to load conversation list: " + msg).appendTo($list);
+        });
+    }
+
+    function renderHistoryList(conversations) {
+        var $list = el("#fp-history-list");
+        if (!$list.length) { return; }
+        $list.empty();
+
+        if (!conversations.length) {
+            $("<div>").addClass("fp-consent-hint").text("No saved conversations yet.").appendTo($list);
+            return;
+        }
+
+        conversations.forEach(function (c) {
+            var $item = $("<div>").addClass("fp-history-item");
+            if (c.id === conversationId) { $item.addClass("fp-history-current"); }
+
+            var $main = $("<div>").addClass("fp-history-main");
+            $("<div>").addClass("fp-history-title").text(c.title || "(untitled)").appendTo($main);
+            var meta = c.exchangeCount + (c.exchangeCount === 1 ? " exchange" : " exchanges") +
+                " · " + formatRelativeTime(c.lastTimestamp);
+            $("<div>").addClass("fp-history-meta").text(meta).appendTo($main);
+            $main.on("click", function () { loadConversation(c.id); });
+            $item.append($main);
+
+            var $del = $("<button>").addClass("fp-history-delete red-ui-button red-ui-button-small")
+                .attr("type", "button").attr("title", "Delete this conversation's saved transcript permanently")
+                .append($("<i>").addClass("fa fa-trash"));
+            $del.on("click", function (ev) {
+                ev.stopPropagation();
+                if (!window.confirm("Delete this conversation's saved transcript? This can't be undone.")) { return; }
+                ajaxJson("DELETE", "flowpilot/conversations/" + encodeURIComponent(c.id), null, function () {
+                    loadConversationList();
+                });
+            });
+            $item.append($del);
+
+            $list.append($item);
+        });
+    }
+
+    // Switches to a past conversation: rebuilds conversationHistory and the
+    // visible chat from its saved transcript, and continues using its
+    // conversationId so new turns append to the same transcript file.
+    function loadConversation(id) {
+        ajaxJson("GET", "flowpilot/conversations/" + encodeURIComponent(id), null, function (data) {
+            conversationId = id;
+            try { sessionStorage.setItem("fp-conversation-id", id); } catch (e) { /* storage unavailable */ }
+
+            conversationHistory = [];
+            el("#fp-messages").empty();
+            (data.messages || []).forEach(function (m) {
+                if (m.role !== "user" && m.role !== "assistant") { return; }
+                conversationHistory.push({ role: m.role, content: String(m.content || "") });
+                addMessage(m.role, m.content);
+            });
+
+            pinnedSelectionIds = null;
+            updateSelectionStatus();
+            showChat();
+        });
     }
 
     // A3b/A3c: Recall — searches OTHER past conversations' transcripts for the
@@ -439,6 +555,111 @@
         $box.scrollTop($box[0].scrollHeight);
     }
 
+    // ---- Markdown rendering -----------------------------------------------
+    // D2: chat bubbles render a small, safe subset of markdown. All text is
+    // HTML-escaped before any tags are introduced, and only the fixed set of
+    // tags this code itself emits ever reaches the DOM — raw HTML from the
+    // model or the user is never interpreted, so no separate HTML sanitizer
+    // (e.g. DOMPurify) is needed.
+    function escapeHtml(str) {
+        return String(str)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+    }
+
+    // Inline markdown within a single (already-escaped) line: `code`,
+    // **bold**, *italic*, and [text](http(s) url) links. Code spans are
+    // split out first so their contents are immune to further markup.
+    function renderInlineMarkdown(escaped) {
+        var parts = escaped.split(/(`[^`]+`)/);
+        return parts.map(function (part, i) {
+            if (i % 2 === 1) {
+                return "<code>" + part.slice(1, -1) + "</code>";
+            }
+            return part
+                .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+                .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+                .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+        }).join("");
+    }
+
+    // Block-level markdown: fenced code blocks, headings, bullet/numbered
+    // lists, and paragraphs (consecutive lines joined with <br>).
+    function renderMarkdown(raw) {
+        var lines = String(raw || "").split("\n");
+        var html = "";
+        var listType = null;
+        var paraLines = [];
+
+        function flushPara() {
+            if (paraLines.length) {
+                html += "<p>" + paraLines.map(function (l) {
+                    return renderInlineMarkdown(escapeHtml(l));
+                }).join("<br>") + "</p>";
+                paraLines = [];
+            }
+        }
+        function closeList() {
+            if (listType) { html += "</" + listType + ">"; listType = null; }
+        }
+
+        var i = 0;
+        while (i < lines.length) {
+            var line = lines[i];
+
+            var fence = line.match(/^```(\w*)\s*$/);
+            if (fence) {
+                flushPara(); closeList();
+                var codeLines = [];
+                i++;
+                while (i < lines.length && !/^```\s*$/.test(lines[i])) {
+                    codeLines.push(lines[i]);
+                    i++;
+                }
+                html += "<pre><code>" + escapeHtml(codeLines.join("\n")) + "</code></pre>";
+                i++;
+                continue;
+            }
+
+            var heading = line.match(/^(#{1,6})\s+(.*)$/);
+            if (heading) {
+                flushPara(); closeList();
+                var level = Math.min(6, heading[1].length + 2);
+                html += "<h" + level + ">" + renderInlineMarkdown(escapeHtml(heading[2])) + "</h" + level + ">";
+                i++;
+                continue;
+            }
+
+            var bullet = line.match(/^\s*[-*]\s+(.*)$/);
+            if (bullet) {
+                flushPara();
+                if (listType !== "ul") { closeList(); html += "<ul>"; listType = "ul"; }
+                html += "<li>" + renderInlineMarkdown(escapeHtml(bullet[1])) + "</li>";
+                i++;
+                continue;
+            }
+
+            var numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
+            if (numbered) {
+                flushPara();
+                if (listType !== "ol") { closeList(); html += "<ol>"; listType = "ol"; }
+                html += "<li>" + renderInlineMarkdown(escapeHtml(numbered[1])) + "</li>";
+                i++;
+                continue;
+            }
+
+            flushPara(); closeList();
+
+            if (line.trim()) { paraLines.push(line); }
+            i++;
+        }
+        flushPara(); closeList();
+        return html;
+    }
+
     // ---- Messages -------------------------------------------------------
 
     function addMessage(role, text) {
@@ -450,7 +671,7 @@
 
         var $msg = $("<div>").addClass(cls);
         $("<div>").addClass("fp-label").text(label).appendTo($msg);
-        $("<div>").text(text || "").appendTo($msg);
+        $("<div>").addClass("fp-md").html(renderMarkdown(text || "")).appendTo($msg);
 
         $box.append($msg);
         $box.scrollTop($box[0].scrollHeight);
@@ -467,8 +688,9 @@
 
         var $msg = $("<div>").addClass("fp-message").attr("id", "fp-pending");
         $("<div>").addClass("fp-label").text("FLOWPILOT").appendTo($msg);
-        var $dots = $("<div>").addClass("fp-typing");
+        var $dots = $("<div>").addClass("fp-typing").attr("title", "Working…");
         $dots.append($("<span>"), $("<span>"), $("<span>"));
+        $dots.append($("<span>").addClass("fp-typing-label").text("Cruising…"));
         $msg.append($dots);
 
         $box.append($msg);
@@ -838,7 +1060,21 @@
             return { node: nodeLabel(n), subFlow: groupOf[n.id], inputs: ins, outputs: outs };
         });
 
-        return { edges: edges, perNode: perNode, subFlowCount: subFlowCount };
+        // B4: "edges" and "perNode" otherwise duplicate the same from/to
+        // labels — perNode already carries the readable "Name [type]" labels,
+        // so trim edges down to ids + port + selection flags (the part
+        // perNode doesn't have) to avoid sending the same labels twice.
+        var compactEdges = edges.map(function (e) {
+            return {
+                fromId: e.fromId,
+                fromPort: e.fromPort,
+                toId: e.toId,
+                sourceInSelection: e.sourceInSelection,
+                targetInSelection: e.targetInSelection
+            };
+        });
+
+        return { edges: compactEdges, perNode: perNode, subFlowCount: subFlowCount };
     }
 
     // Returns { nodes, connections } or null if nothing selected.
@@ -965,9 +1201,7 @@
         if (count === 0 || currentSettings.suppressContextWarnings) {
             $secrets.addClass("fp-hidden");
         } else {
-            $secrets.text("⚠ Context may include node config and code. Don't send " +
-                          "credentials or proprietary data. Local/private AI recommended.")
-                    .removeClass("fp-hidden");
+            $secrets.removeClass("fp-hidden");
         }
     }
 
@@ -976,7 +1210,7 @@
     function maybeShowFirstRun(settings) {
         if (settings && settings.firstRunAcknowledged) { return; }
         addMessage("assistant",
-            "Welcome to FlowPilot.\n\n" +
+            "Welcome to FlowPilot. You pick the destination, I help you get there.\n\n" +
             "FlowPilot sends your selected Node-RED nodes — including their " +
             "configuration and any code inside function or template nodes — to " +
             "the AI provider you configure. Please keep in mind:\n\n" +
@@ -1087,7 +1321,7 @@
         if ($msg.length) {
             $msg.removeAttr("id").empty();
             $("<div>").addClass("fp-label").text("FLOWPILOT").appendTo($msg);
-            $text = $("<div>").appendTo($msg);
+            $text = $("<div>").addClass("fp-md").appendTo($msg);
         }
 
         var fullText = "";
@@ -1143,7 +1377,7 @@
                 if (evt.delta) {
                     fullText += evt.delta;
                     ensureBubble();
-                    $text.text(fullText);
+                    $text.html(renderMarkdown(fullText));
                     $box.scrollTop($box[0].scrollHeight);
                 }
             });
@@ -1291,7 +1525,7 @@
         $("<button>")
             .addClass("red-ui-button red-ui-button-small fp-chip")
             .attr("type", "button")
-            .attr("title", suggestedAction.prompt)
+            .attr("title", "Cleared for takeoff — " + suggestedAction.prompt)
             .append($("<i>").addClass("fa fa-paper-plane"))
             .append($("<span>").text(" " + modeLabel + ": " + preview))
             .on("click", function () { applySuggestedAction(suggestedAction); })
@@ -1379,7 +1613,7 @@
         if ($msg.length) {
             $msg.removeAttr("id").empty();
             $("<div>").addClass("fp-label").text("FLOWPILOT").appendTo($msg);
-            $text = $("<div>").appendTo($msg);
+            $text = $("<div>").addClass("fp-md").appendTo($msg);
         }
 
         var extractor = createExplanationExtractor();
@@ -1420,7 +1654,7 @@
                     var text = extractor.push(evt.delta);
                     if (text !== null) {
                         ensureBubble();
-                        $text.text(text);
+                        $text.html(renderMarkdown(text));
                         $box.scrollTop($box[0].scrollHeight);
                     }
                     // The explanation has fully arrived but the rest of the
@@ -1659,47 +1893,82 @@
         var placeholderIds = {};
         newNodes.forEach(function (n) { if (n.id) { placeholderIds[n.id] = true; } });
 
-        // Find live positions of existing nodes referenced in newWires so we
-        // can anchor the inserted cluster next to them on the canvas.
-        // Split into "upstream" (existing node feeds INTO a new node) and
-        // "downstream" (a new node feeds INTO an existing node) anchors -
-        // a wire's direction matters for where the cluster should land.
-        var upstreamAnchors = [];
-        var downstreamAnchors = [];
+        // D5: group new nodes into connected clusters (by each node's own
+        // "wires" plus any "newWires" edges between two placeholders), so
+        // multiple unrelated insertions in one response are each anchored to
+        // THEIR OWN existing-node connections instead of bunching together at
+        // one shared location.
+        var parent = {};
+        newNodes.forEach(function (n) { parent[n.id] = n.id; });
+        function findRoot(x) {
+            while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+            return x;
+        }
+        function union(a, b) {
+            if (parent[a] === undefined || parent[b] === undefined) { return; }
+            parent[findRoot(a)] = findRoot(b);
+        }
+        newNodes.forEach(function (n) {
+            (Array.isArray(n.wires) ? n.wires : []).forEach(function (port) {
+                (Array.isArray(port) ? port : []).forEach(function (tid) {
+                    if (placeholderIds[tid]) { union(n.id, tid); }
+                });
+            });
+        });
+        (newWires || []).forEach(function (wire) {
+            if (placeholderIds[wire.from] && placeholderIds[wire.to]) {
+                union(wire.from, wire.to);
+            }
+        });
+        var componentOf = {};
+        newNodes.forEach(function (n) { componentOf[n.id] = findRoot(n.id); });
+
+        // Per-component anchors: existing-node connections (from newWires)
+        // touching THIS component only. Split into "upstream" (existing node
+        // feeds INTO this component) and "downstream" (this component feeds
+        // INTO an existing node) — a wire's direction matters for where the
+        // cluster should land.
+        var componentAnchors = {};
+        Object.keys(componentOf).forEach(function (id) {
+            var c = componentOf[id];
+            if (!componentAnchors[c]) { componentAnchors[c] = { upstream: [], downstream: [] }; }
+        });
         (newWires || []).forEach(function (wire) {
             var fromIsNew = placeholderIds[wire.from];
             var toIsNew = placeholderIds[wire.to];
             if (!fromIsNew && toIsNew) {
                 var src = RED.nodes.node(wire.from);
                 if (src && typeof src.x === "number" && typeof src.y === "number") {
-                    upstreamAnchors.push(src);
+                    componentAnchors[componentOf[wire.to]].upstream.push(src);
                 }
             } else if (fromIsNew && !toIsNew) {
                 var tgt = RED.nodes.node(wire.to);
                 if (tgt && typeof tgt.x === "number" && typeof tgt.y === "number") {
-                    downstreamAnchors.push(tgt);
+                    componentAnchors[componentOf[wire.from]].downstream.push(tgt);
                 }
             }
         });
-        var anchorNodes = upstreamAnchors.concat(downstreamAnchors);
 
-        // Fallback (Finding #18): if no wire connects a new node to an
-        // existing one (e.g. "add a change node" with no wiring specified),
-        // there's no anchor — without this, the node lands at
-        // layoutGeneratedFlow's hardcoded default (160,120) canvas position,
-        // which can be far outside the user's current viewport on a larger
-        // flow. A successful insert then looks like nothing happened. Anchor
-        // on the user's current Modify selection instead, so the new node(s)
-        // land near what the user is looking at.
-        if (anchorNodes.length === 0 && Array.isArray(contextNodeIds)) {
+        // Fallback (Finding #18): a cluster with no existing-node connection
+        // at all (e.g. "add a change node" with no wiring specified) anchors
+        // on the user's current Modify selection instead of
+        // layoutGeneratedFlow's hardcoded default (160,120), which can be far
+        // outside the user's current viewport on a larger flow.
+        var fallbackAnchors = [];
+        if (Array.isArray(contextNodeIds)) {
             contextNodeIds.forEach(function (id) {
                 var live = RED.nodes.node(id);
                 if (live && typeof live.x === "number" && typeof live.y === "number") {
-                    upstreamAnchors.push(live);
+                    fallbackAnchors.push(live);
                 }
             });
-            anchorNodes = upstreamAnchors.concat(downstreamAnchors);
         }
+        Object.keys(componentAnchors).forEach(function (c) {
+            var a = componentAnchors[c];
+            if (a.upstream.length === 0 && a.downstream.length === 0) {
+                a.upstream = fallbackAnchors.slice();
+            }
+        });
 
         // Layout new nodes so they have x/y before adding to the graph.
         var toLayout = newNodes.map(function (n) {
@@ -1707,32 +1976,41 @@
         });
         var laid = layoutGeneratedFlow(toLayout);
 
-        // Position the cluster relative to its anchors, centred on their
-        // average Y. layoutGeneratedFlow starts at (160, 120).
-        // - If the new node(s) receive a connection FROM an existing node
+        // Position each cluster relative to ITS OWN anchors, centred on their
+        // average Y, preserving that cluster's internal column/row layout
+        // from layoutGeneratedFlow.
+        // - If a cluster receives a connection FROM an existing node
         //   ("inserted after X" / "inserted between X and Y"), land 200px
         //   right of the rightmost such upstream anchor. This is correct
         //   even when downstream anchors exist further right (e.g. "insert
         //   a function between the inject and the existing debugs" should
         //   land right after the inject, not past the debugs).
-        // - Otherwise (the new node only feeds existing nodes, e.g. "add an
+        // - Otherwise (the cluster only feeds existing nodes, e.g. "add an
         //   inject that triggers this debug"), land 200px left of the
         //   leftmost downstream anchor.
-        if (anchorNodes.length > 0) {
+        Object.keys(componentAnchors).forEach(function (c) {
+            var a = componentAnchors[c];
+            var anchorNodes = a.upstream.concat(a.downstream);
+            if (!anchorNodes.length) { return; }
+
+            var members = laid.filter(function (n) { return componentOf[n.id] === c; });
+            var minX = members.reduce(function (m, n) { return Math.min(m, n.x); }, members[0].x);
+            var minY = members.reduce(function (m, n) { return Math.min(m, n.y); }, members[0].y);
+
             var avgY = anchorNodes.reduce(function (s, n) { return s + n.y; }, 0) / anchorNodes.length;
             var targetX;
-            if (upstreamAnchors.length > 0) {
-                var maxUpstreamX = upstreamAnchors.reduce(function (m, n) { return Math.max(m, n.x); }, 0);
+            if (a.upstream.length > 0) {
+                var maxUpstreamX = a.upstream.reduce(function (m, n) { return Math.max(m, n.x); }, 0);
                 targetX = maxUpstreamX + 200;
             } else {
-                var minDownstreamX = downstreamAnchors.reduce(function (m, n) { return Math.min(m, n.x); }, downstreamAnchors[0].x);
+                var minDownstreamX = a.downstream.reduce(function (m, n) { return Math.min(m, n.x); }, a.downstream[0].x);
                 targetX = minDownstreamX - 200;
             }
-            laid.forEach(function (n) {
-                n.x = n.x - 160 + targetX;
-                n.y = n.y - 120 + avgY;
+            members.forEach(function (n) {
+                n.x = n.x - minX + targetX;
+                n.y = n.y - minY + avgY;
             });
-        }
+        });
 
         // Build placeholder-id → real-id map and assign real ids + z.
         var idMap = {};
@@ -1936,9 +2214,9 @@
         RED.view.redraw(true);
 
         // Phase 6 chunk 5: ground follow-up turns in what was just inserted.
-        var insertedNote = "Inserted " + (addedNodes.length + addedJunctions.length) + " node(s)" +
+        var insertedNote = "Touchdown — inserted " + (addedNodes.length + addedJunctions.length) + " node(s)" +
             (addedLinks.length ? " and added " + addedLinks.length + " wire connection(s)" : "") +
-            ". Use Ctrl+Z to undo.";
+            ". Ctrl+Z to undo.";
         addMessage("assistant", insertedNote);
         pushHistory("assistant", insertedNote);
         updateSelectionStatus();
@@ -2464,7 +2742,7 @@
         } else if (parts.length) {
             // Phase 6 chunk 5: ground follow-up turns ("now undo the topic
             // change") in what was actually applied.
-            var appliedNote = "Applied: " + parts.join(", ") + ". Use Ctrl+Z to undo.";
+            var appliedNote = "Touchdown — applied " + parts.join(", ") + ". Ctrl+Z to undo.";
             addMessage("assistant", appliedNote);
             pushHistory("assistant", appliedNote);
             updateSelectionStatus();
@@ -2673,7 +2951,7 @@
             // Phase 6 chunk 5: ground follow-up turns in what was just
             // imported (placement itself happens on the next canvas click).
             var n = Array.isArray(nodes) ? nodes.length : 0;
-            var importedNote = "Imported " + n + " node(s) — click the canvas to place them.";
+            var importedNote = "Landed — imported " + n + " node(s). Click the canvas to place them.";
             addMessage("assistant", importedNote);
             pushHistory("assistant", importedNote);
             updateSelectionStatus();
@@ -2854,6 +3132,7 @@
                 '        <button id="fp-clear-chat" class="red-ui-button red-ui-button-small" type="button" title="Clear chat and start a fresh conversation (resets memory)"><i class="fa fa-eraser"></i></button>' +
                 '        <button id="fp-recall" class="red-ui-button red-ui-button-small" type="button" title="Recall: search earlier conversations for the text in the prompt box"><i class="fa fa-search"></i></button>' +
                 '        <button id="fp-show-chat" class="red-ui-button red-ui-button-small" type="button" title="Chat"><i class="fa fa-comments"></i></button>' +
+                '        <button id="fp-show-history" class="red-ui-button red-ui-button-small" type="button" title="Flight log — past conversations"><i class="fa fa-history"></i></button>' +
                 '        <button id="fp-show-settings" class="red-ui-button red-ui-button-small" type="button" title="Settings"><i class="fa fa-cog"></i></button>' +
                 '      </div>' +
                 '    </div>' +
@@ -2882,9 +3161,11 @@
                 '          </div>' +
                 '        </div>' +
                 '      </div>' +
-                '      <div id="fp-selection-status" class="fp-selection-status">No nodes selected</div>' +
-                '      <div id="fp-size-status" class="fp-size-status fp-hidden"></div>' +
-                '      <div id="fp-secrets-status" class="fp-secrets-status fp-hidden"></div>' +
+                '      <div class="fp-context-strip">' +
+                '        <span id="fp-selection-status" class="fp-selection-status">No nodes selected</span>' +
+                '        <span id="fp-size-status" class="fp-size-status fp-hidden"></span>' +
+                '        <span id="fp-secrets-status" class="fp-secrets-status fp-hidden" title="Context may include node config and code. Don\'t send credentials or proprietary data. Local/private AI recommended.">⚠</span>' +
+                '      </div>' +
                 '      <textarea id="fp-prompt" placeholder="Select nodes for context, or just type a question…"></textarea>' +
                 '      <div class="fp-compose-footer">' +
                 '        <div id="fp-provider-status">Provider: not loaded</div>' +
@@ -2902,7 +3183,9 @@
                 '      Stored locally under the Node-RED user directory in <code>flowpilot/settings.json</code>.' +
                 '    </div>' +
                 '    <div class="fp-form">' +
-                '      <div class="fp-settings-section">AI Provider</div>' +
+
+                '      <details class="fp-settings-group" open>' +
+                '      <summary title="Hangar — where your AI providers are configured">Providers</summary>' +
                 '      <label>Active provider</label>' +
                 '      <select id="fp-provider-select"></select>' +
                 '      <div class="fp-provider-actions">' +
@@ -2920,17 +3203,14 @@
                 '      <label>Temperature</label>' +
                 '      <input id="fp-temperature" type="number" min="0" max="2" step="0.1" placeholder="0.2">' +
                 '      <div class="fp-settings-actions">' +
-                '        <button id="fp-test-provider" class="red-ui-button" type="button" title="Save and send a quick test to this provider">Test provider</button>' +
+                '        <button id="fp-test-provider" class="red-ui-button" type="button" title="Pre-flight check — save and send a quick test to this provider">Pre-flight check</button>' +
                 '      </div>' +
+                '      </details>' +
 
+                '      <details class="fp-settings-group">' +
+                '      <summary>Behavior</summary>' +
                 '      <div class="fp-settings-section">System Prompt</div>' +
                 '      <textarea id="fp-system-prompt"></textarea>' +
-
-                '      <div class="fp-settings-section">Context size warnings</div>' +
-                '      <label>Warn above (estimated tokens)</label>' +
-                '      <input id="fp-warn-tokens" type="number" min="0" step="500" placeholder="4000">' +
-                '      <label>Strong warning above (estimated tokens)</label>' +
-                '      <input id="fp-high-tokens" type="number" min="0" step="500" placeholder="8000">' +
 
                 '      <div class="fp-settings-section">Conversation memory</div>' +
                 '      <label>Remember last N exchanges</label>' +
@@ -2946,16 +3226,6 @@
                 '      <div class="fp-consent-hint">Only applies to chat replies — Generate, ' +
                 '        Document, and Modify always wait for the full response.</div>' +
 
-                '      <div class="fp-settings-section">Risk warnings</div>' +
-                '      <label class="fp-checkbox-row">' +
-                '        <input id="fp-suppress-warnings" type="checkbox"> ' +
-                '        Hide the recurring credentials/size warning bar' +
-                '      </label>' +
-                '      <div class="fp-consent-hint">To hide the warning, check the box and type ' +
-                '        <strong>I understand the risk</strong> below. ' +
-                '        Anything you send may leave this Node-RED instance.</div>' +
-                '      <input id="fp-suppress-confirm" type="text" placeholder="Type: I understand the risk">' +
-
                 '      <div class="fp-settings-section">Custom intent buttons</div>' +
                 '      <div class="fp-consent-hint">Add your own one-click prompt buttons. ' +
                 '        They appear next to the built-in ones above the prompt.</div>' +
@@ -2967,10 +3237,40 @@
                 '      <div class="fp-settings-actions">' +
                 '        <button id="fp-add-intent" class="red-ui-button" type="button">Add button</button>' +
                 '      </div>' +
+                '      </details>' +
+
+                '      <details class="fp-settings-group">' +
+                '      <summary>Context &amp; Safety</summary>' +
+                '      <div class="fp-settings-section">Context size warnings</div>' +
+                '      <label>Warn above (estimated tokens)</label>' +
+                '      <input id="fp-warn-tokens" type="number" min="0" step="500" placeholder="4000">' +
+                '      <label>Strong warning above (estimated tokens)</label>' +
+                '      <input id="fp-high-tokens" type="number" min="0" step="500" placeholder="8000">' +
+
+                '      <div class="fp-settings-section">Risk warnings</div>' +
+                '      <label class="fp-checkbox-row">' +
+                '        <input id="fp-suppress-warnings" type="checkbox"> ' +
+                '        Hide the recurring credentials/size warning bar' +
+                '      </label>' +
+                '      <div class="fp-consent-hint">To hide the warning, check the box and type ' +
+                '        <strong>I understand the risk</strong> below. ' +
+                '        Anything you send may leave this Node-RED instance.</div>' +
+                '      <input id="fp-suppress-confirm" type="text" placeholder="Type: I understand the risk">' +
+                '      </details>' +
 
                 '      <div class="fp-settings-actions">' +
                 '        <button id="fp-save-settings" class="red-ui-button red-ui-button-primary" type="button">Save settings</button>' +
                 '      </div>' +
+                '    </div>' +
+                '  </div>' +
+
+                '  <div id="fp-history-panel" class="fp-panel fp-hidden">' +
+                '    <div class="fp-form">' +
+                '      <div class="fp-settings-section">Flight log — past conversations</div>' +
+                '      <div class="fp-consent-hint">Click a conversation to load it back into Chat — ' +
+                '        new messages continue that conversation\'s memory. Deleting a conversation ' +
+                '        removes its saved transcript permanently.</div>' +
+                '      <div id="fp-history-list" class="fp-history-list"></div>' +
                 '    </div>' +
                 '  </div>' +
                 '</div>'
@@ -2982,6 +3282,7 @@
             // ---- Bind events here, after the DOM exists. No inline onclick.
             content.find("#fp-show-chat").on("click", showChat);
             content.find("#fp-show-settings").on("click", showSettings);
+            content.find("#fp-show-history").on("click", showHistory);
             content.find("#fp-clear-chat").on("click", clearChat);
             content.find("#fp-recall").on("click", recallSearch);
 
@@ -3193,6 +3494,50 @@
     border-color: rgba(255, 80, 80, 0.65);
 }
 
+/* D2: rendered markdown inside chat bubbles. */
+.fp-md > *:first-child {
+    margin-top: 0;
+}
+.fp-md > *:last-child {
+    margin-bottom: 0;
+}
+.fp-md p {
+    margin: 0 0 8px 0;
+}
+.fp-md ul, .fp-md ol {
+    margin: 0 0 8px 0;
+    padding-left: 22px;
+}
+.fp-md li {
+    margin-bottom: 2px;
+}
+.fp-md h3, .fp-md h4, .fp-md h5, .fp-md h6 {
+    margin: 10px 0 6px 0;
+    line-height: 1.3;
+}
+.fp-md code {
+    font-family: monospace;
+    background: rgba(127, 127, 127, 0.15);
+    border-radius: 3px;
+    padding: 1px 4px;
+    white-space: pre-wrap;
+}
+.fp-md pre {
+    margin: 0 0 8px 0;
+    padding: 8px 10px;
+    border-radius: 5px;
+    background: rgba(127, 127, 127, 0.12);
+    overflow-x: auto;
+    white-space: pre;
+}
+.fp-md pre code {
+    background: none;
+    padding: 0;
+}
+.fp-md a {
+    color: var(--red-ui-text-color-link, #1f88e5);
+}
+
 /* Pending "typing" indicator — three bouncing dots. */
 .fp-typing {
     display: flex;
@@ -3211,6 +3556,13 @@
 
 .fp-typing span:nth-child(2) { animation-delay: 0.18s; }
 .fp-typing span:nth-child(3) { animation-delay: 0.36s; }
+
+.fp-typing-label {
+    font-size: 11px;
+    color: var(--red-ui-secondary-text-color, #999);
+    margin-left: 4px;
+    align-self: center;
+}
 
 @keyframes fp-bounce {
     0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
@@ -3270,6 +3622,50 @@
 
 .fp-recall-use:disabled {
     opacity: 0.6;
+}
+
+/* D6: "Flight log" conversation list. */
+.fp-history-list {
+    margin-top: 10px;
+}
+
+.fp-history-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--red-ui-secondary-border-color, #ddd);
+    margin-bottom: 6px;
+}
+
+.fp-history-current {
+    border-color: rgba(31, 136, 229, 0.5);
+    background: rgba(31, 136, 229, 0.08);
+}
+
+.fp-history-main {
+    flex: 1;
+    min-width: 0;
+    cursor: pointer;
+}
+
+.fp-history-title {
+    font-size: 13px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fp-history-meta {
+    font-size: 11px;
+    color: var(--red-ui-secondary-text-color, #888);
+    margin-top: 2px;
+}
+
+.fp-history-delete {
+    flex: 0 0 auto;
 }
 
 .fp-json {
@@ -3505,9 +3901,18 @@
     text-overflow: ellipsis;
 }
 
+/* D5: selection / size / secrets indicators consolidated into one compact
+   strip above the prompt box, instead of three stacked lines. */
+.fp-context-strip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+}
+
 .fp-selection-status {
     font-size: 12px;
-    margin-bottom: 8px;
     color: var(--red-ui-secondary-text-color, #888);
     display: flex;
     align-items: center;
@@ -3534,8 +3939,9 @@
 
 .fp-size-status {
     font-size: 12px;
-    margin-bottom: 6px;
     color: var(--red-ui-secondary-text-color, #888);
+    padding-left: 8px;
+    border-left: 1px solid var(--red-ui-secondary-border-color, #ddd);
 }
 
 .fp-size-status.fp-size-warn {
@@ -3548,15 +3954,20 @@
     font-weight: 600;
 }
 
+/* Compact secrets reminder: a small badge icon carrying the full reminder as
+   a tooltip, instead of a persistent multi-line warning box. */
 .fp-secrets-status {
     font-size: 12px;
-    margin-bottom: 8px;
-    padding: 6px 8px;
-    border-radius: 6px;
-    background: rgba(255, 152, 0, 0.12);
+    width: 18px;
+    height: 18px;
+    line-height: 18px;
+    text-align: center;
+    border-radius: 50%;
+    background: rgba(255, 152, 0, 0.18);
     border: 1px solid rgba(255, 152, 0, 0.5);
-    color: var(--red-ui-primary-text-color, #333);
-    line-height: 1.4;
+    color: #b35900;
+    cursor: default;
+    flex: 0 0 auto;
 }
 
 .fp-settings-section {
@@ -3567,6 +3978,46 @@
     font-size: 13px;
     letter-spacing: 0.03em;
     color: var(--red-ui-secondary-text-color, #777);
+}
+
+.fp-settings-group {
+    margin-top: 14px;
+    padding: 0 12px 12px 12px;
+    border: 1px solid var(--red-ui-secondary-border-color, #ddd);
+    border-radius: 6px;
+}
+
+.fp-settings-group > summary {
+    margin: 0 -12px;
+    cursor: pointer;
+    padding: 10px 12px;
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.03em;
+    color: var(--red-ui-primary-text-color, #333);
+    list-style: none;
+    user-select: none;
+}
+
+.fp-settings-group > summary::-webkit-details-marker {
+    display: none;
+}
+
+.fp-settings-group > summary::before {
+    content: "▸";
+    display: inline-block;
+    width: 1em;
+    color: var(--red-ui-secondary-text-color, #888);
+}
+
+.fp-settings-group[open] > summary::before {
+    content: "▾";
+}
+
+.fp-settings-group > .fp-settings-section:first-of-type {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
 }
 
 .fp-checkbox-row {
@@ -3601,6 +4052,16 @@
     color: var(--red-ui-form-input-text-color, #333);
     font-family: inherit;
     font-size: 14px;
+    box-shadow: 0 0 0 1px rgba(255, 152, 0, 0.35);
+    transition: box-shadow 0.15s, border-color 0.15s;
+}
+
+/* D3: mode color-coding — Query/chat (default) is orange ("won't change your
+   flow"); an armed Execute action (Generate/Document/Modify) switches the
+   compose area to blue ("about to propose changes"). */
+.fp-compose.fp-mode-execute #fp-prompt {
+    border-color: #1f88e5;
+    box-shadow: 0 0 0 1px rgba(31, 136, 229, 0.5);
 }
 
 .fp-compose-footer {

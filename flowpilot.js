@@ -206,15 +206,17 @@ module.exports = function flowPilotRuntime(RED) {
 
     let content = "The user has selected the following Node-RED nodes as context. " +
               "This is sanitized configuration; credentials are redacted.\n\n" +
-              "Nodes:\n```json\n" + JSON.stringify(nodes, null, 2) + "\n```";
+              "Nodes:\n```json\n" + JSON.stringify(nodes) + "\n```";
     if (edges.length > 0) {
-      content += "\n\nConnections — directed edges (a node's wires describe its " +
-             "OUTPUTS; one edge per output port):\n```json\n" +
-             JSON.stringify(edges, null, 2) + "\n```";
-      content += "\n\nPer-node wiring summary (inputs are reconstructed, since " +
-             "Node-RED nodes do not store their own inputs; subFlow groups " +
-             "nodes into connected sub-flows):\n```json\n" +
-             JSON.stringify(perNode, null, 2) + "\n```";
+      content += "\n\nConnections — directed edges by node id (a node's wires " +
+             "describe its OUTPUTS; one edge per output port; fromId/toId refer " +
+             "to the \"id\" fields in Nodes above):\n```json\n" +
+             JSON.stringify(edges) + "\n```";
+      content += "\n\nPer-node wiring summary, with readable \"Name [type]\" " +
+             "labels (inputs are reconstructed, since Node-RED nodes do not " +
+             "store their own inputs; subFlow groups nodes into connected " +
+             "sub-flows):\n```json\n" +
+             JSON.stringify(perNode) + "\n```";
     }
     if (subFlowCount > 1) {
       content += "\n\nNote: the selection contains " + subFlowCount + " separate, " +
@@ -392,6 +394,58 @@ module.exports = function flowPilotRuntime(RED) {
       res.json({ results: results });
     } catch (err) {
       storage.appendAudit({ action: "recall_error", error: err.message });
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ---------------------------------------------------------------------
+  // D6: conversation list ("Flight log"), layered over the A3 transcript
+  // files. Summaries are read-only and derived on the fly — title is the
+  // first user message, trimmed; full transcripts are fetched on demand.
+  // ---------------------------------------------------------------------
+  function summarizeTranscript(id) {
+    const entries = storage.readTranscript(id);
+    if (!entries.length) { return null; }
+    const firstUser = entries.find(function (e) { return e.role === "user"; });
+    const last = entries[entries.length - 1];
+    return {
+      id: id,
+      title: firstUser ? String(firstUser.content).trim().slice(0, 80) : "(untitled)",
+      lastTimestamp: last.timestamp,
+      exchangeCount: groupExchanges(entries).length
+    };
+  }
+
+  RED.httpAdmin.get("/flowpilot/conversations", RED.auth.needsPermission("settings.read"), function (req, res) {
+    try {
+      const conversations = storage.listConversationIds()
+        .map(summarizeTranscript)
+        .filter(Boolean)
+        .sort(function (a, b) { return new Date(b.lastTimestamp) - new Date(a.lastTimestamp); });
+      res.json({ conversations: conversations });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  RED.httpAdmin.get("/flowpilot/conversations/:id", RED.auth.needsPermission("settings.read"), function (req, res) {
+    const id = sanitizeConversationId(req.params.id);
+    if (!id) { return res.status(400).json({ error: "Invalid conversation id." }); }
+    try {
+      res.json({ id: id, messages: storage.readTranscript(id) });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  RED.httpAdmin.delete("/flowpilot/conversations/:id", RED.auth.needsPermission("settings.write"), function (req, res) {
+    const id = sanitizeConversationId(req.params.id);
+    if (!id) { return res.status(400).json({ error: "Invalid conversation id." }); }
+    try {
+      storage.deleteTranscript(id);
+      storage.appendAudit({ action: "conversation_delete", conversationId: id });
+      res.json({ ok: true });
+    } catch (err) {
       res.status(500).json({ error: err.message });
     }
   });
