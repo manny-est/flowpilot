@@ -631,6 +631,53 @@ module.exports = function flowPilotRuntime(RED) {
       return questionResult;
     }
 
+    // B2: /modify returns a sparse "changes" envelope (patches against the
+    // selection) instead of a full "flow" array. "changes", "newNodes",
+    // "newWires" and "removeNodes" are all individually optional — a no-op
+    // modify can legitimately omit all of them — but the envelope must
+    // contain at least one of those keys or a non-empty "explanation",
+    // otherwise it's not recognizable as a modify response at all.
+    if (auditAction === "modify") {
+      const hasModifyShape = ("changes" in parsed) || ("newNodes" in parsed) ||
+        ("newWires" in parsed) || ("removeNodes" in parsed) ||
+        (typeof parsed.explanation === "string" && parsed.explanation.trim());
+      if (!hasModifyShape) {
+        const err = new Error("The response did not contain any recognizable modify fields.");
+        err.status = 422;
+        err.raw = content;
+        throw err;
+      }
+
+      const changes = Array.isArray(parsed.changes) ? parsed.changes : [];
+      const newNodes = Array.isArray(parsed.newNodes) ? parsed.newNodes : [];
+      const newWires = Array.isArray(parsed.newWires) ? parsed.newWires : [];
+      const removeNodes = Array.isArray(parsed.removeNodes) ? parsed.removeNodes : [];
+
+      storage.appendAudit(Object.assign({
+        action: auditAction,
+        providerName: activeProvider.providerName,
+        baseUrl: activeProvider.baseUrl,
+        model: activeProvider.model,
+        changeCount: changes.length,
+        newNodeCount: newNodes.length,
+        newWireCount: newWires.length,
+        removeNodeCount: removeNodes.length,
+        contextNodeCount: described ? described.nodeCount : 0,
+        contextConnectionCount: described ? described.connectionCount : 0
+      }, perf));
+
+      const modifyResult = {
+        explanation: parsed.explanation || "",
+        changes: changes,
+        newNodes: newNodes,
+        newWires: newWires,
+        removeNodes: removeNodes
+      };
+      const modifyAction = extractSuggestedAction(parsed);
+      if (modifyAction) { modifyResult.suggestedAction = modifyAction; }
+      return modifyResult;
+    }
+
     const flow = Array.isArray(parsed.flow) ? parsed.flow : null;
     if (!flow) {
       const err = new Error("The response did not contain a 'flow' array.");
@@ -720,13 +767,17 @@ module.exports = function flowPilotRuntime(RED) {
   }
 
   // ---------------------------------------------------------------------
-  // B1: turn a runFlowGeneration(Stream) result into a { status, body }
-  // response for /modify — question/prose passthrough, else the full
+  // B2: turn a runFlowGeneration(Stream) result into a { status, body }
+  // response for /modify — question/prose passthrough, else reconstruct the
+  // full "flow" by applying the model's sparse "changes" patches on top of
+  // the original selection (B2 patch format: the model returns only
+  // { id, set: {...changed props} } for nodes it actually touches, instead
+  // of repeating every node's full JSON). Also runs the
   // removeNodes/newNodes/newWires validation that previously lived inline in
   // the /flowpilot/modify route handler. Used by both the non-streaming and
   // streaming routes.
   // ---------------------------------------------------------------------
-  function finalizeModifyResult(result, originalIds) {
+  function finalizeModifyResult(result, originalNodes) {
     if (result.question) {
       const questionBody = { explanation: result.explanation, question: result.question, flow: null };
       if (result.suggestedAction) { questionBody.suggestedAction = result.suggestedAction; }
@@ -735,6 +786,8 @@ module.exports = function flowPilotRuntime(RED) {
     if (result.prose) {
       return { status: 200, body: { explanation: result.prose, prose: true, flow: null } };
     }
+
+    const originalIds = new Set(originalNodes.map(function (n) { return n.id; }));
 
     // Validate removeNodes: all ids must be in the original selection.
     const removeNodes = Array.isArray(result.removeNodes) ? result.removeNodes : [];
@@ -751,33 +804,25 @@ module.exports = function flowPilotRuntime(RED) {
         };
       }
     }
-
-    // Build the set of ids that should remain in flow (original minus removals).
     const removeSet = new Set(removeNodes.map(String));
-    const returnedIds = result.flow.map(function (n) { return n.id; });
-    const returnedIdSet = new Set(returnedIds);
 
-    // Models often drop a node from "flow" to remove it without also listing
-    // it in "removeNodes" (despite the prompt's instructions). Treat any
-    // original id that's missing from flow and not already in removeNodes as
-    // an implicit removal rather than a hard error — the review UI surfaces
-    // every removal for the user to approve before anything is applied.
-    const implicitRemovals = Array.from(originalIds).filter(function (id) {
-      return !returnedIdSet.has(id) && !removeSet.has(id);
-    });
-    if (implicitRemovals.length > 0) {
-      storage.appendAudit({ action: "modify_implicit_remove", ids: implicitRemovals });
-      implicitRemovals.forEach(function (id) { removeSet.add(id); });
-    }
+    // B2: "changes" is a sparse array of { id, set } patches against the
+    // original selection. A node with no entry here is kept exactly as-is —
+    // unlike the old full-"flow" format, omission can only mean "unchanged",
+    // never "delete", so there's no "implicit removal" failure mode anymore.
+    const changes = Array.isArray(result.changes) ? result.changes : [];
+    const changeIds = changes
+      .map(function (c) { return c && c.id; })
+      .filter(function (id) { return id !== undefined && id !== null; });
 
-    // Validate that flow contains no hallucinated ids, and that no id is both
-    // kept in flow and marked for removal.
-    const extraIds = returnedIds.filter(function (id) { return !originalIds.has(id); });
-    const wronglyKeptIds = returnedIds.filter(function (id) { return removeSet.has(id); });
+    // Validate that changes contains no hallucinated ids, and that no id is
+    // both patched and marked for removal.
+    const extraIds = changeIds.filter(function (id) { return !originalIds.has(String(id)); });
+    const wronglyRemovedIds = changeIds.filter(function (id) { return removeSet.has(String(id)); });
 
     const idProblems = [];
-    if (extraIds.length) { idProblems.push("unexpected id(s) in flow: " + extraIds.join(", ")); }
-    if (wronglyKeptIds.length) { idProblems.push("id(s) in both flow and removeNodes: " + wronglyKeptIds.join(", ")); }
+    if (extraIds.length) { idProblems.push("unexpected id(s) in changes: " + extraIds.join(", ")); }
+    if (wronglyRemovedIds.length) { idProblems.push("id(s) in both changes and removeNodes: " + wronglyRemovedIds.join(", ")); }
 
     if (idProblems.length > 0) {
       storage.appendAudit({ action: "modify_id_mismatch", problems: idProblems });
@@ -785,10 +830,31 @@ module.exports = function flowPilotRuntime(RED) {
         status: 422,
         body: {
           error: "The model returned inconsistent node ids (" + idProblems.join("; ") + "). Try again.",
-          raw: JSON.stringify(result.flow)
+          raw: JSON.stringify(changes)
         }
       };
     }
+
+    // Each patch's "set" is shallow-merged onto a copy of the original node.
+    // "id", "x", "y", "z" can never move via a patch — strip them
+    // defensively even though the prompt already forbids them.
+    const patchById = {};
+    changes.forEach(function (c) {
+      const set = (c.set && typeof c.set === "object") ? c.set : {};
+      const clean = Object.assign({}, set);
+      delete clean.id;
+      delete clean.x;
+      delete clean.y;
+      delete clean.z;
+      patchById[String(c.id)] = clean;
+    });
+
+    const flow = originalNodes
+      .filter(function (n) { return !removeSet.has(String(n.id)); })
+      .map(function (n) {
+        const patch = patchById[String(n.id)];
+        return patch ? Object.assign({}, n, patch) : n;
+      });
 
     const finalRemoveNodes = Array.from(removeSet);
 
@@ -842,7 +908,7 @@ module.exports = function flowPilotRuntime(RED) {
 
     const body = {
       explanation: explanation,
-      flow: result.flow,
+      flow: flow,
       newNodes: newNodes,
       newWires: newWires,
       removeNodes: finalRemoveNodes
@@ -977,14 +1043,14 @@ module.exports = function flowPilotRuntime(RED) {
       return res.status(400).json({ error: "Describe what you want to change." });
     }
 
-    // Build a set of the original ids so we can validate the model's output.
+    // The model's "changes" patches are applied on top of these original
+    // nodes to reconstruct the full "flow" sent to the editor.
     const originalNodes = (context && Array.isArray(context.nodes)) ? context.nodes : [];
-    const originalIds = new Set(originalNodes.map(function (n) { return n.id; }));
 
     const history = sanitizeHistory(req.body.history);
     const historyTruncated = !!req.body.historyTruncated;
 
-    const finalize = function (result) { return finalizeModifyResult(result, originalIds); };
+    const finalize = function (result) { return finalizeModifyResult(result, originalNodes); };
 
     if (req.body.stream) {
       return runExecuteStream(
