@@ -928,7 +928,13 @@
 
         ajaxJson("POST", "flowpilot/" + endpoint, payload, function (data) {
             hidePending();
-            addMessage("assistant", data.message || JSON.stringify(data, null, 2));
+            var message = data.message || JSON.stringify(data, null, 2);
+            // Bcap1: Test Provider also reports tool-calling support, used by
+            // Phase 7's agentic path.
+            if (data.capability && data.capability.label) {
+                message += "\n\n" + data.capability.label;
+            }
+            addMessage("assistant", message);
             if (isChat) { pushHistory("assistant", data.message || ""); }
             setBusy(false);
             updateSelectionStatus();

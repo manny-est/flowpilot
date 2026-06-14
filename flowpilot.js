@@ -291,7 +291,7 @@ module.exports = function flowPilotRuntime(RED) {
     const prompt = (req.body && req.body.prompt) || "Say hello from FlowPilot.";
 
     try {
-      const { activeProvider, result, perf } = await runChat(prompt, "connectivity-test");
+      const { settings, activeProvider, result, perf } = await runChat(prompt, "connectivity-test");
 
       storage.appendAudit(Object.assign({
         action: "chat_test",
@@ -300,9 +300,34 @@ module.exports = function flowPilotRuntime(RED) {
         model: activeProvider.model
       }, perf));
 
+      // Bcap1: capability probe — connectivity already succeeded above, so a
+      // probe failure here just means "no tool support", not a /test failure.
+      // Persist the result on the provider profile for Phase 7's agentic path.
+      const probe = await provider.probeTools(activeProvider);
+      storage.appendAudit({
+        action: "capability_probe",
+        providerName: activeProvider.providerName,
+        baseUrl: activeProvider.baseUrl,
+        model: activeProvider.model,
+        supportsTools: probe.supportsTools
+      });
+
+      const updatedProviders = (settings.providers || []).map(function (p) {
+        return p.id === activeProvider.id
+          ? Object.assign({}, p, { supportsTools: probe.supportsTools, toolsProbedAt: new Date().toISOString() })
+          : p;
+      });
+      storage.saveSettings(Object.assign({}, settings, { providers: updatedProviders }));
+
       res.json({
         message: result.content || "[No assistant message returned by provider]",
-        raw: result.raw ? "[raw response captured]" : null
+        raw: result.raw ? "[raw response captured]" : null,
+        capability: {
+          supportsTools: probe.supportsTools,
+          label: probe.supportsTools
+            ? "✓ Connected · ✓ Supports tools"
+            : "✓ Connected · ⚠ No tool support — compatibility mode"
+        }
       });
     } catch (err) {
       storage.appendAudit({ action: "chat_test_error", error: err.message });
