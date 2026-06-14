@@ -62,6 +62,69 @@
     }
 
     // ---------------------------------------------------------------------
+    // Secret detection — shared by the node-selection sanitizer (Phase 2,
+    // below) and the live debug-message redactor (next section). Two
+    // complementary checks:
+    //   - VALUE_SECRET_PATTERNS: the VALUE looks like a credential (bearer
+    //     token, JWT, AWS key, high-entropy blob), regardless of field name.
+    //   - SECRET_KEY: the field NAME looks secret-bearing (password, token,
+    //     apiKey, ...) AND the value is a string long enough to plausibly be
+    //     a real secret — short strings like `key: "ab"` or numbers like
+    //     `keyCount: 3` are left alone.
+    // Redaction is informative, not silent: placeholders carry the kind and
+    // original length (`[redacted: bearer token, 211 chars]`) so the AI can
+    // still reason about "an auth header was present" without seeing it.
+    // ---------------------------------------------------------------------
+    var SECRET_KEY = /pass|secret|token|apikey|api_key|key$|credential|auth|bearer/i;
+    var SECRET_NAME_MIN_LEN = 8;
+
+    var VALUE_SECRET_PATTERNS = [
+        // Case-insensitive and tolerant of "Bearer: <token>" /
+        // "bearer=<token>" variants, not just the strict HTTP-header form.
+        { kind: "bearer token", re: /\bbearer\s*[:=]?\s+[A-Za-z0-9._\-]{8,}/i },
+        { kind: "JWT", re: /\beyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+/ },
+        { kind: "AWS key", re: /\bAKIA[0-9A-Z]{16}\b/ },
+        // Long high-entropy hex/base64-ish blob with no whitespace — catches
+        // raw tokens/secrets that don't match a more specific pattern above.
+        { kind: "token/secret", re: /^[A-Za-z0-9+/=_\-]{32,}$/ }
+    ];
+
+    function matchSecretValue(str) {
+        for (var i = 0; i < VALUE_SECRET_PATTERNS.length; i++) {
+            if (VALUE_SECRET_PATTERNS[i].re.test(str)) { return VALUE_SECRET_PATTERNS[i].kind; }
+        }
+        return null;
+    }
+
+    // Recursively redacts secret-shaped values out of a debug message / node
+    // config value. `key` is the property name the value was found under
+    // (undefined for array elements and the top-level value) — used only for
+    // the name-based check. Structural data (numbers, booleans, short
+    // strings, object/array shape) passes through untouched, preserving
+    // diagnostic value.
+    function redactDebugValue(value, key) {
+        if (typeof value === "string") {
+            var kind = matchSecretValue(value);
+            if (kind) { return "[redacted: " + kind + ", " + value.length + " chars]"; }
+            if (key !== undefined && SECRET_KEY.test(String(key)) && value.length > SECRET_NAME_MIN_LEN) {
+                return "[redacted: secret field, " + value.length + " chars]";
+            }
+            return value;
+        }
+        if (Array.isArray(value)) {
+            return value.map(function (v) { return redactDebugValue(v, key); });
+        }
+        if (value && typeof value === "object") {
+            var out = {};
+            Object.keys(value).forEach(function (k) {
+                out[k] = redactDebugValue(value[k], k);
+            });
+            return out;
+        }
+        return value;
+    }
+
+    // ---------------------------------------------------------------------
     // Live debug-message context: a rolling local-only buffer of recent
     // Node-RED Debug sidebar output (populated via RED.comms "debug"
     // subscription, see plugin onadd), plus the subset the user has
@@ -91,14 +154,21 @@
 
     // RED.comms.subscribe callbacks receive (topic, msg) — the topic is
     // always "debug" here since that's the only topic we subscribed to.
+    //
+    // Secrets are redacted HERE, at capture time, before anything enters
+    // debugMessageBuffer — the raw value is never buffered, let alone sent.
+    // Redact first, then truncate, so a secret can't survive by being cut
+    // off mid-value rather than recognized and replaced.
     function onDebugMessage(topic, msg) {
         if (!msg) { return; }
+        var redactedValue = redactDebugValue(msg.msg, undefined);
+        var redactedTopic = redactDebugValue(msg.topic || "", undefined);
         var entry = {
             id: nextDebugMessageId++,
             timestamp: Date.now(),
             name: msg.name || msg.id || "(unnamed node)",
-            topic: msg.topic || "",
-            value: truncateForDebug(stringifyDebugValue(msg.msg), DEBUG_VALUE_MAX_CHARS)
+            topic: redactedTopic,
+            value: truncateForDebug(stringifyDebugValue(redactedValue), DEBUG_VALUE_MAX_CHARS)
         };
         debugMessageBuffer.push(entry);
         if (debugMessageBuffer.length > DEBUG_BUFFER_MAX) {
@@ -656,6 +726,8 @@
 
         var $msg = $("<div>").addClass("fp-message fp-recall");
         $("<div>").addClass("fp-label").text("DEBUG LOG").appendTo($msg);
+        $("<div>").addClass("fp-debug-warning").text("Debug payloads can contain credentials from connected " +
+            "systems. Common secret patterns are redacted automatically, but review before attaching.").appendTo($msg);
 
         debugMessageBuffer.slice().reverse().forEach(function (entry) {
             var $item = $("<div>").addClass("fp-recall-item");
@@ -1180,7 +1252,6 @@
         __outputs: 1, inputs: 1, outputs: 1, g: 1, _config: 1, _orig: 1,
         credentials: 1
     };
-    var SECRET_KEY = /pass|secret|token|apikey|api_key|key$|credential|auth/i;
 
     function sanitizeNode(n) {
         var out = {};
@@ -1191,8 +1262,13 @@
             if (typeof v === "function") { return; }
             // JSON round-trip strips the proxy wrapper and drops anything
             // non-serializable, leaving plain config values (incl. props).
-            try { out[k] = JSON.parse(JSON.stringify(v)); }
-            catch (e) { out[k] = "[unserializable]"; }
+            try { v = JSON.parse(JSON.stringify(v)); }
+            catch (e) { out[k] = "[unserializable]"; return; }
+            // Defense-in-depth: the field NAME passed the SECRET_KEY check
+            // above, but a secret can still hide in an innocuously-named
+            // field (e.g. a "data" field holding a JWT) — catch those by
+            // value shape, recursively.
+            out[k] = redactDebugValue(v, k);
         });
         return out;
     }
@@ -2286,10 +2362,16 @@
         _config: 1, _orig: 1, credentials: 1
     };
 
-    // Sentinel strings written by sanitizeNode for values it couldn't include.
-    // If the model echoes these back, the field is opaque — skip it entirely;
-    // never write a sentinel string into a live node property.
-    var SANITIZE_SENTINELS = { "[unserializable]": true, "[redacted]": true };
+    // Sentinel strings written by sanitizeNode (and redactDebugValue) for
+    // values it couldn't include or had to redact. If the model echoes one
+    // of these back, the field is opaque — skip it entirely; never write a
+    // sentinel string into a live node property. "[redacted]" is the plain
+    // top-level-secret-field sentinel; "[redacted: <kind>, <n> chars]" is the
+    // informative value-shape sentinel from redactDebugValue.
+    function isSanitizeSentinel(value) {
+        return typeof value === "string" &&
+            (value === "[unserializable]" || value === "[redacted]" || value.indexOf("[redacted:") === 0);
+    }
 
     function generateNodeId() {
         var chars = "0123456789abcdef";
@@ -2698,7 +2780,7 @@
             var newRaw = modNode[k];
             // If the model echoed a sanitizer sentinel, the field is opaque —
             // we can't meaningfully compare or apply it, so skip entirely.
-            if (SANITIZE_SENTINELS[newRaw]) { return; }
+            if (isSanitizeSentinel(newRaw)) { return; }
             var oldRaw = liveNode ? liveNode[k] : undefined;
             var oldStr, newStr;
             try { oldStr = JSON.stringify(oldRaw); } catch (e) { oldStr = String(oldRaw); }
@@ -4734,6 +4816,14 @@
     font-size: 12px;
     color: var(--red-ui-secondary-text-color, #888);
     margin: 6px 0;
+    line-height: 1.4;
+}
+
+.fp-debug-warning {
+    font-size: 12px;
+    color: var(--red-ui-secondary-text-color, #888);
+    text-decoration: underline;
+    margin: 2px 0 6px;
     line-height: 1.4;
 }
 
