@@ -927,6 +927,30 @@
             return;
         }
 
+        // Shared SSE-line parser: handles `data: {"delta":"..."}` /
+        // `data: {"error":"..."}` / `data: [DONE]` lines, appending deltas to
+        // fullText and rendering them. Used by both the streaming pump() loop
+        // (called per-chunk with the trailing partial line held back) and the
+        // non-getReader fallback (#12, called once with the full body split
+        // into lines), so neither path can drift or show raw SSE text.
+        function processSseLines(lines) {
+            lines.forEach(function (line) {
+                line = line.trim();
+                if (line.indexOf("data:") !== 0) { return; }
+                var dataStr = line.slice(5).trim();
+                if (!dataStr || dataStr === "[DONE]") { return; }
+                var evt;
+                try { evt = JSON.parse(dataStr); } catch (e) { return; }
+                if (evt.error) { throw new Error(evt.error); }
+                if (evt.delta) {
+                    fullText += evt.delta;
+                    ensureBubble();
+                    $text.text(fullText);
+                    $box.scrollTop($box[0].scrollHeight);
+                }
+            });
+        }
+
         fetch("flowpilot/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -940,12 +964,11 @@
                 });
             }
             if (!resp.body || !resp.body.getReader) {
-                // No streaming support in this environment — fall back to a
-                // single full-text render.
+                // No streaming support in this environment — parse the full
+                // SSE response body with the same logic as pump() below, so
+                // the user sees the parsed reply, not raw `data: {...}` lines.
                 return resp.text().then(function (text) {
-                    fullText = text;
-                    ensureBubble();
-                    $text.text(fullText);
+                    processSseLines(text.split("\n"));
                 });
             }
 
@@ -959,21 +982,7 @@
                     buf += decoder.decode(step.value, { stream: true });
                     var lines = buf.split("\n");
                     buf = lines.pop();
-                    lines.forEach(function (line) {
-                        line = line.trim();
-                        if (line.indexOf("data:") !== 0) { return; }
-                        var dataStr = line.slice(5).trim();
-                        if (!dataStr || dataStr === "[DONE]") { return; }
-                        var evt;
-                        try { evt = JSON.parse(dataStr); } catch (e) { return; }
-                        if (evt.error) { throw new Error(evt.error); }
-                        if (evt.delta) {
-                            fullText += evt.delta;
-                            ensureBubble();
-                            $text.text(fullText);
-                            $box.scrollTop($box[0].scrollHeight);
-                        }
-                    });
+                    processSseLines(lines);
                     return pump();
                 });
             }
