@@ -1934,6 +1934,9 @@
         var context = collectSelectionContext(activeSelectionIds());
         var label = "Generate: " + prompt + contextAttachmentNote(context);
         addMessage("user", label);
+        if (prompt === DEMO_PROMPT) {
+            addMessage("assistant", "This is a large request — AI providers may take 20+ seconds to respond.");
+        }
         // #8: snapshot history before pushing this turn (see send()).
         var historyPayload = buildHistoryPayload();
         pushHistory("user", label);
