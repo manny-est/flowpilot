@@ -392,6 +392,7 @@
         conversationHistory = [];
         pinnedSelectionIds = null;
         conversationId = newConversationId();
+        fpChatSnappedToBottom = true;
         updateSelectionStatus();
     }
 
@@ -474,6 +475,7 @@
 
             conversationHistory = [];
             el("#fp-messages").empty();
+            fpChatSnappedToBottom = true;
             (data.messages || []).forEach(function (m) {
                 if (m.role !== "user" && m.role !== "assistant") { return; }
                 conversationHistory.push({ role: m.role, content: String(m.content || "") });
@@ -552,7 +554,7 @@
         });
 
         $box.append($msg);
-        $box.scrollTop($box[0].scrollHeight);
+        scrollMessagesToBottom();
     }
 
     // ---- Markdown rendering -----------------------------------------------
@@ -662,6 +664,26 @@
 
     // ---- Messages -------------------------------------------------------
 
+    // Whether the chat should auto-follow new content. Starts true (a fresh
+    // chat is at the bottom); the #fp-messages "scroll" handler keeps this in
+    // sync as the user scrolls. While "Cruising…"/streaming, repeated
+    // scroll-to-bottom calls otherwise fight any attempt to scroll up to
+    // re-read earlier messages.
+    var fpChatSnappedToBottom = true;
+    var FP_SCROLL_SNAP_PX = 24;
+
+    // Scrolls #fp-messages to the bottom if the user is currently snapped
+    // there (or if `force` — used when the user sends a new message, which
+    // should always jump to the bottom and resume auto-follow).
+    function scrollMessagesToBottom(force) {
+        var $box = el("#fp-messages");
+        if (!$box.length) { return; }
+        if (force || fpChatSnappedToBottom) {
+            $box.scrollTop($box[0].scrollHeight);
+            fpChatSnappedToBottom = true;
+        }
+    }
+
     function addMessage(role, text) {
         var $box = el("#fp-messages");
         if (!$box.length) { return; }
@@ -674,7 +696,9 @@
         $("<div>").addClass("fp-md").html(renderMarkdown(text || "")).appendTo($msg);
 
         $box.append($msg);
-        $box.scrollTop($box[0].scrollHeight);
+        // Sending a message always jumps to the bottom and resumes
+        // auto-follow; an incoming message only follows if already snapped.
+        scrollMessagesToBottom(role === "user");
     }
 
     // Pending "typing" indicator shown in the thread while awaiting a reply.
@@ -694,7 +718,7 @@
         $msg.append($dots);
 
         $box.append($msg);
-        $box.scrollTop($box[0].scrollHeight);
+        scrollMessagesToBottom();
     }
 
     function hidePending() {
@@ -1537,7 +1561,7 @@
                     fullText += evt.delta;
                     ensureBubble();
                     $text.html(renderMarkdown(fullText));
-                    $box.scrollTop($box[0].scrollHeight);
+                    scrollMessagesToBottom();
                 }
             });
         }
@@ -1695,7 +1719,7 @@
         }
 
         $box.append($row);
-        $box.scrollTop($box[0].scrollHeight);
+        scrollMessagesToBottom();
     }
 
     // Shared by Generate/Document/Modify result handlers: renders the model's
@@ -1814,7 +1838,7 @@
                     if (text !== null) {
                         ensureBubble();
                         $text.html(renderMarkdown(text));
-                        $box.scrollTop($box[0].scrollHeight);
+                        scrollMessagesToBottom();
                     }
                     // The explanation has fully arrived but the rest of the
                     // envelope (the "flow" JSON etc.) is still streaming in
@@ -2723,7 +2747,7 @@
         }
 
         $box.append($msg);
-        $box.scrollTop($box[0].scrollHeight);
+        scrollMessagesToBottom();
     }
 
     // Apply mechanism covering all Phase 5 tiers:
@@ -2964,7 +2988,7 @@
         $("<div>").addClass("fp-label").text(isRaw ? "RAW RESPONSE" : "GENERATED FLOW (JSON)").appendTo($msg);
         $("<pre>").addClass("fp-json").text(text).appendTo($msg);
         $box.append($msg);
-        $box.scrollTop($box[0].scrollHeight);
+        scrollMessagesToBottom();
     }
 
     // ---- Phase 4: pre-import validation ---------------------------------
@@ -3259,7 +3283,7 @@
         }
 
         $box.append($msg);
-        $box.scrollTop($box[0].scrollHeight);
+        scrollMessagesToBottom();
     }
 
     // ---- Plugin registration --------------------------------------------
@@ -3325,7 +3349,10 @@
                 '        <span id="fp-size-status" class="fp-size-status fp-hidden"></span>' +
                 '        <span id="fp-secrets-status" class="fp-secrets-status fp-hidden" title="Context may include node config and code. Don\'t send credentials or proprietary data. Local/private AI recommended.">⚠</span>' +
                 '      </div>' +
-                '      <textarea id="fp-prompt" placeholder="Select nodes for context, or just type a question…"></textarea>' +
+                '      <div class="fp-prompt-wrap">' +
+                '        <textarea id="fp-prompt" placeholder="Select nodes for context, or just type a question…"></textarea>' +
+                '        <div id="fp-prompt-resize" class="fp-resize-handle" title="Drag to resize"><i class="fa fa-arrows-v"></i></div>' +
+                '      </div>' +
                 '      <div class="fp-compose-footer">' +
                 '        <div id="fp-provider-status">Provider: not loaded</div>' +
                 '        <div class="fp-buttons">' +
@@ -3445,6 +3472,13 @@
             content.find("#fp-clear-chat").on("click", clearChat);
             content.find("#fp-recall").on("click", recallSearch);
 
+            // Track whether the user is scrolled to the bottom of the chat,
+            // so "Cruising…"/streaming updates only auto-follow when they
+            // haven't scrolled up to read earlier messages.
+            content.find("#fp-messages").on("scroll", function () {
+                fpChatSnappedToBottom = (this.scrollHeight - this.scrollTop - this.clientHeight) <= FP_SCROLL_SNAP_PX;
+            });
+
             content.find("#fp-clear-prompt").on("click", function () {
                 el("#fp-prompt").val("").focus();
             });
@@ -3502,6 +3536,47 @@
             content.find("#fp-prompt").on("input", function () {
                 el("#fp-send").removeClass("fp-send-breathe");
             });
+
+            // Custom resize handle (top-right of the prompt box) — drag up to
+            // grow the prompt, down to shrink it. Replaces the native
+            // bottom-right `resize: vertical` grip, which sat right against
+            // the Send/Clear buttons and was fiddly to grab.
+            (function () {
+                var PROMPT_MIN_HEIGHT = 88;
+                var PROMPT_MAX_HEIGHT = 480;
+                var dragStartY = null;
+                var dragStartHeight = null;
+
+                function onDrag(e) {
+                    if (dragStartY === null) { return; }
+                    var clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                    var next = dragStartHeight + (dragStartY - clientY);
+                    next = Math.min(PROMPT_MAX_HEIGHT, Math.max(PROMPT_MIN_HEIGHT, next));
+                    el("#fp-prompt").css("height", next + "px");
+                    e.preventDefault();
+                }
+
+                function endDrag() {
+                    dragStartY = null;
+                    el("#fp-prompt-resize").removeClass("fp-resizing");
+                    $(document)
+                        .off("mousemove", onDrag).off("mouseup", endDrag)
+                        .off("touchmove", onDrag).off("touchend", endDrag);
+                }
+
+                function startDrag(e) {
+                    var clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                    dragStartY = clientY;
+                    dragStartHeight = el("#fp-prompt")[0].offsetHeight;
+                    el("#fp-prompt-resize").addClass("fp-resizing");
+                    $(document)
+                        .on("mousemove", onDrag).on("mouseup", endDrag)
+                        .on("touchmove", onDrag).on("touchend", endDrag);
+                    e.preventDefault();
+                }
+
+                content.find("#fp-prompt-resize").on("mousedown touchstart", startDrag);
+            })();
 
             // Live selection indicator. RED.events fires this whenever the
             // user changes what's selected on the canvas. A2: while armed, a
@@ -4200,12 +4275,16 @@
     line-height: 1.4;
 }
 
+.fp-prompt-wrap {
+    position: relative;
+}
+
 #fp-prompt {
     display: block;
     width: 100%;
     min-height: 88px;
     box-sizing: border-box;
-    resize: vertical;
+    resize: none;
     padding: 10px;
     border-radius: 6px;
     border: 1px solid var(--red-ui-form-input-border-color, #ccc);
@@ -4223,6 +4302,33 @@
 .fp-compose.fp-mode-execute #fp-prompt {
     border-color: #1f88e5;
     box-shadow: 0 0 0 1px rgba(31, 136, 229, 0.5);
+}
+
+/* Custom resize handle, top-right: native `resize: vertical` puts its grip
+   at the bottom-right corner, right next to the Send/Clear buttons, which
+   makes it fiddly to grab. This sits in the clear space below the context
+   strip instead, and dragging it changes #fp-prompt's height directly. */
+.fp-resize-handle {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+    color: var(--red-ui-secondary-text-color, #999);
+    opacity: 0.5;
+    cursor: ns-resize;
+    font-size: 11px;
+    user-select: none;
+}
+
+.fp-resize-handle:hover,
+.fp-resize-handle.fp-resizing {
+    opacity: 1;
+    background: rgba(127, 127, 127, 0.15);
 }
 
 .fp-compose-footer {
