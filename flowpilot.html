@@ -1384,6 +1384,7 @@
 
         var extractor = createExplanationExtractor();
         var finalData = null;
+        var finalStatus = null;
         var errorData = null;
         var generatingShown = false;
 
@@ -1433,6 +1434,7 @@
                     }
                 } else if (evt.final) {
                     finalData = evt.final;
+                    finalStatus = evt.status;
                 } else if (evt.error) {
                     errorData = evt.error;
                 }
@@ -1482,6 +1484,15 @@
             }
             if (!finalData) {
                 handleExecuteError("No response received from the provider.", null);
+                return;
+            }
+            // finalize() can return a non-2xx status (e.g. 422 for invalid
+            // wire/id references) even on the "final" event, since an SSE
+            // response can't change its HTTP status after headers are sent.
+            // Route those to the error renderer instead of treating
+            // {error, raw} as a success body.
+            if (finalStatus && finalStatus >= 400) {
+                handleExecuteError(finalData.error || "Request failed.", finalData.raw);
                 return;
             }
             resultHandler(finalData);
@@ -1931,6 +1942,11 @@
         addMessage("assistant", insertedNote);
         pushHistory("assistant", insertedNote);
         updateSelectionStatus();
+
+        // Returned so applyModifications can resolve Tier 3 wire-diff targets
+        // that point at one of these placeholder ids (e.g. an existing node's
+        // "wires" rewired to a brand-new node added in the same response).
+        return idMap;
     }
 
     // Look up a live node by id, falling back to the per-tab junction registry.
@@ -2249,10 +2265,15 @@
                 .text(btnLabel)
                 .on("click", function () {
                     $applyBtn.prop("disabled", true).text("Applying…");
-                    if (hasMutations && applyCallback) { applyCallback(nodeDiffs, removeNodes, null); }
+                    // Insertions run FIRST so their placeholder→real-id map is
+                    // available to applyModifications — an existing node's
+                    // rewired "wires" (Tier 3) may point at a node being
+                    // inserted in this same response.
+                    var idMap = {};
                     if (hasNewNodes) {
-                        applyInsertions(newNodes, newWires, nodes.map(function (n) { return n.id; }));
+                        idMap = applyInsertions(newNodes, newWires, nodes.map(function (n) { return n.id; })) || {};
                     }
+                    if (hasMutations && applyCallback) { applyCallback(nodeDiffs, removeNodes, null, idMap); }
                     $applyBtn.text("Done ✓");
                 });
             $actions.append($applyBtn);
@@ -2273,7 +2294,8 @@
     //   Tier 3 — wire changes: removeLink/addLink + {t:"add", removedLinks} entry
     //   Tier 4 — node removals: collect links, removeLink, remove node + {t:"delete"} entry
     // One history entry per node per type so Ctrl+Z steps back through them cleanly.
-    function applyModifications(nodeDiffs, removeNodes, $applyBtn) {
+    function applyModifications(nodeDiffs, removeNodes, $applyBtn, idMap) {
+        idMap = idMap || {};
         var propApplied = 0;
         var wireNodesApplied = 0;
         var nodesRemoved = 0;
@@ -2347,7 +2369,11 @@
             });
 
             wd.toAdd.forEach(function (entry) {
-                var toNode = (RED.nodes && RED.nodes.node) ? RED.nodes.node(entry.targetId) : null;
+                // entry.targetId may be a placeholder id for a node inserted
+                // by the SAME response (e.g. "fp-new-0") — resolve it to the
+                // real id applyInsertions just assigned, if any.
+                var targetId = idMap[entry.targetId] || entry.targetId;
+                var toNode = (RED.nodes && RED.nodes.node) ? RED.nodes.node(targetId) : null;
                 if (!toNode) { return; }
                 var link = { source: liveNode, sourcePort: entry.sourcePort, target: toNode };
                 try {
