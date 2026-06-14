@@ -346,6 +346,30 @@ module.exports = function flowPilotRuntime(RED) {
     let s = String(text).trim();
     // Strip markdown code fences if the model wrapped the JSON.
     s = s.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+
+    const firstBrace = s.indexOf("{");
+    const firstBracket = s.indexOf("[");
+
+    // The model occasionally returns a bare top-level array (e.g.
+    // `[ {...node...} ]`) instead of the {explanation, flow} envelope. If we
+    // fell through to the {...} extraction below, indexOf("{")/lastIndexOf("}")
+    // would grab just the first node object — which has no "flow" key and
+    // fails validation. Detect this case up front and wrap it as a minimal
+    // envelope instead.
+    if (firstBracket !== -1 && (firstBrace === -1 || firstBracket < firstBrace)) {
+      const lastBracket = s.lastIndexOf("]");
+      if (lastBracket !== -1 && lastBracket > firstBracket) {
+        try {
+          const arr = JSON.parse(s.slice(firstBracket, lastBracket + 1));
+          if (Array.isArray(arr)) {
+            return { explanation: "", flow: arr };
+          }
+        } catch (e) {
+          // Not a parseable array — fall through to the {...} extraction.
+        }
+      }
+    }
+
     // If there's leading/trailing prose, grab the outermost {...}.
     const first = s.indexOf("{");
     const last = s.lastIndexOf("}");
