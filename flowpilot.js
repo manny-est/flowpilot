@@ -51,6 +51,25 @@ module.exports = function flowPilotRuntime(RED) {
   }
 
   // ---------------------------------------------------------------------
+  // Phase 6.5 B0: per-request performance fields for the audit log. Character
+  // counts are always available (provider-agnostic); token usage is included
+  // only when the provider returned a `usage` object. Kept separate from
+  // appendAudit's other fields so every chat/generate/modify/document audit
+  // entry reports the same shape.
+  // ---------------------------------------------------------------------
+  function performanceAuditFields(messages, content, providerResult) {
+    const fields = {
+      promptChars: (messages || []).reduce(function (sum, m) {
+        return sum + (m && typeof m.content === "string" ? m.content.length : 0);
+      }, 0),
+      completionChars: (content || "").length
+    };
+    if (providerResult && providerResult.timing) { fields.timing = providerResult.timing; }
+    if (providerResult && providerResult.usage) { fields.usage = providerResult.usage; }
+    return fields;
+  }
+
+  // ---------------------------------------------------------------------
   // Shared helper: format selected-node context (sanitized by the frontend)
   // into a system-message string for the model, plus counts for audit logs.
   // Returns null when there's no selection — used by both /chat and
@@ -119,7 +138,9 @@ module.exports = function flowPilotRuntime(RED) {
       raw: result.raw ? "[raw response captured]" : ""
     });
 
-    return { settings, activeProvider, result };
+    const perf = performanceAuditFields(messages, result.content, result);
+
+    return { settings, activeProvider, result, perf };
   }
 
   // ---------------------------------------------------------------------
@@ -147,27 +168,28 @@ module.exports = function flowPilotRuntime(RED) {
     });
     if (typeof res.flushHeaders === "function") { res.flushHeaders(); }
 
-    let full = "";
+    let streamResult;
     try {
-      full = await provider.chatStream(activeProvider, messages, function (delta) {
+      streamResult = await provider.chatStream(activeProvider, messages, function (delta) {
         res.write("data: " + JSON.stringify({ delta: delta }) + "\n\n");
-      }).then(function (r) { return r.content; });
+      });
     } catch (err) {
       res.write("data: " + JSON.stringify({ error: err.message }) + "\n\n");
       res.end();
       storage.appendAudit({ action: "chat_stream_error", error: err.message });
       return;
     }
+    const full = streamResult.content;
 
     res.write("data: [DONE]\n\n");
     res.end();
 
-    storage.appendAudit({
+    storage.appendAudit(Object.assign({
       action: "chat_stream",
       providerName: activeProvider.providerName,
       baseUrl: activeProvider.baseUrl,
       model: activeProvider.model
-    });
+    }, performanceAuditFields(messages, full, streamResult)));
 
     storage.saveChatLog({
       providerName: activeProvider.providerName,
@@ -242,14 +264,14 @@ module.exports = function flowPilotRuntime(RED) {
     }
 
     try {
-      const { activeProvider, result } = await runChat(prompt, "selected-nodes", req.body.context, history, historyTruncated);
+      const { activeProvider, result, perf } = await runChat(prompt, "selected-nodes", req.body.context, history, historyTruncated);
 
-      storage.appendAudit({
+      storage.appendAudit(Object.assign({
         action: "chat",
         providerName: activeProvider.providerName,
         baseUrl: activeProvider.baseUrl,
         model: activeProvider.model
-      });
+      }, perf));
 
       res.json({
         message: result.content || "[No assistant message returned by provider]",
@@ -269,14 +291,14 @@ module.exports = function flowPilotRuntime(RED) {
     const prompt = (req.body && req.body.prompt) || "Say hello from FlowPilot.";
 
     try {
-      const { activeProvider, result } = await runChat(prompt, "connectivity-test");
+      const { activeProvider, result, perf } = await runChat(prompt, "connectivity-test");
 
-      storage.appendAudit({
+      storage.appendAudit(Object.assign({
         action: "chat_test",
         providerName: activeProvider.providerName,
         baseUrl: activeProvider.baseUrl,
         model: activeProvider.model
-      });
+      }, perf));
 
       res.json({
         message: result.content || "[No assistant message returned by provider]",
@@ -325,12 +347,13 @@ module.exports = function flowPilotRuntime(RED) {
 
     const result = await provider.chat(activeProvider, messages);
     const content = result.content || "";
+    const perf = performanceAuditFields(messages, content, result);
 
     let parsed;
     try {
       parsed = extractJsonObject(content);
     } catch (parseErr) {
-      storage.appendAudit({ action: auditAction + "_parse_error", error: parseErr.message });
+      storage.appendAudit(Object.assign({ action: auditAction + "_parse_error", error: parseErr.message }, perf));
       const err = new Error("Could not parse a flow from the response: " + parseErr.message);
       err.status = 422;
       err.raw = content;
@@ -343,7 +366,7 @@ module.exports = function flowPilotRuntime(RED) {
     // assistant message and keeps the Execute action armed for the answer.
     if (typeof parsed.question === "string" && parsed.question.trim() &&
         (!Array.isArray(parsed.flow) || parsed.flow.length === 0)) {
-      storage.appendAudit({ action: auditAction + "_question" });
+      storage.appendAudit(Object.assign({ action: auditAction + "_question" }, perf));
       return { question: parsed.question, explanation: parsed.explanation || "" };
     }
 
@@ -355,7 +378,7 @@ module.exports = function flowPilotRuntime(RED) {
       throw err;
     }
 
-    storage.appendAudit({
+    storage.appendAudit(Object.assign({
       action: auditAction,
       providerName: activeProvider.providerName,
       baseUrl: activeProvider.baseUrl,
@@ -363,7 +386,7 @@ module.exports = function flowPilotRuntime(RED) {
       nodeCount: flow.length,
       contextNodeCount: described ? described.nodeCount : 0,
       contextConnectionCount: described ? described.connectionCount : 0
-    });
+    }, perf));
 
     return {
       explanation: parsed.explanation || "",
