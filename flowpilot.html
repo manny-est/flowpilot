@@ -957,6 +957,19 @@
         el("#fp-pending .fp-typing-label").text(text);
     }
 
+    // Phase 7 step 6: cost transparency for a completed agent-loop turn.
+    // Appended just before the final response when at least one tool round
+    // trip happened, so the user can see what exploration cost without
+    // digging into the audit log.
+    function addAgentStatsNote(steps, totalTokens) {
+        var $box = el("#fp-messages");
+        if (!$box.length) { return; }
+        var text = "🔧 " + steps + " tool call step" + (steps === 1 ? "" : "s") +
+            " · ~" + totalTokens.toLocaleString() + " tokens this turn";
+        $("<div>").addClass("fp-consent-hint fp-agent-stats").text(text).appendTo($box);
+        scrollMessagesToBottom();
+    }
+
     // ---- Server communication -------------------------------------------
     // Note: no leading slash. Node-RED serves admin endpoints under a base
     // path (httpAdminRoot) that may not be "/". A relative URL respects it.
@@ -2074,6 +2087,7 @@
             addUsage(data.usage);
 
             if (!data.toolCalls || !data.toolCalls.length) {
+                if (step > 0) { addAgentStatsNote(step, totalTokens); }
                 onDone(data);
                 return;
             }
@@ -2089,12 +2103,16 @@
             step++;
             if (step > AGENT_LOOP_MAX_STEPS) {
                 onError("FlowPilot stopped after " + AGENT_LOOP_MAX_STEPS +
-                    " tool call(s) without a final answer.");
+                    " tool call(s) without a final answer. Try breaking your " +
+                    "request into smaller steps, or be more specific about " +
+                    "which node(s) or flow you mean.");
                 return;
             }
             if (totalTokens > AGENT_LOOP_TOKEN_CEILING) {
                 onError("FlowPilot stopped after using " + totalTokens +
-                    " tokens on this turn without a final answer.");
+                    " tokens on this turn without a final answer. Try " +
+                    "selecting fewer nodes, or asking a more specific " +
+                    "question so fewer tool calls are needed.");
                 return;
             }
             if (fpAgentStopRequested) {
@@ -2105,14 +2123,15 @@
             var nextMessages = (messages || data.messages || []).slice();
             nextMessages.push({ role: "assistant", content: data.content || null, tool_calls: data.toolCalls });
             data.toolCalls.forEach(function (call) {
-                setAgentNarration(describeAgentToolCall(call.function.name, parseToolCallArgs(call)));
+                setAgentNarration(describeAgentToolCall(call.function.name, parseToolCallArgs(call)) +
+                    " (step " + step + "/" + AGENT_LOOP_MAX_STEPS + ")");
                 nextMessages.push({
                     role: "tool",
                     tool_call_id: call.id,
                     content: JSON.stringify(executeAgentToolCall(call))
                 });
             });
-            setAgentNarration("Thinking…");
+            setAgentNarration("Thinking… (step " + step + "/" + AGENT_LOOP_MAX_STEPS + ")");
             var stepPayload = Object.assign({
                 messages: nextMessages,
                 conversationId: payload.conversationId
@@ -5270,6 +5289,11 @@
     color: var(--red-ui-secondary-text-color, #888);
     margin: 6px 0;
     line-height: 1.4;
+}
+
+.fp-agent-stats {
+    margin: -4px 0 8px 4px;
+    font-size: 11px;
 }
 
 .fp-debug-warning {
