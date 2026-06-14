@@ -22,6 +22,33 @@
     var currentSettings = {};
 
     // ---------------------------------------------------------------------
+    // A3: identifies this conversation for server-side transcript
+    // persistence (chats/<conversationId>.jsonl). Kept in sessionStorage so
+    // a page reload continues the same transcript; reset by clearChat()
+    // ("start a fresh conversation" gets a fresh transcript file too).
+    // ---------------------------------------------------------------------
+    function makeConversationId() {
+        if (window.crypto && typeof window.crypto.randomUUID === "function") {
+            return window.crypto.randomUUID();
+        }
+        return "fp-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+    }
+
+    function newConversationId() {
+        var id = makeConversationId();
+        try { sessionStorage.setItem("fp-conversation-id", id); } catch (e) { /* storage unavailable */ }
+        return id;
+    }
+
+    var conversationId = (function () {
+        try {
+            var existing = sessionStorage.getItem("fp-conversation-id");
+            if (existing) { return existing; }
+        } catch (e) { /* storage unavailable */ }
+        return newConversationId();
+    })();
+
+    // ---------------------------------------------------------------------
     // Phase 6: client-held conversation history. The backend is stateless —
     // each request that should have continuity carries a capped slice of
     // this array. Cleared by clearChat() ("start a fresh conversation").
@@ -339,7 +366,77 @@
         el("#fp-messages").empty();
         conversationHistory = [];
         pinnedSelectionIds = null;
+        conversationId = newConversationId();
         updateSelectionStatus();
+    }
+
+    // A3b/A3c: Recall — searches OTHER past conversations' transcripts for the
+    // text currently in the prompt box, and shows matches in the chat for the
+    // user to read/reference. Nothing is sent automatically; each result has
+    // a "Use this" button (A3c) that the user can click to add that exchange
+    // to conversationHistory, so the model sees it on the next message.
+    function recallSearch() {
+        var $promptBox = el("#fp-prompt");
+        var query = $promptBox.length ? $promptBox.val().trim() : "";
+        if (!query) {
+            addMessage("error", "Type what you're looking for, then click Recall.");
+            return;
+        }
+
+        setBusy(true);
+        showPending();
+        ajaxJson("POST", "flowpilot/recall", { query: query, conversationId: conversationId }, function (data) {
+            hidePending();
+            renderRecallResults(data.results);
+            setBusy(false);
+        }, function (msg) {
+            hidePending();
+            addMessage("error", msg);
+            setBusy(false);
+        });
+    }
+
+    // Renders Recall's results as a special message — date/mode per match,
+    // plus the user prompt and assistant reply that matched (truncated).
+    function renderRecallResults(results) {
+        var $box = el("#fp-messages");
+        if (!$box.length) { return; }
+
+        if (!results || results.length === 0) {
+            addMessage("assistant", "No matching earlier conversations found.");
+            return;
+        }
+
+        function truncate(text, max) {
+            text = String(text || "");
+            return text.length > max ? text.slice(0, max - 1) + "…" : text;
+        }
+
+        var $msg = $("<div>").addClass("fp-message fp-recall");
+        $("<div>").addClass("fp-label").text("RECALLED").appendTo($msg);
+
+        results.forEach(function (r) {
+            var $item = $("<div>").addClass("fp-recall-item");
+            var when = r.timestamp ? new Date(r.timestamp).toLocaleString() : "";
+            var meta = when + (r.mode ? " · " + r.mode : "");
+            $("<div>").addClass("fp-recall-meta").text(meta).appendTo($item);
+            if (r.user) { $("<div>").addClass("fp-recall-text").text("You: " + truncate(r.user, 200)).appendTo($item); }
+            if (r.assistant) { $("<div>").addClass("fp-recall-text").text("FlowPilot: " + truncate(r.assistant, 300)).appendTo($item); }
+
+            var $use = $("<button>").addClass("fp-recall-use red-ui-button red-ui-button-small")
+                .attr("type", "button").text("Use this");
+            $use.on("click", function () {
+                if (r.user) { conversationHistory.push({ role: "user", content: String(r.user) }); }
+                if (r.assistant) { conversationHistory.push({ role: "assistant", content: String(r.assistant) }); }
+                $use.prop("disabled", true).text("Added to context");
+            });
+            $item.append($use);
+
+            $msg.append($item);
+        });
+
+        $box.append($msg);
+        $box.scrollTop($box[0].scrollHeight);
     }
 
     // ---- Messages -------------------------------------------------------
@@ -901,6 +998,7 @@
         el("#fp-document").prop("disabled", busy);
         el("#fp-modify").prop("disabled", busy);
         el("#fp-test-provider").prop("disabled", busy);
+        el("#fp-recall").prop("disabled", busy);
     }
 
     // Shared so chat and generate describe an attached selection identically —
@@ -945,7 +1043,8 @@
             prompt: prompt,
             context: context,
             history: historyPayload.messages,
-            historyTruncated: historyPayload.truncated
+            historyTruncated: historyPayload.truncated,
+            conversationId: conversationId
         };
 
         if (isChat && currentSettings.streamingEnabled) {
@@ -1416,7 +1515,8 @@
         showPending();
         var payload = {
             prompt: prompt, context: context,
-            history: historyPayload.messages, historyTruncated: historyPayload.truncated
+            history: historyPayload.messages, historyTruncated: historyPayload.truncated,
+            conversationId: conversationId
         };
 
         // B1: stream the envelope's "explanation" as it's generated; the
@@ -1466,7 +1566,8 @@
         showPending();
         var payload = {
             prompt: notes, context: context,
-            history: historyPayload.messages, historyTruncated: historyPayload.truncated
+            history: historyPayload.messages, historyTruncated: historyPayload.truncated,
+            conversationId: conversationId
         };
 
         // B1: stream the envelope's "explanation" as it's generated; see
@@ -2369,7 +2470,8 @@
         showPending();
         var payload = {
             prompt: instruction, context: context,
-            history: historyPayload.messages, historyTruncated: historyPayload.truncated
+            history: historyPayload.messages, historyTruncated: historyPayload.truncated,
+            conversationId: conversationId
         };
 
         // B1: stream the envelope's "explanation" as it's generated; see
@@ -2724,6 +2826,7 @@
                 '      </div>' +
                 '      <div class="fp-view-buttons">' +
                 '        <button id="fp-clear-chat" class="red-ui-button red-ui-button-small" type="button" title="Clear chat and start a fresh conversation (resets memory)"><i class="fa fa-eraser"></i></button>' +
+                '        <button id="fp-recall" class="red-ui-button red-ui-button-small" type="button" title="Recall: search earlier conversations for the text in the prompt box"><i class="fa fa-search"></i></button>' +
                 '        <button id="fp-show-chat" class="red-ui-button red-ui-button-small" type="button" title="Chat"><i class="fa fa-comments"></i></button>' +
                 '        <button id="fp-show-settings" class="red-ui-button red-ui-button-small" type="button" title="Settings"><i class="fa fa-cog"></i></button>' +
                 '      </div>' +
@@ -2854,6 +2957,7 @@
             content.find("#fp-show-chat").on("click", showChat);
             content.find("#fp-show-settings").on("click", showSettings);
             content.find("#fp-clear-chat").on("click", clearChat);
+            content.find("#fp-recall").on("click", recallSearch);
 
             content.find("#fp-clear-prompt").on("click", function () {
                 el("#fp-prompt").val("").focus();
@@ -3104,6 +3208,42 @@
     margin-top: 4px;
     font-size: 12px;
     color: var(--red-ui-secondary-text-color, #888);
+}
+
+/* A3b: Recall results — read-only snippets from earlier conversations. */
+.fp-recall {
+    background: rgba(150, 120, 255, 0.10);
+    border-color: rgba(150, 120, 255, 0.35);
+}
+
+.fp-recall-item {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--red-ui-secondary-border-color, #ddd);
+}
+
+.fp-recall-item:first-of-type {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+}
+
+.fp-recall-meta {
+    font-size: 11px;
+    color: var(--red-ui-secondary-text-color, #888);
+    margin-bottom: 2px;
+}
+
+.fp-recall-text {
+    font-size: 13px;
+}
+
+.fp-recall-use {
+    margin-top: 6px;
+}
+
+.fp-recall-use:disabled {
+    opacity: 0.6;
 }
 
 .fp-json {

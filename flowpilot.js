@@ -33,6 +33,126 @@ module.exports = function flowPilotRuntime(RED) {
       .map(function (m) { return { role: m.role, content: m.content }; });
   }
 
+  // ---------------------------------------------------------------------
+  // A3: per-conversation transcript persistence. The frontend generates a
+  // conversationId (kept for the life of the browser tab, reset on Clear
+  // Chat) and sends it with every request; the backend appends each turn to
+  // chats/<conversationId>.jsonl. Restricted to a safe filename charset —
+  // anything else is treated as "no conversation id" (transcript logging is
+  // best-effort, never blocks the request).
+  // ---------------------------------------------------------------------
+  function sanitizeConversationId(id) {
+    if (typeof id !== "string") { return null; }
+    const trimmed = id.trim();
+    return /^[A-Za-z0-9_-]{1,128}$/.test(trimmed) ? trimmed : null;
+  }
+
+  function recordTranscriptTurn(conversationId, mode, userText, assistantText) {
+    const id = sanitizeConversationId(conversationId);
+    if (!id) { return; }
+
+    const timestamp = new Date().toISOString();
+    if (userText && String(userText).trim()) {
+      storage.appendTranscript(id, { timestamp: timestamp, role: "user", mode: mode, content: String(userText) });
+    }
+    if (assistantText && String(assistantText).trim()) {
+      storage.appendTranscript(id, { timestamp: timestamp, role: "assistant", mode: mode, content: String(assistantText) });
+    }
+  }
+
+  // Pulls the natural-language part out of a generation-style result
+  // ({question}/{prose}/{explanation, flow}) for transcript storage — the
+  // same text the frontend renders as the assistant's chat bubble.
+  function transcriptTextFromGenerationResult(result) {
+    if (result.question) {
+      return (result.explanation ? result.explanation + "\n\n" : "") + result.question;
+    }
+    if (result.prose) { return result.prose; }
+    return result.explanation || "";
+  }
+
+  // ---------------------------------------------------------------------
+  // A3b: Recall — user-triggered keyword search across OTHER conversations'
+  // persisted transcripts (the current conversation is excluded; its own
+  // live history is already in context). Deliberately simple
+  // retrieval-injection: lowercase word-overlap scoring, no embeddings —
+  // provider-agnostic and works the same for every model.
+  // ---------------------------------------------------------------------
+  const RECALL_STOPWORDS = new Set([
+    "the", "and", "for", "are", "but", "not", "you", "all", "can", "had",
+    "her", "was", "one", "our", "out", "day", "get", "has", "him", "his",
+    "how", "man", "new", "now", "old", "see", "two", "way", "who", "boy",
+    "did", "its", "let", "put", "say", "she", "too", "use", "with", "this",
+    "that", "what", "your", "from", "have", "more", "will", "would", "there",
+    "their", "about", "into", "than", "then", "them", "these", "some",
+    "could", "should", "please", "want", "like", "just", "make", "node",
+    "nodes", "flow", "flowpilot"
+  ]);
+
+  function tokenize(text) {
+    return String(text || "")
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(function (w) { return w.length >= 3 && !RECALL_STOPWORDS.has(w); });
+  }
+
+  // Pairs up consecutive { role: "user" } / { role: "assistant" } transcript
+  // entries into one "exchange" so recall results read as a Q&A snippet
+  // rather than two disconnected lines.
+  function groupExchanges(entries) {
+    const exchanges = [];
+    let i = 0;
+    while (i < entries.length) {
+      const entry = entries[i];
+      const next = entries[i + 1];
+      if (entry.role === "user" && next && next.role === "assistant") {
+        exchanges.push({ timestamp: entry.timestamp, mode: entry.mode, user: entry.content, assistant: next.content });
+        i += 2;
+      } else {
+        exchanges.push({
+          timestamp: entry.timestamp,
+          mode: entry.mode,
+          user: entry.role === "user" ? entry.content : null,
+          assistant: entry.role === "assistant" ? entry.content : null
+        });
+        i += 1;
+      }
+    }
+    return exchanges;
+  }
+
+  function searchTranscripts(query, excludeConversationId) {
+    const queryTokens = new Set(tokenize(query));
+    if (queryTokens.size === 0) { return []; }
+
+    const matches = [];
+    storage.listConversationIds().forEach(function (id) {
+      if (id === excludeConversationId) { return; }
+      groupExchanges(storage.readTranscript(id)).forEach(function (exchange) {
+        const combinedTokens = tokenize((exchange.user || "") + " " + (exchange.assistant || ""));
+        let score = 0;
+        combinedTokens.forEach(function (t) { if (queryTokens.has(t)) { score++; } });
+        if (score > 0) {
+          matches.push({
+            conversationId: id,
+            timestamp: exchange.timestamp,
+            mode: exchange.mode,
+            user: exchange.user,
+            assistant: exchange.assistant,
+            score: score
+          });
+        }
+      });
+    });
+
+    matches.sort(function (a, b) {
+      if (b.score !== a.score) { return b.score - a.score; }
+      return new Date(b.timestamp) - new Date(a.timestamp);
+    });
+
+    return matches.slice(0, 5);
+  }
+
   // Assemble the final messages array in the one place both /chat and the
   // generate/modify/document endpoints use: system prompt, optional
   // truncation notice, history, optional selection-context note, then the
@@ -110,7 +230,7 @@ module.exports = function flowPilotRuntime(RED) {
   // log it, and return the result. Used by both /chat and /test so the two
   // never drift apart. contextMode is recorded for the Phase 2+ audit trail.
   // ---------------------------------------------------------------------
-  async function runChat(prompt, contextMode, context, history, historyTruncated) {
+  async function runChat(prompt, contextMode, context, history, historyTruncated, conversationId) {
     const settings = storage.getSettings();
     const activeProvider = storage.getActiveProvider(settings);
 
@@ -122,21 +242,7 @@ module.exports = function flowPilotRuntime(RED) {
 
     const result = await provider.chat(activeProvider, messages);
 
-    storage.saveChatLog({
-      providerName: activeProvider.providerName,
-      baseUrl: activeProvider.baseUrl,
-      model: activeProvider.model,
-      contextMode: contextMode,
-      contextNodeCount: described ? described.nodeCount : 0,
-      contextConnectionCount: described ? described.connectionCount : 0,
-      allowConfigContext: false,
-      logFullContext: false,
-      historyLength: (history || []).length,
-      historyTruncated: !!historyTruncated,
-      userPrompt: prompt,
-      assistantResponse: result.content || "",
-      raw: result.raw ? "[raw response captured]" : ""
-    });
+    recordTranscriptTurn(conversationId, "chat", prompt, result.content || "");
 
     const perf = performanceAuditFields(messages, result.content, result);
 
@@ -150,7 +256,7 @@ module.exports = function flowPilotRuntime(RED) {
   // Generate/modify/document stay non-streamed (their JSON envelope can't be
   // validated until complete).
   // ---------------------------------------------------------------------
-  async function runChatStream(req, res, prompt, context, history, historyTruncated) {
+  async function runChatStream(req, res, prompt, context, history, historyTruncated, conversationId) {
     const settings = storage.getSettings();
     const activeProvider = storage.getActiveProvider(settings);
 
@@ -191,21 +297,7 @@ module.exports = function flowPilotRuntime(RED) {
       model: activeProvider.model
     }, performanceAuditFields(messages, full, streamResult)));
 
-    storage.saveChatLog({
-      providerName: activeProvider.providerName,
-      baseUrl: activeProvider.baseUrl,
-      model: activeProvider.model,
-      contextMode: "selected-nodes",
-      contextNodeCount: described ? described.nodeCount : 0,
-      contextConnectionCount: described ? described.connectionCount : 0,
-      allowConfigContext: false,
-      logFullContext: false,
-      historyLength: (history || []).length,
-      historyTruncated: !!historyTruncated,
-      streamed: true,
-      userPrompt: prompt,
-      assistantResponse: full
-    });
+    recordTranscriptTurn(conversationId, "chat", prompt, full);
   }
 
   // ---- Settings: read --------------------------------------------------
@@ -251,7 +343,7 @@ module.exports = function flowPilotRuntime(RED) {
 
     if (req.body.stream) {
       try {
-        await runChatStream(req, res, prompt, req.body.context, history, historyTruncated);
+        await runChatStream(req, res, prompt, req.body.context, history, historyTruncated, req.body.conversationId);
       } catch (err) {
         storage.appendAudit({ action: "chat_stream_error", error: err.message });
         if (!res.headersSent) {
@@ -264,7 +356,7 @@ module.exports = function flowPilotRuntime(RED) {
     }
 
     try {
-      const { activeProvider, result, perf } = await runChat(prompt, "selected-nodes", req.body.context, history, historyTruncated);
+      const { activeProvider, result, perf } = await runChat(prompt, "selected-nodes", req.body.context, history, historyTruncated, req.body.conversationId);
 
       storage.appendAudit(Object.assign({
         action: "chat",
@@ -279,6 +371,27 @@ module.exports = function flowPilotRuntime(RED) {
       });
     } catch (err) {
       storage.appendAudit({ action: "chat_error", error: err.message });
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ---- Recall: search past conversations' transcripts (A3b) ------------
+  // User-triggered, not automatic: the frontend's "Recall" button sends the
+  // current prompt-box text as the query. Results are returned for display
+  // only — nothing is injected into the model's context.
+
+  RED.httpAdmin.post("/flowpilot/recall", RED.auth.needsPermission("settings.write"), function (req, res) {
+    const query = req.body && req.body.query;
+    if (!query || !String(query).trim()) {
+      return res.status(400).json({ error: "Enter something to search for first." });
+    }
+
+    try {
+      const results = searchTranscripts(String(query).trim(), sanitizeConversationId(req.body.conversationId));
+      storage.appendAudit({ action: "recall", resultCount: results.length });
+      res.json({ results: results });
+    } catch (err) {
+      storage.appendAudit({ action: "recall_error", error: err.message });
       res.status(500).json({ error: err.message });
     }
   });
@@ -698,7 +811,7 @@ module.exports = function flowPilotRuntime(RED) {
   // `data: {"error": <body>, "status": <status>}`, since SSE responses can't
   // change their HTTP status after headers are sent.
   // ---------------------------------------------------------------------
-  async function runExecuteStream(req, res, systemPrompt, auditAction, userPrompt, context, history, historyTruncated, finalize) {
+  async function runExecuteStream(req, res, systemPrompt, auditAction, userPrompt, context, history, historyTruncated, finalize, conversationId) {
     res.writeHead(200, {
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
@@ -723,6 +836,8 @@ module.exports = function flowPilotRuntime(RED) {
       return;
     }
 
+    recordTranscriptTurn(conversationId, auditAction, userPrompt, transcriptTextFromGenerationResult(result));
+
     const final = finalize(result);
     res.write("data: " + JSON.stringify({ final: final.body, status: final.status }) + "\n\n");
     res.write("data: [DONE]\n\n");
@@ -742,7 +857,7 @@ module.exports = function flowPilotRuntime(RED) {
     if (req.body.stream) {
       return runExecuteStream(
         req, res, generationSystemPrompt, "generate", prompt, req.body && req.body.context,
-        history, historyTruncated, finalizeSimpleGeneration
+        history, historyTruncated, finalizeSimpleGeneration, req.body.conversationId
       );
     }
 
@@ -751,6 +866,7 @@ module.exports = function flowPilotRuntime(RED) {
         generationSystemPrompt, "generate", prompt, req.body && req.body.context,
         history, historyTruncated
       );
+      recordTranscriptTurn(req.body.conversationId, "generate", prompt, transcriptTextFromGenerationResult(generated));
       const { status, body } = finalizeSimpleGeneration(generated);
       res.status(status).json(body);
     } catch (err) {
@@ -777,7 +893,7 @@ module.exports = function flowPilotRuntime(RED) {
     if (req.body.stream) {
       return runExecuteStream(
         req, res, documentSystemPrompt, "document", userPrompt, context,
-        history, historyTruncated, finalizeSimpleGeneration
+        history, historyTruncated, finalizeSimpleGeneration, req.body.conversationId
       );
     }
 
@@ -786,6 +902,7 @@ module.exports = function flowPilotRuntime(RED) {
         documentSystemPrompt, "document", userPrompt, context,
         history, historyTruncated
       );
+      recordTranscriptTurn(req.body.conversationId, "document", userPrompt, transcriptTextFromGenerationResult(documented));
       const { status, body } = finalizeSimpleGeneration(documented);
       res.status(status).json(body);
     } catch (err) {
@@ -818,7 +935,7 @@ module.exports = function flowPilotRuntime(RED) {
     if (req.body.stream) {
       return runExecuteStream(
         req, res, modifySystemPrompt, "modify", String(prompt).trim(), context,
-        history, historyTruncated, finalize
+        history, historyTruncated, finalize, req.body.conversationId
       );
     }
 
@@ -827,6 +944,7 @@ module.exports = function flowPilotRuntime(RED) {
         modifySystemPrompt, "modify", String(prompt).trim(), context,
         history, historyTruncated
       );
+      recordTranscriptTurn(req.body.conversationId, "modify", String(prompt).trim(), transcriptTextFromGenerationResult(result));
       const { status, body } = finalize(result);
       res.status(status).json(body);
     } catch (err) {
