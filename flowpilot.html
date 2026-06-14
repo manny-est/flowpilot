@@ -1136,7 +1136,7 @@
     // existing nodes. Uses RED.nodes.add (the same path Node-RED's undo uses
     // internally for t:"add" events) and pushes one compound history entry so
     // a single Ctrl+Z removes both the new nodes and their wires together.
-    function applyInsertions(newNodes, newWires) {
+    function applyInsertions(newNodes, newWires, contextNodeIds) {
         if (!newNodes || !newNodes.length) { return; }
 
         // Determine z (flow-tab id) from the active workspace.
@@ -1174,6 +1174,24 @@
             }
         });
         var anchorNodes = upstreamAnchors.concat(downstreamAnchors);
+
+        // Fallback (Finding #18): if no wire connects a new node to an
+        // existing one (e.g. "add a change node" with no wiring specified),
+        // there's no anchor — without this, the node lands at
+        // layoutGeneratedFlow's hardcoded default (160,120) canvas position,
+        // which can be far outside the user's current viewport on a larger
+        // flow. A successful insert then looks like nothing happened. Anchor
+        // on the user's current Modify selection instead, so the new node(s)
+        // land near what the user is looking at.
+        if (anchorNodes.length === 0 && Array.isArray(contextNodeIds)) {
+            contextNodeIds.forEach(function (id) {
+                var live = RED.nodes.node(id);
+                if (live && typeof live.x === "number" && typeof live.y === "number") {
+                    upstreamAnchors.push(live);
+                }
+            });
+            anchorNodes = upstreamAnchors.concat(downstreamAnchors);
+        }
 
         // Layout new nodes so they have x/y before adding to the graph.
         var toLayout = newNodes.map(function (n) {
@@ -1735,7 +1753,9 @@
                 .on("click", function () {
                     $applyBtn.prop("disabled", true).text("Applying…");
                     if (hasMutations && applyCallback) { applyCallback(nodeDiffs, removeNodes, null); }
-                    if (hasNewNodes) { applyInsertions(newNodes, newWires); }
+                    if (hasNewNodes) {
+                        applyInsertions(newNodes, newWires, nodes.map(function (n) { return n.id; }));
+                    }
                     $applyBtn.text("Done ✓");
                 });
             $actions.append($applyBtn);
