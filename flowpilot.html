@@ -1272,6 +1272,7 @@
         "- `/demo` — load a sample Generate request (a trivia game flow) into the compose box\n\n" +
         "### Also worth knowing\n\n" +
         "- Action chips (paper-plane buttons) offer a one-click follow-up — review and send, nothing fires automatically.\n" +
+        "- When I ask a clarifying question, I'll often offer quick-reply buttons (plus \"Other\" for your own answer) — clicking one sends it right away.\n" +
         "- \"Pre-flight check\" in the Hangar tests a provider before you rely on it.\n" +
         "- \"Touchdown\"/\"Landed\" notes confirm an applied or imported change. Ctrl+Z undoes an applied change.";
 
@@ -1479,7 +1480,11 @@
                 message += "\n\nAll set — try `/help` for the full briefing and shortcut list.";
             }
             addMessage("assistant", message);
-            if (isChat) { pushHistory("assistant", data.message || ""); }
+            if (isChat) {
+                pushHistory("assistant", data.message || "");
+                renderActionChip(data.suggestedAction);
+                renderClarifyingQuestion(data.questionOptions);
+            }
             setBusy(false);
             updateSelectionStatus();
         }, function (msg) {
@@ -1508,6 +1513,7 @@
         }
 
         var fullText = "";
+        var finalData = null;
 
         function ensureBubble() {
             if ($text) { return; }
@@ -1524,6 +1530,10 @@
                 addMessage("error", "No response received from the provider.");
             } else {
                 pushHistory("assistant", fullText);
+                if (finalData) {
+                    renderActionChip(finalData.suggestedAction);
+                    renderClarifyingQuestion(finalData.questionOptions);
+                }
             }
             setBusy(false);
             updateSelectionStatus();
@@ -1543,11 +1553,14 @@
         }
 
         // Shared SSE-line parser: handles `data: {"delta":"..."}` /
-        // `data: {"error":"..."}` / `data: [DONE]` lines, appending deltas to
-        // fullText and rendering them. Used by both the streaming pump() loop
-        // (called per-chunk with the trailing partial line held back) and the
-        // non-getReader fallback (#12, called once with the full body split
-        // into lines), so neither path can drift or show raw SSE text.
+        // `data: {"final":{...}}` / `data: {"error":"..."}` / `data: [DONE]`
+        // lines, appending deltas to fullText and rendering them. Used by
+        // both the streaming pump() loop (called per-chunk with the trailing
+        // partial line held back) and the non-getReader fallback (#12,
+        // called once with the full body split into lines), so neither path
+        // can drift or show raw SSE text. The backend withholds any trailing
+        // <<<FLOWPILOT_DATA>>> block from `delta`s entirely and relays its
+        // parsed suggestedAction/questionOptions as a single `final` event.
         function processSseLines(lines) {
             lines.forEach(function (line) {
                 line = line.trim();
@@ -1562,6 +1575,8 @@
                     ensureBubble();
                     $text.html(renderMarkdown(fullText));
                     scrollMessagesToBottom();
+                } else if (evt.final) {
+                    finalData = evt.final;
                 }
             });
         }
@@ -1722,6 +1737,70 @@
         scrollMessagesToBottom();
     }
 
+    // Renders a clarifying question's quick-reply options as one-click
+    // buttons, plus a free-text "Other" option, below the latest message.
+    // Picking an option (or submitting "Other") fills the compose box with
+    // that text and sends it immediately via dispatchSend() — which routes
+    // to whatever's currently armed (Generate/Document/Modify follow-up, or
+    // a normal Query/chat message) exactly as if the user had typed and sent
+    // it themselves.
+    function renderClarifyingQuestion(options) {
+        if (!Array.isArray(options) || !options.length) { return; }
+        var $box = el("#fp-messages");
+        if (!$box.length) { return; }
+
+        var $row = $("<div>").addClass("fp-chip-row fp-question-row");
+        var $otherRow; // assigned below; declared here so answer() can reach it
+
+        function answer(text) {
+            $row.find("button, input").prop("disabled", true);
+            if ($otherRow) { $otherRow.find("button, input").prop("disabled", true); }
+            el("#fp-prompt").val(text);
+            dispatchSend();
+        }
+
+        options.forEach(function (opt) {
+            $("<button>")
+                .addClass("red-ui-button red-ui-button-small fp-chip fp-question-option")
+                .attr("type", "button")
+                .text(opt)
+                .on("click", function () { answer(opt); })
+                .appendTo($row);
+        });
+
+        $otherRow = $("<div>").addClass("fp-question-other-row fp-hidden");
+        var $otherInput = $("<input>")
+            .attr("type", "text")
+            .attr("placeholder", "Type your own answer…")
+            .addClass("fp-question-other-input");
+        var $otherSend = $("<button>")
+            .addClass("red-ui-button red-ui-button-small")
+            .attr("type", "button")
+            .append($("<i>").addClass("fa fa-paper-plane"));
+
+        function submitOther() {
+            var val = $otherInput.val().trim();
+            if (!val) { return; }
+            answer(val);
+        }
+        $otherSend.on("click", submitOther);
+        $otherInput.on("keydown", function (e) { if (e.key === "Enter") { submitOther(); } });
+        $otherRow.append($otherInput).append($otherSend);
+
+        $("<button>")
+            .addClass("red-ui-button red-ui-button-small fp-chip fp-question-other")
+            .attr("type", "button")
+            .text("Other…")
+            .on("click", function () {
+                $otherRow.removeClass("fp-hidden");
+                $otherInput.focus();
+            })
+            .appendTo($row);
+
+        $box.append($row).append($otherRow);
+        scrollMessagesToBottom();
+    }
+
     // Shared by Generate/Document/Modify result handlers: renders the model's
     // clarifying-question or prose-only envelope as a normal assistant
     // message and leaves the action armed for a follow-up. Returns true if it
@@ -1733,6 +1812,7 @@
             addMessage("assistant", qText);
             pushHistory("assistant", qText);
             renderActionChip(data.suggestedAction);
+            renderClarifyingQuestion(data.questionOptions);
             setBusy(false);
             updateSelectionStatus();
             return true;
@@ -3951,6 +4031,38 @@
     margin-top: 4px;
     font-size: 12px;
     color: var(--red-ui-secondary-text-color, #888);
+}
+
+/* Clarifying-question quick replies: option buttons + a free-text "Other"
+   that reveals an inline input. Reuses .fp-chip's look, wrapped in a row. */
+.fp-question-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+}
+
+.fp-question-option,
+.fp-question-other {
+    white-space: nowrap;
+}
+
+.fp-question-other-row {
+    display: flex;
+    gap: 6px;
+    margin: 6px 0 12px 4px;
+}
+
+.fp-question-other-input {
+    flex: 1;
+    min-width: 0;
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--red-ui-form-input-border-color, #ccc);
+    background: var(--red-ui-form-input-background, #fff);
+    color: var(--red-ui-form-input-text-color, #333);
+    font-family: inherit;
+    font-size: 13px;
 }
 
 /* A3b: Recall results — read-only snippets from earlier conversations. */

@@ -244,11 +244,16 @@ module.exports = function flowPilotRuntime(RED) {
 
     const result = await provider.chat(activeProvider, messages);
 
-    recordTranscriptTurn(conversationId, "chat", prompt, result.content || "");
+    // The visible reply may end with a hidden <<<FLOWPILOT_DATA>>> block
+    // carrying a suggestedAction/questionOptions — split it off before
+    // logging or returning the message text.
+    const split = splitChatDataBlock(result.content || "");
+
+    recordTranscriptTurn(conversationId, "chat", prompt, split.message);
 
     const perf = performanceAuditFields(messages, result.content, result);
 
-    return { settings, activeProvider, result, perf };
+    return { settings, activeProvider, result, perf, chatMessage: split.message, chatData: split.data };
   }
 
   // ---------------------------------------------------------------------
@@ -276,10 +281,22 @@ module.exports = function flowPilotRuntime(RED) {
     });
     if (typeof res.flushHeaders === "function") { res.flushHeaders(); }
 
+    // As with the non-streaming path, the reply may end with a hidden
+    // <<<FLOWPILOT_DATA>>> block. The splitter withholds the marker (and
+    // anything after it) from the relayed deltas so it's never flashed to
+    // the user, then we send its parsed contents as a separate `final`
+    // event once the stream completes.
+    const splitter = createChatDataStreamSplitter();
+    let visibleText = "";
+
     let streamResult;
     try {
       streamResult = await provider.chatStream(activeProvider, messages, function (delta) {
-        res.write("data: " + JSON.stringify({ delta: delta }) + "\n\n");
+        const visible = splitter.push(delta);
+        if (visible) {
+          visibleText += visible;
+          res.write("data: " + JSON.stringify({ delta: visible }) + "\n\n");
+        }
       });
     } catch (err) {
       res.write("data: " + JSON.stringify({ error: err.message }) + "\n\n");
@@ -288,6 +305,21 @@ module.exports = function flowPilotRuntime(RED) {
       return;
     }
     const full = streamResult.content;
+
+    const finished = splitter.finish();
+    if (finished.tail) {
+      visibleText += finished.tail;
+      res.write("data: " + JSON.stringify({ delta: finished.tail }) + "\n\n");
+    }
+
+    const final = {};
+    const suggestedAction = extractSuggestedAction(finished.data);
+    if (suggestedAction) { final.suggestedAction = suggestedAction; }
+    const questionOptions = extractQuestionOptions(finished.data);
+    if (questionOptions) { final.questionOptions = questionOptions; }
+    if (final.suggestedAction || final.questionOptions) {
+      res.write("data: " + JSON.stringify({ final: final }) + "\n\n");
+    }
 
     res.write("data: [DONE]\n\n");
     res.end();
@@ -299,7 +331,7 @@ module.exports = function flowPilotRuntime(RED) {
       model: activeProvider.model
     }, performanceAuditFields(messages, full, streamResult)));
 
-    recordTranscriptTurn(conversationId, "chat", prompt, full);
+    recordTranscriptTurn(conversationId, "chat", prompt, visibleText);
   }
 
   // ---- Settings: read --------------------------------------------------
@@ -358,7 +390,7 @@ module.exports = function flowPilotRuntime(RED) {
     }
 
     try {
-      const { activeProvider, result, perf } = await runChat(prompt, "selected-nodes", req.body.context, history, historyTruncated, req.body.conversationId);
+      const { activeProvider, result, perf, chatMessage, chatData } = await runChat(prompt, "selected-nodes", req.body.context, history, historyTruncated, req.body.conversationId);
 
       storage.appendAudit(Object.assign({
         action: "chat",
@@ -367,10 +399,15 @@ module.exports = function flowPilotRuntime(RED) {
         model: activeProvider.model
       }, perf));
 
-      res.json({
-        message: result.content || "[No assistant message returned by provider]",
+      const body = {
+        message: chatMessage || "[No assistant message returned by provider]",
         raw: result.raw ? "[raw response captured]" : null
-      });
+      };
+      const suggestedAction = extractSuggestedAction(chatData);
+      if (suggestedAction) { body.suggestedAction = suggestedAction; }
+      const questionOptions = extractQuestionOptions(chatData);
+      if (questionOptions) { body.questionOptions = questionOptions; }
+      res.json(body);
     } catch (err) {
       storage.appendAudit({ action: "chat_error", error: err.message });
       res.status(500).json({ error: err.message });
@@ -458,7 +495,7 @@ module.exports = function flowPilotRuntime(RED) {
     const prompt = (req.body && req.body.prompt) || "Say hello from FlowPilot.";
 
     try {
-      const { settings, activeProvider, result, perf } = await runChat(prompt, "connectivity-test");
+      const { settings, activeProvider, result, perf, chatMessage } = await runChat(prompt, "connectivity-test");
 
       storage.appendAudit(Object.assign({
         action: "chat_test",
@@ -487,7 +524,7 @@ module.exports = function flowPilotRuntime(RED) {
       storage.saveSettings(Object.assign({}, settings, { providers: updatedProviders }));
 
       res.json({
-        message: result.content || "[No assistant message returned by provider]",
+        message: chatMessage || "[No assistant message returned by provider]",
         raw: result.raw ? "[raw response captured]" : null,
         capability: {
           supportsTools: probe.supportsTools,
@@ -587,6 +624,98 @@ module.exports = function flowPilotRuntime(RED) {
   }
 
   // ---------------------------------------------------------------------
+  // Pull an optional "questionOptions" (quick-reply buttons for a clarifying
+  // question) out of a parsed envelope: 2-4 short non-empty strings. The
+  // frontend renders these as one-click buttons plus a free-text "Other";
+  // anything malformed or out of range is dropped (returns null), never an
+  // error — same additive-hint treatment as extractSuggestedAction.
+  // ---------------------------------------------------------------------
+  function extractQuestionOptions(parsed) {
+    const opts = parsed && parsed.questionOptions;
+    if (!Array.isArray(opts)) { return null; }
+    const cleaned = opts
+      .map(function (o) { return typeof o === "string" ? o.trim() : ""; })
+      .filter(Boolean);
+    if (cleaned.length < 2 || cleaned.length > 4) { return null; }
+    return cleaned;
+  }
+
+  // ---------------------------------------------------------------------
+  // Chat (free-text) responses can end with an optional, hidden data block —
+  // a marker line followed by a single JSON object carrying a
+  // "suggestedAction" and/or "questionOptions" (see default-system-prompt.js).
+  // Unlike the generate/modify/document envelopes, the visible chat reply is
+  // plain prose, so this block is split off rather than being the whole
+  // response. Used by the non-streaming /chat path; streaming uses
+  // createChatDataStreamSplitter below so the marker/JSON are never flashed
+  // to the user mid-stream.
+  // ---------------------------------------------------------------------
+  const CHAT_DATA_MARKER = "<<<FLOWPILOT_DATA>>>";
+
+  function splitChatDataBlock(content) {
+    const text = String(content || "");
+    const idx = text.indexOf(CHAT_DATA_MARKER);
+    if (idx === -1) { return { message: text, data: null }; }
+
+    const message = text.slice(0, idx).replace(/\s+$/, "");
+    const jsonStr = text.slice(idx + CHAT_DATA_MARKER.length).trim();
+    let data = null;
+    try { data = JSON.parse(jsonStr); } catch (e) { data = null; }
+    return { message: message, data: data };
+  }
+
+  // Streaming counterpart of splitChatDataBlock: buffers just enough of the
+  // tail to detect CHAT_DATA_MARKER even if it's split across provider
+  // chunks, without delaying normal text. push(delta) returns the portion of
+  // `delta` (plus any previously-held tail) that's safe to display now —
+  // possibly "". Once the marker is seen, all further input is buffered as
+  // the JSON data block instead of being displayed. finish() returns any
+  // held-back text that turned out NOT to be part of the marker (a false
+  // positive at end of stream) plus the parsed data block, if any.
+  // ---------------------------------------------------------------------
+  function createChatDataStreamSplitter() {
+    let held = "";
+    let inData = false;
+    let dataBuf = "";
+
+    function push(delta) {
+      if (inData) { dataBuf += delta; return ""; }
+
+      const combined = held + delta;
+      const idx = combined.indexOf(CHAT_DATA_MARKER);
+      if (idx !== -1) {
+        inData = true;
+        dataBuf = combined.slice(idx + CHAT_DATA_MARKER.length);
+        held = "";
+        return combined.slice(0, idx);
+      }
+
+      // No full marker yet — check whether the tail of `combined` is a
+      // prefix of the marker (i.e. the marker may be split across chunks)
+      // and hold that part back.
+      const maxOverlap = Math.min(combined.length, CHAT_DATA_MARKER.length - 1);
+      let overlap = 0;
+      for (let len = maxOverlap; len >= 1; len--) {
+        if (combined.slice(-len) === CHAT_DATA_MARKER.slice(0, len)) { overlap = len; break; }
+      }
+      held = overlap ? combined.slice(-overlap) : "";
+      return overlap ? combined.slice(0, -overlap) : combined;
+    }
+
+    function finish() {
+      const tail = held;
+      held = "";
+      let data = null;
+      if (inData) {
+        try { data = JSON.parse(dataBuf.trim()); } catch (e) { data = null; }
+      }
+      return { tail: tail, data: data };
+    }
+
+    return { push: push, finish: finish };
+  }
+
+  // ---------------------------------------------------------------------
   // Shared helper: parse, validate and audit a completed provider response
   // for a generation-style request, returning { question } / { prose } /
   // { explanation, flow, newNodes, newWires }, each optionally carrying a
@@ -628,6 +757,8 @@ module.exports = function flowPilotRuntime(RED) {
       const questionResult = { question: parsed.question, explanation: parsed.explanation || "" };
       const questionAction = extractSuggestedAction(parsed);
       if (questionAction) { questionResult.suggestedAction = questionAction; }
+      const questionOptions = extractQuestionOptions(parsed);
+      if (questionOptions) { questionResult.questionOptions = questionOptions; }
       return questionResult;
     }
 
@@ -758,6 +889,7 @@ module.exports = function flowPilotRuntime(RED) {
     if (result.question) {
       const body = { explanation: result.explanation, question: result.question, flow: null };
       if (result.suggestedAction) { body.suggestedAction = result.suggestedAction; }
+      if (result.questionOptions) { body.questionOptions = result.questionOptions; }
       return { status: 200, body: body };
     }
     if (result.prose) {
@@ -781,6 +913,7 @@ module.exports = function flowPilotRuntime(RED) {
     if (result.question) {
       const questionBody = { explanation: result.explanation, question: result.question, flow: null };
       if (result.suggestedAction) { questionBody.suggestedAction = result.suggestedAction; }
+      if (result.questionOptions) { questionBody.questionOptions = result.questionOptions; }
       return { status: 200, body: questionBody };
     }
     if (result.prose) {
