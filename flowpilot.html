@@ -39,17 +39,36 @@
         return (isFinite(n) && n >= 0) ? n : 10;
     }
 
-    // Returns the capped slice of history to send with a request, plus
-    // whether anything was dropped. ONE place both /chat and the
-    // generate/modify/document send paths call, so the cap and truncation
-    // behaviour can't drift between them.
+    // Returns the history to send with a request, plus whether anything has
+    // ever been dropped. ONE place both /chat and the generate/modify/document
+    // send paths call, so the cap and truncation behaviour can't drift
+    // between them.
+    //
+    // B3: stepped (paged) truncation instead of a continuously-sliding
+    // window. A plain slice(-maxMessages) would drop the oldest exchange and
+    // append the newest on EVERY turn once the cap is reached — changing the
+    // history prefix sent to the provider every request and invalidating its
+    // prompt/KV cache for the (large, expensive) system prompt every time.
+    // Instead, conversationHistory grows untrimmed — and the sent history is
+    // a pure append, i.e. byte-stable except for new messages at the tail —
+    // up to 2x the cap, then drops the oldest half in one shot. Sent history
+    // size ranges between maxMessages and 2*maxMessages exchanges-worth of
+    // messages; "truncated" (and HISTORY_TRUNCATION_NOTICE) flips at each of
+    // those two points, not every turn.
     function buildHistoryPayload() {
         var maxMessages = getHistoryMaxExchanges() * 2;
         // maxMessages === 0 means memory is off by design — that's not
         // "truncation" and shouldn't trigger the omitted-messages notice (#10).
-        var truncated = maxMessages > 0 && conversationHistory.length > maxMessages;
-        var messages = maxMessages > 0 ? conversationHistory.slice(-maxMessages) : [];
-        return { messages: messages, truncated: truncated };
+        if (maxMessages === 0) {
+            return { messages: [], truncated: false };
+        }
+
+        if (conversationHistory.length > maxMessages * 2) {
+            conversationHistory = conversationHistory.slice(-maxMessages);
+        }
+
+        var truncated = conversationHistory.length > maxMessages;
+        return { messages: conversationHistory.slice(), truncated: truncated };
     }
 
     // Which Execute action (if any) Send currently triggers. null = ordinary
