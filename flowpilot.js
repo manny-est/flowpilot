@@ -19,6 +19,121 @@ module.exports = function flowPilotRuntime(RED) {
     "request size manageable. Continue naturally; if you need something " +
     "that may have been said earlier, ask the user.";
 
+  // ---------------------------------------------------------------------
+  // Phase 7 spike: Tier-1 READ tools the model may call autonomously during
+  // a chat turn. Their data (RED.nodes, live selection, debug buffer) lives
+  // only in the editor, so each call is executed CLIENT-SIDE and its result
+  // passed back through the same sanitizer as selection context — a tool
+  // result can never carry a raw secret. WRITE actions are never exposed as
+  // tools; they stay on the existing diff/review/apply envelope.
+  // ---------------------------------------------------------------------
+  const AGENT_READ_TOOLS = [
+    {
+      type: "function",
+      function: {
+        name: "read_node",
+        description: "Read the sanitized configuration of a single node in " +
+          "the current flow editor, identified by id or by name. Use this " +
+          "when the user refers to a node that is not in the attached " +
+          "selection.",
+        parameters: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "The node's id, if known." },
+            name: { type: "string", description: "The node's display " +
+              "name (\"name\" property), if id is not known." }
+          },
+          additionalProperties: false
+        }
+      }
+    },
+    {
+      type: "function",
+      function: {
+        name: "list_flows",
+        description: "List the flow tabs AND subflow definitions in this " +
+          "Node-RED instance, with their labels, type (\"tab\" or " +
+          "\"subflow\"), enabled/disabled state, and node counts. Subflow " +
+          "definitions are listed separately from flow tabs (they appear " +
+          "as \"[Subflow] <name>\" in the editor). Use this to orient " +
+          "yourself before searching, and to find a subflow's id so its " +
+          "internal nodes can be looked up with search_flow/get_connections " +
+          "using that id as flowId.",
+        parameters: { type: "object", properties: {}, additionalProperties: false }
+      }
+    },
+    {
+      type: "function",
+      function: {
+        name: "search_flow",
+        description: "Search nodes across the flow editor (including nodes " +
+          "inside subflow definitions) by name and/or type substring " +
+          "(case-insensitive). Also matches subflow definitions by name " +
+          "(returned with type \"subflow\"), and subflow-instance nodes by " +
+          "their subflow's name. Returns matching items' id, name, type, " +
+          "and which flow tab (or subflow definition) they're on. Use this " +
+          "to find a node or subflow when you don't have its id.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Substring to match " +
+              "against node name or type. Leave empty to list all nodes " +
+              "(combine with type or flowId to narrow it)." },
+            type: { type: "string", description: "Optional node type " +
+              "substring filter, e.g. \"http request\" or \"inject\"." },
+            flowId: { type: "string", description: "Optional flow tab id " +
+              "to restrict the search to." }
+          },
+          additionalProperties: false
+        }
+      }
+    },
+    {
+      type: "function",
+      function: {
+        name: "get_connections",
+        description: "Get the wiring (connections) for a node, identified " +
+          "by id, or — if no id is given — for the current selection, or " +
+          "for the whole active flow tab if nothing is selected.",
+        parameters: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "The node's id. Omit to use " +
+              "the current selection or active flow tab." }
+          },
+          additionalProperties: false
+        }
+      }
+    },
+    {
+      type: "function",
+      function: {
+        name: "read_debug",
+        description: "Read recent messages from the Node-RED Debug sidebar " +
+          "(already redacted of secret-shaped values). Use this for " +
+          "troubleshooting runtime behaviour without the user manually " +
+          "attaching debug output.",
+        parameters: {
+          type: "object",
+          properties: {
+            limit: { type: "integer", description: "Max number of recent " +
+              "messages to return (default 10, max 50)." }
+          },
+          additionalProperties: false
+        }
+      }
+    },
+    {
+      type: "function",
+      function: {
+        name: "get_selection",
+        description: "Get the sanitized configuration and connections of " +
+          "the node(s) currently selected in the editor, if any.",
+        parameters: { type: "object", properties: {}, additionalProperties: false }
+      }
+    }
+  ];
+
   // Keep only well-formed { role: "user"|"assistant", content: <string> }
   // entries. Anything else (bad shapes, empty content, other roles) is
   // dropped rather than rejected outright — the history is advisory context,
@@ -243,7 +358,13 @@ module.exports = function flowPilotRuntime(RED) {
   // log it, and return the result. Used by both /chat and /test so the two
   // never drift apart. contextMode is recorded for the Phase 2+ audit trail.
   // ---------------------------------------------------------------------
-  async function runChat(prompt, contextMode, context, history, historyTruncated, conversationId) {
+  // useTools (Phase 7 spike): when true, the request offers AGENT_READ_TOOLS
+  // with tool_choice "auto". If the provider responds with tool_calls instead
+  // of a final message, we return early with `toolCalls` + the `messages`
+  // array built so far (so the caller/frontend can append the tool results
+  // and continue via /flowpilot/agent-step) — nothing is recorded to the
+  // transcript yet, since this isn't the final answer for the turn.
+  async function runChat(prompt, contextMode, context, history, historyTruncated, conversationId, useTools) {
     const settings = storage.getSettings();
     const activeProvider = storage.getActiveProvider(settings);
 
@@ -253,7 +374,13 @@ module.exports = function flowPilotRuntime(RED) {
       history, historyTruncated, described, prompt
     );
 
-    const result = await provider.chat(activeProvider, messages);
+    const chatOptions = useTools ? { tools: AGENT_READ_TOOLS, toolChoice: "auto" } : undefined;
+    const result = await provider.chat(activeProvider, messages, chatOptions);
+
+    if (result.toolCalls) {
+      const perf = performanceAuditFields(messages, result.content, result);
+      return { settings, activeProvider, result, perf, messages, toolCalls: result.toolCalls };
+    }
 
     // The visible reply may end with a hidden <<<FLOWPILOT_DATA>>> block
     // carrying a suggestedAction/questionOptions — split it off before
@@ -264,7 +391,7 @@ module.exports = function flowPilotRuntime(RED) {
 
     const perf = performanceAuditFields(messages, result.content, result);
 
-    return { settings, activeProvider, result, perf, chatMessage: split.message, chatData: split.data };
+    return { settings, activeProvider, result, perf, chatMessage: split.message, chatData: split.data, messages };
   }
 
   // ---------------------------------------------------------------------
@@ -434,18 +561,26 @@ module.exports = function flowPilotRuntime(RED) {
     }
 
     try {
-      const { activeProvider, result, perf, chatMessage, chatData } = await runChat(prompt, "selected-nodes", req.body.context, history, historyTruncated, req.body.conversationId);
+      const useTools = !!req.body.tools;
+      const { activeProvider, result, perf, chatMessage, chatData, messages, toolCalls } =
+        await runChat(prompt, "selected-nodes", req.body.context, history, historyTruncated, req.body.conversationId, useTools);
 
       storage.appendAudit(Object.assign({
         action: "chat",
         providerName: activeProvider.providerName,
         baseUrl: activeProvider.baseUrl,
-        model: activeProvider.model
+        model: activeProvider.model,
+        toolCallCount: toolCalls ? toolCalls.length : 0
       }, perf));
+
+      if (toolCalls) {
+        return res.json({ toolCalls: toolCalls, messages: messages, content: result.content || null, usage: result.usage || null });
+      }
 
       const body = {
         message: chatMessage || "[No assistant message returned by provider]",
-        raw: result.raw ? "[raw response captured]" : null
+        raw: result.raw ? "[raw response captured]" : null,
+        usage: result.usage || null
       };
       const suggestedAction = extractSuggestedAction(chatData);
       if (suggestedAction) { body.suggestedAction = suggestedAction; }
@@ -455,6 +590,76 @@ module.exports = function flowPilotRuntime(RED) {
     } catch (err) {
       storage.appendAudit({ action: "chat_error", error: err.message });
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ---- Agent step: continue a tool-calling loop --------------------------
+  // The frontend owns the loop: after executing any tool_calls returned by
+  // /flowpilot/{chat,generate,document,modify} (tools:true) or a prior
+  // /agent-step against RED.nodes, it appends { role: "assistant",
+  // tool_calls } and { role: "tool", ... } result messages and posts the
+  // full array back here. Stateless — just another provider.chat call with
+  // the same tool definitions.
+  //
+  // `mode` ("chat" | "generate" | "document" | "modify", default "chat")
+  // controls how a FINAL (non-tool-call) response is interpreted:
+  //  - "chat": split off the <<<FLOWPILOT_DATA>>> block, same as /chat.
+  //  - "generate"/"document"/"modify" (Step 4, explore-then-propose): parse
+  //    the { explanation, flow|changes, ... } envelope via
+  //    processGenerationContent + finalizeSimpleGeneration/
+  //    finalizeModifyResult — the SAME validate step the non-streaming
+  //    routes use, so a tool-using turn still ends in the reviewed envelope.
+  //    `context` (for describeSelectionContext / modify's originalNodes) and
+  //    `prompt` (for transcript recording) are passed through from the
+  //    initial request.
+  RED.httpAdmin.post("/flowpilot/agent-step", RED.auth.needsPermission("settings.write"), async function (req, res) {
+    const messages = req.body && req.body.messages;
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ error: "messages array is required." });
+    }
+    const mode = req.body.mode || "chat";
+
+    try {
+      const settings = storage.getSettings();
+      const activeProvider = storage.getActiveProvider(settings);
+      const result = await provider.chat(activeProvider, messages, { tools: AGENT_READ_TOOLS, toolChoice: "auto" });
+
+      storage.appendAudit(Object.assign({
+        action: "agent_step",
+        mode: mode,
+        providerName: activeProvider.providerName,
+        baseUrl: activeProvider.baseUrl,
+        model: activeProvider.model,
+        toolCallCount: result.toolCalls ? result.toolCalls.length : 0
+      }, performanceAuditFields(messages, result.content, result)));
+
+      if (result.toolCalls) {
+        return res.json({ toolCalls: result.toolCalls, content: result.content || null, usage: result.usage || null });
+      }
+
+      if (mode !== "chat") {
+        const context = req.body.context;
+        const described = describeSelectionContext(context);
+        const generated = processGenerationContent(result.content || "", result, messages, mode, described, activeProvider);
+        recordTranscriptTurn(req.body.conversationId, mode, req.body.prompt || null, transcriptTextFromGenerationResult(generated));
+        const finalize = (mode === "modify")
+          ? function (r) { return finalizeModifyResult(r, (context && Array.isArray(context.nodes)) ? context.nodes : []); }
+          : finalizeSimpleGeneration;
+        const { status, body } = finalize(generated);
+        return res.status(status).json(body);
+      }
+
+      const split = splitChatDataBlock(result.content || "");
+      recordTranscriptTurn(req.body.conversationId, "chat", null, split.message);
+
+      const body = { message: split.message || "[No assistant message returned by provider]", usage: result.usage || null };
+      const suggestedAction = extractSuggestedAction(split.data);
+      if (suggestedAction) { body.suggestedAction = suggestedAction; }
+      const questionOptions = extractQuestionOptions(split.data);
+      if (questionOptions) { body.questionOptions = questionOptions; }
+      res.json(body);
+    } catch (err) {
+      sendGenerationError(res, mode + "_agent_step", err);
     }
   });
 
@@ -890,9 +1095,18 @@ module.exports = function flowPilotRuntime(RED) {
   // action name, and how the route validates its inputs beforehand. Throws
   // an Error with .status and (when applicable) .raw for the route to relay.
   // ---------------------------------------------------------------------
-  async function runFlowGeneration(systemPrompt, auditAction, userPrompt, context, history, historyTruncated) {
+  // Step 4: useTools offers AGENT_READ_TOOLS (explore-then-propose). If the
+  // provider responds with tool_calls instead of a final envelope, returns
+  // early with { toolCalls, messages, content, usage } — same shape as
+  // runChat's early return — so the route can hand it to the frontend
+  // without running processGenerationContent yet.
+  async function runFlowGeneration(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, useTools) {
     const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated);
-    const result = await provider.chat(activeProvider, messages);
+    const chatOptions = useTools ? { tools: AGENT_READ_TOOLS, toolChoice: "auto" } : undefined;
+    const result = await provider.chat(activeProvider, messages, chatOptions);
+    if (result.toolCalls) {
+      return { toolCalls: result.toolCalls, messages: messages, content: result.content || null, usage: result.usage || null };
+    }
     return processGenerationContent(result.content || "", result, messages, auditAction, described, activeProvider);
   }
 
@@ -1159,10 +1373,14 @@ module.exports = function flowPilotRuntime(RED) {
     }
 
     try {
+      const useTools = !!req.body.tools;
       const generated = await runFlowGeneration(
         generationSystemPrompt, "generate", prompt, req.body && req.body.context,
-        history, historyTruncated
+        history, historyTruncated, useTools
       );
+      if (generated.toolCalls) {
+        return res.json({ toolCalls: generated.toolCalls, messages: generated.messages, content: generated.content, usage: generated.usage });
+      }
       recordTranscriptTurn(req.body.conversationId, "generate", prompt, transcriptTextFromGenerationResult(generated));
       const { status, body } = finalizeSimpleGeneration(generated);
       res.status(status).json(body);
@@ -1195,10 +1413,14 @@ module.exports = function flowPilotRuntime(RED) {
     }
 
     try {
+      const useTools = !!req.body.tools;
       const documented = await runFlowGeneration(
         documentSystemPrompt, "document", userPrompt, context,
-        history, historyTruncated
+        history, historyTruncated, useTools
       );
+      if (documented.toolCalls) {
+        return res.json({ toolCalls: documented.toolCalls, messages: documented.messages, content: documented.content, usage: documented.usage });
+      }
       recordTranscriptTurn(req.body.conversationId, "document", userPrompt, transcriptTextFromGenerationResult(documented));
       const { status, body } = finalizeSimpleGeneration(documented);
       res.status(status).json(body);
@@ -1237,10 +1459,14 @@ module.exports = function flowPilotRuntime(RED) {
     }
 
     try {
+      const useTools = !!req.body.tools;
       const result = await runFlowGeneration(
         modifySystemPrompt, "modify", String(prompt).trim(), context,
-        history, historyTruncated
+        history, historyTruncated, useTools
       );
+      if (result.toolCalls) {
+        return res.json({ toolCalls: result.toolCalls, messages: result.messages, content: result.content, usage: result.usage });
+      }
       recordTranscriptTurn(req.body.conversationId, "modify", String(prompt).trim(), transcriptTextFromGenerationResult(result));
       const { status, body } = finalize(result);
       res.status(status).json(body);
