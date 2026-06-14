@@ -30,15 +30,5 @@
   },
   "engines": {
     "node": ">=16"
-  },
-  "scripts": {
-    "test:ui": "playwright test",
-    "test:ui:headed": "playwright test --headed",
-    "test:ui:debug": "playwright test --debug",
-    "test:ui:docker": "docker run --rm --network host -v \"$PWD\":/work -w /work mcr.microsoft.com/playwright:v1.54.2-noble npm run test:ui",
-    "test:ui:report": "playwright show-report"
-  },
-  "devDependencies": {
-    "@playwright/test": "^1.60.0"
   }
 }

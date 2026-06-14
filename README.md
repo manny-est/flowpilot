@@ -95,7 +95,7 @@ http://localai:8080
 http://172.17.0.1:8080
 ```
 
-Click **Save & test** to verify connectivity.
+Click **Pre-flight check** to save and verify connectivity.
 
 ## Development status
 
