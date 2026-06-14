@@ -45,7 +45,9 @@
     // behaviour can't drift between them.
     function buildHistoryPayload() {
         var maxMessages = getHistoryMaxExchanges() * 2;
-        var truncated = conversationHistory.length > maxMessages;
+        // maxMessages === 0 means memory is off by design — that's not
+        // "truncation" and shouldn't trigger the omitted-messages notice (#10).
+        var truncated = maxMessages > 0 && conversationHistory.length > maxMessages;
         var messages = maxMessages > 0 ? conversationHistory.slice(-maxMessages) : [];
         return { messages: messages, truncated: truncated };
     }
@@ -837,13 +839,15 @@
         var context = (endpoint === "test") ? null : collectSelectionContext();
         var note = contextAttachmentNote(context);
         addMessage("user", prompt + note);
+        // #8: build the history payload BEFORE pushing this turn, so
+        // "history" means "everything before this turn" — the backend
+        // appends this turn separately as the final user message.
+        var historyPayload = isChat ? buildHistoryPayload() : { messages: [], truncated: false };
         if (isChat) { pushHistory("user", prompt + note); }
         if (!promptOverride) { $promptBox.val(""); }
 
         setBusy(true);
         showPending();
-
-        var historyPayload = isChat ? buildHistoryPayload() : { messages: [], truncated: false };
         var payload = {
             prompt: prompt,
             context: context,
@@ -993,12 +997,13 @@
         var context = collectSelectionContext();
         var label = "Generate: " + prompt + contextAttachmentNote(context);
         addMessage("user", label);
+        // #8: snapshot history before pushing this turn (see send()).
+        var historyPayload = buildHistoryPayload();
         pushHistory("user", label);
         $promptBox.val("");
 
         setBusy(true);
         showPending();
-        var historyPayload = buildHistoryPayload();
         ajaxJson("POST", "flowpilot/generate", {
             prompt: prompt, context: context,
             history: historyPayload.messages, historyTruncated: historyPayload.truncated
@@ -1052,12 +1057,13 @@
         var notes = $promptBox.length ? $promptBox.val().trim() : "";
         var label = "Document selection" + (notes ? ": " + notes : "") + contextAttachmentNote(context);
         addMessage("user", label);
+        // #8: snapshot history before pushing this turn (see send()).
+        var historyPayload = buildHistoryPayload();
         pushHistory("user", label);
         $promptBox.val("");
 
         setBusy(true);
         showPending();
-        var historyPayload = buildHistoryPayload();
         ajaxJson("POST", "flowpilot/document", {
             prompt: notes, context: context,
             history: historyPayload.messages, historyTruncated: historyPayload.truncated
@@ -1962,12 +1968,13 @@
         }
         var label = "Modify: " + instruction + contextAttachmentNote(context);
         addMessage("user", label);
+        // #8: snapshot history before pushing this turn (see send()).
+        var historyPayload = buildHistoryPayload();
         pushHistory("user", label);
         $promptBox.val("");
 
         setBusy(true);
         showPending();
-        var historyPayload = buildHistoryPayload();
         ajaxJson("POST", "flowpilot/modify", {
             prompt: instruction, context: context,
             history: historyPayload.messages, historyTruncated: historyPayload.truncated
