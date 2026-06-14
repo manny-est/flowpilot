@@ -1400,6 +1400,9 @@
             if (data.capability && data.capability.label) {
                 message += "\n\n" + data.capability.label;
             }
+            if (endpoint === "test") {
+                message += "\n\nAll set — try `/help` for the full briefing and shortcut list.";
+            }
             addMessage("assistant", message);
             if (isChat) { pushHistory("assistant", data.message || ""); }
             setBusy(false);
