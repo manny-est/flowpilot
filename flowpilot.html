@@ -2124,7 +2124,17 @@
         var firstPayload = Object.assign({}, payload, { tools: true });
         ajaxJson("POST", firstEndpoint, firstPayload, function (data) {
             handleStep(data, null);
-        }, onError);
+        }, function () {
+            // Fallback parity (Phase 7 step 5): the provider was probed as
+            // supportsTools, but the very first tools:true request failed
+            // outright — e.g. the model was swapped since the last probe, or
+            // this provider errors on an unrecognized "tools" field instead
+            // of ignoring it. Retry once without tools so the turn still
+            // completes the same way it would for a non-capable provider,
+            // rather than surfacing a hard error for what would otherwise be
+            // a normal request.
+            fallbackToPlain();
+        });
     }
 
     // Chat (step 2): mode defaults to "chat" server-side, so no stepExtra.
