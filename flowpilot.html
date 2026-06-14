@@ -3058,10 +3058,23 @@
     // The generation prompt deliberately omits x/y ("the editor assigns those
     // on import"), but RED.view.importNodes does NOT auto-arrange nodes that
     // lack coordinates — it just places them on top of each other. So we lay
-    // them out ourselves: left-to-right by topological depth (column = longest
-    // distance from a node with no incoming wire in this set), stacked
-    // top-to-bottom within a column. Good enough for the "single node / small
-    // group" first-cut scope without needing real graph-layout machinery.
+    // them out ourselves:
+    //
+    // - Non-comment wired nodes are split into connected components (a
+    //   component = nodes reachable from each other via wires, in either
+    //   direction). Each component gets its own horizontal "band", stacked
+    //   top to bottom, ordered by where its first node appears in `flow`.
+    //   Within a band, columns are topological depth (longest path from an
+    //   in-degree-0 node) and rows stack top-to-bottom within a column —
+    //   same approach as before, just scoped to one component at a time so
+    //   independent chains (e.g. a scheduler pipeline vs. an HTTP endpoint)
+    //   don't get interleaved into the same rows.
+    // - Comment nodes have no wires to anchor them, so each is matched to
+    //   the nearest non-comment node adjacent to it in the `flow` array
+    //   (forward, then backward) — models place a comment next to the
+    //   section it describes — and placed in a header row above that node's
+    //   column, in that node's component's band.
+    //
     // Config nodes (no "wires" array — e.g. mqtt-broker) are left untouched;
     // they don't live on the canvas and have no x/y/z of their own.
     function layoutGeneratedFlow(flow) {
@@ -3069,53 +3082,177 @@
         var ROW_HEIGHT = 90;
         var BASE_X = 160;
         var BASE_Y = 120;
+        var BAND_GAP_ROWS = 1;
 
         var nodes = Array.isArray(flow) ? flow : [];
-        var canvasNodes = nodes.filter(function (n) { return n && Array.isArray(n.wires); });
-        var byId = {};
-        canvasNodes.forEach(function (n) { byId[n.id] = n; });
+        var wiredNodes = nodes.filter(function (n) { return n && Array.isArray(n.wires) && n.type !== "comment"; });
+        var commentNodes = nodes.filter(function (n) { return n && n.type === "comment"; });
 
-        var incoming = {};
-        canvasNodes.forEach(function (n) { incoming[n.id] = 0; });
-        canvasNodes.forEach(function (n) {
+        if (!wiredNodes.length) {
+            // Nothing to anchor comments to — just stack everything.
+            nodes.forEach(function (n, i) {
+                if (!n) { return; }
+                n.x = BASE_X;
+                n.y = BASE_Y + i * ROW_HEIGHT;
+            });
+            return nodes;
+        }
+
+        var byId = {};
+        wiredNodes.forEach(function (n) { byId[n.id] = n; });
+
+        // ---- Connected components (undirected: wires in either direction) ----
+        var adjacency = {};
+        wiredNodes.forEach(function (n) { adjacency[n.id] = []; });
+        wiredNodes.forEach(function (n) {
             n.wires.forEach(function (port) {
                 (Array.isArray(port) ? port : []).forEach(function (targetId) {
-                    if (incoming.hasOwnProperty(targetId)) { incoming[targetId] += 1; }
+                    if (!byId[targetId]) { return; }
+                    adjacency[n.id].push(targetId);
+                    adjacency[targetId].push(n.id);
                 });
             });
         });
 
-        // Column = longest path from a root (in-degree 0 within this set).
-        // Relax repeatedly until stable; generated flows are small, so a
-        // simple bounded loop is plenty (and can't hang on a wiring cycle).
-        var column = {};
-        canvasNodes.forEach(function (n) { column[n.id] = incoming[n.id] === 0 ? 0 : -1; });
-        var changed = true;
-        var guard = 0;
-        while (changed && guard <= canvasNodes.length) {
-            changed = false;
-            guard += 1;
-            canvasNodes.forEach(function (n) {
-                var fromCol = column[n.id] < 0 ? 0 : column[n.id];
-                n.wires.forEach(function (port) {
+        var orderIndex = {};
+        nodes.forEach(function (n, i) { if (n && n.id) { orderIndex[n.id] = i; } });
+
+        var visited = {};
+        var components = [];
+        wiredNodes.forEach(function (start) {
+            if (visited[start.id]) { return; }
+            var stack = [start.id];
+            var members = [];
+            visited[start.id] = true;
+            while (stack.length) {
+                var id = stack.pop();
+                members.push(id);
+                adjacency[id].forEach(function (neighborId) {
+                    if (!visited[neighborId]) { visited[neighborId] = true; stack.push(neighborId); }
+                });
+            }
+            components.push(members);
+        });
+
+        // Order bands by where each component first appears in `flow`, so
+        // the layout roughly follows generation order top to bottom.
+        components.sort(function (a, b) {
+            var minA = Math.min.apply(null, a.map(function (id) { return orderIndex[id]; }));
+            var minB = Math.min.apply(null, b.map(function (id) { return orderIndex[id]; }));
+            return minA - minB;
+        });
+
+        // Column = longest path from an in-degree-0 node, scoped to this
+        // component only (so independent chains don't influence each other).
+        function assignColumns(members) {
+            var memberSet = {};
+            members.forEach(function (id) { memberSet[id] = true; });
+
+            var incoming = {};
+            members.forEach(function (id) { incoming[id] = 0; });
+            members.forEach(function (id) {
+                byId[id].wires.forEach(function (port) {
                     (Array.isArray(port) ? port : []).forEach(function (targetId) {
-                        if (!byId[targetId]) { return; }
-                        if (column[targetId] < fromCol + 1) {
-                            column[targetId] = fromCol + 1;
-                            changed = true;
-                        }
+                        if (memberSet[targetId]) { incoming[targetId] += 1; }
                     });
                 });
             });
+
+            var column = {};
+            members.forEach(function (id) { column[id] = incoming[id] === 0 ? 0 : -1; });
+            var changed = true;
+            var guard = 0;
+            while (changed && guard <= members.length) {
+                changed = false;
+                guard += 1;
+                members.forEach(function (id) {
+                    var fromCol = column[id] < 0 ? 0 : column[id];
+                    byId[id].wires.forEach(function (port) {
+                        (Array.isArray(port) ? port : []).forEach(function (targetId) {
+                            if (!memberSet[targetId]) { return; }
+                            if (column[targetId] < fromCol + 1) {
+                                column[targetId] = fromCol + 1;
+                                changed = true;
+                            }
+                        });
+                    });
+                });
+            }
+            members.forEach(function (id) { if (column[id] < 0) { column[id] = 0; } });
+            return column;
         }
 
-        var rowsUsed = {};
-        canvasNodes.forEach(function (n) {
-            var col = column[n.id] < 0 ? 0 : column[n.id];
-            var row = rowsUsed[col] || 0;
-            rowsUsed[col] = row + 1;
-            n.x = BASE_X + col * COL_WIDTH;
-            n.y = BASE_Y + row * ROW_HEIGHT;
+        // ---- Anchor each comment to the nearest non-comment node adjacent
+        // to it in `flow` (forward, then backward). ----
+        function nearestWiredNeighbor(commentIndex) {
+            var i, candidate;
+            for (i = commentIndex + 1; i < nodes.length; i++) {
+                candidate = nodes[i];
+                if (candidate && byId[candidate.id]) { return candidate.id; }
+            }
+            for (i = commentIndex - 1; i >= 0; i--) {
+                candidate = nodes[i];
+                if (candidate && byId[candidate.id]) { return candidate.id; }
+            }
+            return null;
+        }
+
+        var commentsByAnchor = {}; // wired-node id -> [comment nodes]
+        var unanchoredComments = [];
+        commentNodes.forEach(function (c) {
+            var anchorId = nearestWiredNeighbor(nodes.indexOf(c));
+            if (anchorId) {
+                (commentsByAnchor[anchorId] = commentsByAnchor[anchorId] || []).push(c);
+            } else {
+                unanchoredComments.push(c);
+            }
+        });
+
+        // ---- Lay out each component in its own band, leaving a header row
+        // for any comments anchored within it. ----
+        var nextBandY = BASE_Y;
+        components.forEach(function (members) {
+            var column = assignColumns(members);
+
+            var headerCols = {};
+            var hasHeader = false;
+            members.forEach(function (id) {
+                (commentsByAnchor[id] || []).forEach(function (c) {
+                    headerCols[column[id]] = headerCols[column[id]] || [];
+                    headerCols[column[id]].push(c);
+                    hasHeader = true;
+                });
+            });
+            var bodyOffset = hasHeader ? 1 : 0;
+
+            var rowsUsed = {};
+            var maxRows = 0;
+            members.forEach(function (id) {
+                var col = column[id];
+                var row = rowsUsed[col] || 0;
+                rowsUsed[col] = row + 1;
+                maxRows = Math.max(maxRows, row + 1);
+                var n = byId[id];
+                n.x = BASE_X + col * COL_WIDTH;
+                n.y = nextBandY + (bodyOffset + row) * ROW_HEIGHT;
+            });
+
+            Object.keys(headerCols).forEach(function (col) {
+                headerCols[col].forEach(function (c, i) {
+                    c.x = BASE_X + Number(col) * COL_WIDTH;
+                    c.y = nextBandY + i * Math.round(ROW_HEIGHT / 2);
+                });
+            });
+
+            nextBandY += (bodyOffset + maxRows + BAND_GAP_ROWS) * ROW_HEIGHT;
+        });
+
+        // Comments that couldn't be anchored (only possible if `flow` is
+        // entirely comments, which the early-return above already handles)
+        // are stacked below everything else as a fallback.
+        unanchoredComments.forEach(function (c, i) {
+            c.x = BASE_X;
+            c.y = nextBandY + i * ROW_HEIGHT;
         });
 
         return nodes;
