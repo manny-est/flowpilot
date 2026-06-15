@@ -1090,6 +1090,7 @@ module.exports = function flowPilotRuntime(RED) {
     // switch, exactly like Chat. Detect this BEFORE extractJsonObject, since
     // it would otherwise grab the "{" inside the data block and treat it as
     // a broken envelope.
+    let envelopeParsed;
     if (content.indexOf(CHAT_DATA_MARKER) !== -1) {
       const preSplit = splitChatDataBlock(content);
       const proseMessage = preSplit.message.trim();
@@ -1104,37 +1105,56 @@ module.exports = function flowPilotRuntime(RED) {
         }
         return proseResult;
       }
+      // The message part is itself the JSON envelope (a full flow/changes/
+      // question result), with the data block appending an additive
+      // suggestedAction/questionOptions hint. Parse just the envelope (not
+      // the marker/data suffix, which extractJsonObject can't handle) and
+      // merge the hint in, then fall through to the normal envelope
+      // handling below so modify/question/flow shapes are still validated
+      // and audited correctly.
+      try {
+        envelopeParsed = JSON.parse(proseMessage);
+      } catch (e) {
+        // Not a standalone envelope after all — fall through to
+        // extractJsonObject(content) below.
+      }
+      if (envelopeParsed && preSplit.data) {
+        if (envelopeParsed.suggestedAction === undefined) { envelopeParsed.suggestedAction = preSplit.data.suggestedAction; }
+        if (envelopeParsed.questionOptions === undefined) { envelopeParsed.questionOptions = preSplit.data.questionOptions; }
+      }
     }
 
-    let parsed;
-    try {
-      parsed = extractJsonObject(content);
-    } catch (parseErr) {
-      // A1: a response with no JSON envelope at all, but non-empty prose
-      // (analysis, an answer, a question without the envelope) is tolerated —
-      // render it as a normal assistant message and keep the action armed.
-      // Errors stay reserved for empty responses or a found-but-broken {...}.
-      if (parseErr.noJsonFound && content.trim()) {
-        storage.appendAudit(Object.assign({ action: auditAction + "_prose" }, perf));
-        // Mode-mismatch redirect: a prose reply may carry the same hidden
-        // <<<FLOWPILOT_DATA>>> block as Chat, suggesting a mode switch (e.g.
-        // "chat" when the request was actually a question, not a
-        // generate/modify/document instruction).
-        const split = splitChatDataBlock(content.trim());
-        const proseResult = { prose: split.message || content.trim() };
-        if (split.data) {
-          const proseAction = extractSuggestedAction(split.data);
-          if (proseAction) { proseResult.suggestedAction = proseAction; }
-          const proseOptions = extractQuestionOptions(split.data);
-          if (proseOptions) { proseResult.questionOptions = proseOptions; }
+    let parsed = envelopeParsed;
+    if (!parsed) {
+      try {
+        parsed = extractJsonObject(content);
+      } catch (parseErr) {
+        // A1: a response with no JSON envelope at all, but non-empty prose
+        // (analysis, an answer, a question without the envelope) is tolerated —
+        // render it as a normal assistant message and keep the action armed.
+        // Errors stay reserved for empty responses or a found-but-broken {...}.
+        if (parseErr.noJsonFound && content.trim()) {
+          storage.appendAudit(Object.assign({ action: auditAction + "_prose" }, perf));
+          // Mode-mismatch redirect: a prose reply may carry the same hidden
+          // <<<FLOWPILOT_DATA>>> block as Chat, suggesting a mode switch (e.g.
+          // "chat" when the request was actually a question, not a
+          // generate/modify/document instruction).
+          const split = splitChatDataBlock(content.trim());
+          const proseResult = { prose: split.message || content.trim() };
+          if (split.data) {
+            const proseAction = extractSuggestedAction(split.data);
+            if (proseAction) { proseResult.suggestedAction = proseAction; }
+            const proseOptions = extractQuestionOptions(split.data);
+            if (proseOptions) { proseResult.questionOptions = proseOptions; }
+          }
+          return proseResult;
         }
-        return proseResult;
+        storage.appendAudit(Object.assign({ action: auditAction + "_parse_error", error: parseErr.message }, perf));
+        const err = new Error("Could not parse a flow from the response: " + parseErr.message);
+        err.status = 422;
+        err.raw = content;
+        throw err;
       }
-      storage.appendAudit(Object.assign({ action: auditAction + "_parse_error", error: parseErr.message }, perf));
-      const err = new Error("Could not parse a flow from the response: " + parseErr.message);
-      err.status = 422;
-      err.raw = content;
-      throw err;
     }
 
     // Phase 6 chunk 3: clarifying-question envelope. The model may ask ONE
