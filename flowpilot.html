@@ -1036,6 +1036,21 @@
     // Note: no leading slash. Node-RED serves admin endpoints under a base
     // path (httpAdminRoot) that may not be "/". A relative URL respects it.
 
+    // jQuery's $.ajax (used by ajaxJson) gets the admin-API auth token
+    // attached automatically by Node-RED's editor via $.ajaxSetup, but raw
+    // fetch() calls (used for SSE streaming below) do not. On instances with
+    // adminAuth enabled, an unauthenticated fetch() gets a 401 even though
+    // ajaxJson() calls (preflight, models, settings) succeed.
+    function fetchHeaders() {
+        var headers = { "Content-Type": "application/json" };
+        var tokens = RED.settings.get("auth-tokens");
+        if (tokens && tokens.access_token) {
+            headers.Authorization = "Bearer " + tokens.access_token;
+            headers["Node-RED-API-Version"] = "v2";
+        }
+        return headers;
+    }
+
     function ajaxJson(method, url, payload, onSuccess, onError) {
         $.ajax({
             url: url,
@@ -2348,7 +2363,7 @@
 
         fetch("flowpilot/chat", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: fetchHeaders(),
             body: JSON.stringify(payload)
         }).then(function (resp) {
             if (!resp.ok) {
@@ -2728,7 +2743,7 @@
 
         fetch("flowpilot/" + endpoint, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: fetchHeaders(),
             body: JSON.stringify(payload)
         }).then(function (resp) {
             if (!resp.ok) {
@@ -4934,7 +4949,7 @@
     border-radius: 4px;
     border: 1px solid var(--red-ui-form-input-border-color, #ccc);
     background: var(--red-ui-form-input-background, #fff);
-    color: var(--red-ui-form-input-text-color, #333);
+    color: var(--red-ui-form-text-color, #333);
     font-family: inherit;
     font-size: 13px;
 }
@@ -5280,7 +5295,7 @@
     border-radius: 5px;
     border: 1px solid var(--red-ui-form-input-border-color, #ccc);
     background: var(--red-ui-form-input-background, #fff);
-    color: var(--red-ui-form-input-text-color, #333);
+    color: var(--red-ui-form-text-color, #333);
 }
 
 .fp-provider-actions {
@@ -5500,7 +5515,7 @@
     border-radius: 6px;
     border: 1px solid var(--red-ui-form-input-border-color, #ccc);
     background: var(--red-ui-form-input-background, #fff);
-    color: var(--red-ui-form-input-text-color, #333);
+    color: var(--red-ui-form-text-color, #333);
     font-family: inherit;
     font-size: 14px;
     box-shadow: 0 0 0 1px rgba(255, 152, 0, 0.35);
@@ -5592,7 +5607,7 @@
     box-sizing: border-box;
     border: 1px solid var(--red-ui-form-input-border-color, #ccc);
     background: var(--red-ui-form-input-background, #fff);
-    color: var(--red-ui-form-input-text-color, #333);
+    color: var(--red-ui-form-text-color, #333);
     border-radius: 5px;
     padding: 8px;
 }
