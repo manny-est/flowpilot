@@ -24,6 +24,7 @@
     "access": "public"
   },
   "node-red": {
+    "version": ">=4.0.0",
     "nodes": {
       "flowpilot": "flowpilot.js"
     },
@@ -33,5 +34,16 @@
   },
   "engines": {
     "node": ">=16"
-  }
+  },
+  "files": [
+    "flowpilot.js",
+    "flowpilot.html",
+    "lib",
+    "icons",
+    "examples",
+    "README.md",
+    "USER-GUIDE.md",
+    "PROJECT-OVERVIEW.md",
+    "LICENSE"
+  ]
 }

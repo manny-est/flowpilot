@@ -34,6 +34,27 @@ installation, the sidebar UI, and a chapter on every feature.
 - **Simple and lightweight** — favors simple, maintainable solutions over
   speculative complexity.
 
+## Privacy & data
+
+FlowPilot sends data to an AI provider only when **you** trigger a request —
+nothing happens in the background. When you do, it sends the context you've
+given it: your selected nodes and their wiring, any debug messages you've
+attached, and your conversation history.
+
+Before anything is sent, that context is sanitized: editor-internal fields are
+stripped, and values that look like secrets (credentials, tokens, API keys,
+auth headers) are redacted. Node-RED's separate credential store is never
+included. A warning (⚠) appears in the status strip when a selection might
+still contain sensitive configuration or code, so you can review before
+sending.
+
+Because your flow contents leave your Node-RED instance when you send a
+request, a **local or private AI provider (LocalAI, Ollama, etc.) is
+recommended for sensitive or proprietary flows**. You choose the provider, and
+nothing is sent anywhere you didn't configure.
+
+See the [User Guide](USER-GUIDE.md#privacy-and-safety) for the full details.
+
 ## Features
 
 - **Chat** — a read-only copilot that can see your selected nodes and their
