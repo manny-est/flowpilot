@@ -300,6 +300,7 @@
 
     function setArmedExecuteAction(action) {
         if (armedExecuteAction === action) { disarmExecuteAction(); return; }
+        disarmQueryIntent();
         armedExecuteAction = action;
         pinCurrentSelection();
         el("#fp-generate").toggleClass("fp-action-armed", armedExecuteAction === "generate");
@@ -324,6 +325,34 @@
         if (action === "chat") { disarmExecuteAction(); return; }
         if (armedExecuteAction === action) { return; }
         setArmedExecuteAction(action);
+    }
+
+    // Which Query intent (if any) is currently armed: lit button + the
+    // amber "mode readout" border on #fp-prompt, mirroring the Execute
+    // side's blue treatment. Identified by label since that's already
+    // unique across built-in and custom intents (addCustomIntent enforces
+    // it). One-shot — dispatchSend() disarms it, since Query intents are
+    // just templated chat messages with no backend mode of their own.
+    var armedQueryIntentLabel = null;
+    var $armedQueryButton = null;
+
+    function disarmQueryIntent() {
+        if (!armedQueryIntentLabel) { return; }
+        armedQueryIntentLabel = null;
+        if ($armedQueryButton) { $armedQueryButton.removeClass("fp-action-armed"); }
+        $armedQueryButton = null;
+        el(".fp-compose").removeClass("fp-mode-query");
+    }
+
+    function armQueryIntent(intent, $btn) {
+        if (armedQueryIntentLabel === intent.label) { disarmQueryIntent(); return; }
+        disarmExecuteAction();
+        disarmQueryIntent();
+        armedQueryIntentLabel = intent.label;
+        $armedQueryButton = $btn || null;
+        if ($armedQueryButton) { $armedQueryButton.addClass("fp-action-armed"); }
+        el(".fp-compose").addClass("fp-mode-query");
+        applyIntentText(intent.text);
     }
 
     // ---- Phase 3 intent modes -------------------------------------------
@@ -367,9 +396,6 @@
 
     function applyIntentText(text) {
         if (!text) { return; }
-        // Picking a Query action means "chat with this template" — an armed
-        // Execute action (e.g. Generate) would otherwise hijack the next Send.
-        disarmExecuteAction();
         // Replace rather than append/prepend: appending let alternating
         // clicks between two intents stack both texts repeatedly (each click
         // only guarded against re-adding ITSELF, not the other one already
@@ -422,15 +448,20 @@
                 .addClass("red-ui-button red-ui-button-small fp-intent-btn")
                 .toggleClass("fp-intent-custom", !!intent.custom)
                 .toggleClass("fp-icon-btn fp-icon-btn-query", !!icon)
+                .toggleClass("fp-action-armed", armedQueryIntentLabel === intent.label)
                 .attr("type", "button")
                 .attr("title", icon ? (intent.label + " — " + intent.text) : intent.text)
-                .on("click", function () { applyIntentText(intent.text); })
+                .on("click", function () { armQueryIntent(intent, $btn); })
                 .appendTo($container);
             if (icon) {
                 $("<i>").addClass("fa " + icon).appendTo($btn);
             } else {
                 $btn.text(intent.label);
             }
+            // Re-render (e.g. after editing custom intents) can recreate the
+            // armed button — keep the tracked reference pointing at the live
+            // element so disarmQueryIntent() can still find it.
+            if (armedQueryIntentLabel === intent.label) { $armedQueryButton = $btn; }
         }
 
         var all = getAllIntents();
@@ -451,7 +482,7 @@
                     .on("click", function (e) {
                         e.preventDefault();
                         $menu.addClass("fp-hidden");
-                        applyIntentText(intent.text);
+                        armQueryIntent(intent, null);
                     })
                     .appendTo($menu);
             });
@@ -1942,6 +1973,12 @@
         var $promptBox = el("#fp-prompt");
         var raw = $promptBox.length ? $promptBox.val() : "";
         if (handleSlashCommand(raw)) { return; }
+
+        // Query intents are one-shot: the template text has done its job
+        // once Send is pressed, so disarm back to the default amber chat
+        // mode (mutual exclusion already guarantees armedExecuteAction is
+        // null whenever a Query intent is armed).
+        disarmQueryIntent();
 
         if (armedExecuteAction === "generate") {
             generate();
@@ -5030,6 +5067,15 @@
     color: #1f88e5 !important;
 }
 
+/* Armed Query intent — lit amber, matching D3's amber = "won't change your
+   flow" coding on #fp-prompt's border. Equal specificity to the blue rule
+   above, so this later rule wins for buttons inside .fp-intents-query. */
+.fp-intents-query .red-ui-button.fp-action-armed {
+    background: rgba(255, 152, 0, 0.16) !important;
+    border-color: #ff9800 !important;
+    color: #cc7a00 !important;
+}
+
 /* Send gets the same accent as an armed Execute action so it's clear that
    clicking it now proposes a change rather than chatting — especially after
    an action chip pre-fills the prompt and switches modes (Workstream C). */
@@ -5048,11 +5094,18 @@
     50% { box-shadow: 0 0 0 6px rgba(31, 136, 229, 0.35); transform: scale(1.05); }
 }
 
+/* Cockpit strip: fixed dark background (not theme-derived, by design — a
+   stable "instrument panel" the amber/blue accents read against in both
+   light and dark editor themes). Scoped tightly to the action bar itself,
+   not the whole compose area. */
 .fp-action-bar {
     display: flex;
     align-items: center;
     gap: 12px;
     margin-bottom: 10px;
+    background: #1f2f46;
+    border-radius: 6px;
+    padding: 6px 10px;
 }
 
 .fp-action-group {
@@ -5063,7 +5116,22 @@
 .fp-action-divider {
     align-self: stretch;
     width: 1px;
-    background: var(--red-ui-secondary-border-color, #ddd);
+    background: rgba(255, 255, 255, 0.35);
+}
+
+/* Default (non-hover, non-armed) look for buttons on the dark cockpit
+   strip — light-on-dark. Deliberately NOT !important so the existing
+   amber/blue hover and .fp-action-armed rules (above) keep winning. */
+.fp-action-bar .red-ui-button {
+    background: transparent;
+    border-color: rgba(255, 255, 255, 0.35);
+    color: #f0f4f8;
+}
+
+.fp-action-bar .red-ui-button:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.5);
+    color: #fff;
 }
 
 /* Cockpit pass: icon-style Query/Execute buttons. Hover/armed accents reuse
@@ -5395,6 +5463,14 @@
 .fp-compose.fp-mode-execute #fp-prompt {
     border-color: #1f88e5;
     box-shadow: 0 0 0 1px rgba(31, 136, 229, 0.5);
+}
+
+/* An armed Query intent strengthens the default amber glow into a solid
+   border — the "mode readout" confirming a template is loaded and ready
+   to send, mirroring .fp-mode-execute's blue treatment above. */
+.fp-compose.fp-mode-query #fp-prompt {
+    border-color: #ff9800;
+    box-shadow: 0 0 0 1px rgba(255, 152, 0, 0.5);
 }
 
 /* Custom resize handle, top-right: native `resize: vertical` puts its grip
