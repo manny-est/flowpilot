@@ -1,6 +1,6 @@
 # FlowPilot for Node-RED
 
-Package: `node-red-contrib-flowpilot`
+Package: `@manny-est/node-red-flowpilot`
 
 FlowPilot: AI assistance for Node-RED, designed for builders who want help
 without giving up control.
@@ -9,6 +9,9 @@ FlowPilot is an AI-powered development assistant that lives in the Node-RED
 editor sidebar. It talks to any OpenAI-compatible API (OpenAI, LocalAI,
 Ollama, etc.) and helps you generate, modify, document, and discuss your
 flows — without ever acting behind your back.
+
+See [PROJECT-OVERVIEW.md](PROJECT-OVERVIEW.md) for how FlowPilot was built
+and a full rundown of its features.
 
 ## Design principles
 
@@ -51,7 +54,7 @@ From your Node-RED user directory:
 
 ```bash
 cd ~/.node-red
-npm install /path/to/node-red-contrib-flowpilot
+npm install /path/to/node-red-flowpilot
 node-red
 ```
 
@@ -60,7 +63,7 @@ mounted Node-RED user directory. If your user directory is
 `/data` (or `/workspaces/nodered`, etc.), this folder should exist:
 
 ```text
-<node-red-userDir>/node_modules/node-red-contrib-flowpilot
+<node-red-userDir>/node_modules/@manny-est/node-red-flowpilot
 ```
 
 Restart the Node-RED container/process after installing or updating —

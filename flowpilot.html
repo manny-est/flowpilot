@@ -22,7 +22,7 @@
     var currentSettings = {};
 
     // ---------------------------------------------------------------------
-    // A3: identifies this conversation for server-side transcript
+    // Identifies this conversation for server-side transcript
     // persistence (chats/<conversationId>.jsonl). Kept in sessionStorage so
     // a page reload continues the same transcript; reset by clearChat()
     // ("start a fresh conversation" gets a fresh transcript file too).
@@ -49,7 +49,7 @@
     })();
 
     // ---------------------------------------------------------------------
-    // Phase 6: client-held conversation history. The backend is stateless —
+    // Client-held conversation history. The backend is stateless —
     // each request that should have continuity carries a capped slice of
     // this array. Cleared by clearChat() ("start a fresh conversation").
     // Entries are { role: "user" | "assistant", content: <string> }.
@@ -62,8 +62,8 @@
     }
 
     // ---------------------------------------------------------------------
-    // Secret detection — shared by the node-selection sanitizer (Phase 2,
-    // below) and the live debug-message redactor (next section). Two
+    // Secret detection — shared by the node-selection sanitizer (below)
+    // and the live debug-message redactor (next section). Two
     // complementary checks:
     //   - VALUE_SECRET_PATTERNS: the VALUE looks like a credential (bearer
     //     token, JWT, AWS key, high-entropy blob), regardless of field name.
@@ -265,7 +265,7 @@
     // armed one again disarms it back to chat.
     var armedExecuteAction = null;
 
-    // A2: ids of the selection PINNED for the current armed session. Set when
+    // ids of the selection PINNED for the current armed session. Set when
     // arming with a selection, or refreshed whenever the live selection
     // changes while armed (non-empty only — deselecting keeps the pin so
     // follow-up turns need no reselection). Cleared on disarm/Clear Chat.
@@ -314,7 +314,7 @@
         el(".fp-compose").addClass("fp-mode-execute");
     }
 
-    // Workstream C: arms the given Execute action regardless of current
+    // Arms the given Execute action regardless of current
     // state. Unlike setArmedExecuteAction (which TOGGLES an already-armed
     // action back off), an action chip always means "switch to this mode" —
     // never "disarm."
@@ -355,7 +355,7 @@
         applyIntentText(intent.text);
     }
 
-    // ---- Phase 3 intent modes -------------------------------------------
+    // ---- Intent modes ------------------------------------------------------
     // Single source of truth for the one-click intents. Each button is
     // generated from this list. Clicking a button fills the prompt box with
     // the instruction (the user can then edit before sending). Intent is
@@ -548,7 +548,7 @@
             addMessage("error", "A custom button needs both a label and instruction text.");
             return;
         }
-        // D5: catch label collisions with the built-in Query buttons (Explain/
+        // Catch label collisions with the built-in Query buttons (Explain/
         // Troubleshoot/Review/Suggest) or an existing custom button — two
         // same-named buttons in the action bar are confusingly ambiguous.
         var list = Array.isArray(currentSettings.customIntents)
@@ -601,7 +601,7 @@
     }
 
     // Clears the visible chat AND resets the conversation history the model
-    // sees — "start a fresh conversation" (Phase 6).
+    // sees — "start a fresh conversation".
     function clearChat() {
         el("#fp-messages").empty();
         conversationHistory = [];
@@ -614,8 +614,8 @@
         showChat();
     }
 
-    // D6: "Flight log" — a conversation list layered over the A3 transcript
-    // files. Loading a conversation rehydrates conversationHistory and the
+    // "Flight log" — a conversation list layered over the per-conversation
+    // transcript files. Loading a conversation rehydrates conversationHistory and the
     // visible chat from its saved transcript, so a follow-up message picks
     // up that conversation's memory rather than starting a fresh one.
     function formatRelativeTime(timestamp) {
@@ -713,10 +713,10 @@
         });
     }
 
-    // A3b/A3c: Recall — searches OTHER past conversations' transcripts for the
+    // Recall — searches OTHER past conversations' transcripts for the
     // text currently in the prompt box, and shows matches in the chat for the
     // user to read/reference. Nothing is sent automatically; each result has
-    // a "Use this" button (A3c) that the user can click to add that exchange
+    // a "Use this" button that the user can click to add that exchange
     // to conversationHistory, so the model sees it on the next message.
     function recallSearch() {
         showChat();
@@ -834,7 +834,7 @@
     }
 
     // ---- Markdown rendering -----------------------------------------------
-    // D2: chat bubbles render a small, safe subset of markdown. All text is
+    // Chat bubbles render a small, safe subset of markdown. All text is
     // HTML-escaped before any tags are introduced, and only the fixed set of
     // tags this code itself emits ever reaches the DOM — raw HTML from the
     // model or the user is never interpreted, so no separate HTML sanitizer
@@ -980,7 +980,7 @@
     // Pending "typing" indicator shown in the thread while awaiting a reply.
     // Lives where the answer will appear, so the eye is already there. Always
     // removed in both the success and error paths so it can't get stuck.
-    // showStop adds a "Stop" button, used by the Phase 7 agent loop
+    // showStop adds a "Stop" button, used by the agent loop
     // (runAgentChat) so the user can interrupt a multi-step tool-call run.
     function showPending(showStop) {
         var $box = el("#fp-messages");
@@ -1014,12 +1014,12 @@
     }
 
     // Updates the narration text shown in the pending indicator while the
-    // Phase 7 agent loop runs (see runAgentChat / describeAgentToolCall).
+    // agent loop runs (see runAgentChat / describeAgentToolCall).
     function setAgentNarration(text) {
         el("#fp-pending .fp-typing-label").text(text);
     }
 
-    // Phase 7 step 6: cost transparency for a completed agent-loop turn.
+    // Cost transparency for a completed agent-loop turn.
     // Appended just before the final response when at least one tool round
     // trip happened, so the user can see what exploration cost without
     // digging into the audit log.
@@ -1343,7 +1343,7 @@
         });
     }
 
-    // ---- Selection context (Phase 2) ------------------------------------
+    // ---- Selection context -------------------------------------------------
     // We read the user's current node selection and build a SANITIZED copy to
     // send to the AI. Two reasons we never send raw nodes:
     //   1. Node objects are proxies carrying editor-internal fields (geometry,
@@ -1478,7 +1478,7 @@
     }
 
     // Returns { nodes, connections } or null if nothing selected.
-    // A2: with nodeIds (an array of node ids — e.g. a pinned selection),
+    // With nodeIds (an array of node ids — e.g. a pinned selection),
     // builds context from those live nodes via RED.nodes instead of the
     // current view selection. Nodes that no longer exist are dropped; links
     // are gathered from the workspace's full link list, same shape as
@@ -1513,7 +1513,7 @@
         };
     }
 
-    // ---- Phase 7 spike: Tier-1 read tools --------------------------------
+    // ---- Tier-1 read tools ---------------------------------------------
     // Executed CLIENT-SIDE against RED.nodes (the only place this data
     // lives) when the model calls a tool during runAgentChat()'s loop.
     // Results pass through sanitizeNode(), same as selection context, so a
@@ -1756,7 +1756,7 @@
         var $size = el("#fp-size-status");
         var $secrets = el("#fp-secrets-status");
 
-        // A2: while armed, a pinned selection is sent as context even with
+        // While armed, a pinned selection is sent as context even with
         // nothing currently selected — re-resolve against live nodes so
         // deleted nodes drop out of the count.
         var pinnedContext = (armedExecuteAction && liveCount === 0 && pinnedSelectionIds)
@@ -1779,8 +1779,8 @@
                    .addClass("fp-has-selection");
         }
 
-        // Size line: selection context (Phase 2) + conversation history
-        // (Phase 6) — whichever of the two apply right now.
+        // Size line: selection context + conversation history —
+        // whichever of the two apply right now.
         var contextTokens = liveCount > 0 ? estimateTokens(collectSelectionContext())
             : pinnedContext ? estimateTokens(pinnedContext) : 0;
         var historyPayload = buildHistoryPayload();
@@ -2041,7 +2041,7 @@
         var context = (endpoint === "test") ? null : attachDebugContext(collectSelectionContext());
         var note = contextAttachmentNote(context);
         addMessage("user", prompt + note);
-        // #8: build the history payload BEFORE pushing this turn, so
+        // Build the history payload BEFORE pushing this turn, so
         // "history" means "everything before this turn" — the backend
         // appends this turn separately as the final user message.
         var historyPayload = isChat ? buildHistoryPayload() : { messages: [], truncated: false };
@@ -2064,8 +2064,8 @@
         function handleSendResult(data) {
             hidePending();
             var message = data.message || JSON.stringify(data, null, 2);
-            // Bcap1: Test Provider also reports tool-calling support, used by
-            // Phase 7's agentic path.
+            // Test Provider also reports tool-calling support, used by
+            // the agentic path.
             if (data.capability && data.capability.label) {
                 message += "\n\n" + data.capability.label;
             }
@@ -2088,7 +2088,7 @@
             setBusy(false);
         }
 
-        // Phase 7: when the active provider supports tool/function calling,
+        // When the active provider supports tool/function calling,
         // the chat turn is offered the Tier-1 read tools and run through the
         // bounded agent loop instead of a single request.
         if (isAgentLoop) {
@@ -2106,8 +2106,8 @@
     }
 
     // ---------------------------------------------------------------------
-    // Phase 7: bounded read-tool loop, shared by chat (step 2) and
-    // generate/document/modify (step 4, "explore-then-propose"). Sends the
+    // Bounded read-tool loop, shared by chat and
+    // generate/document/modify ("explore-then-propose"). Sends the
     // first turn to firstEndpoint with tools:true; if the model returns
     // tool_calls instead of a final response, executes each call locally
     // (executeAgentToolCall, against RED.nodes — see above), appends the
@@ -2214,7 +2214,7 @@
         ajaxJson("POST", firstEndpoint, firstPayload, function (data) {
             handleStep(data, null);
         }, function () {
-            // Fallback parity (Phase 7 step 5): the provider was probed as
+            // The provider was probed as
             // supportsTools, but the very first tools:true request failed
             // outright — e.g. the model was swapped since the last probe, or
             // this provider errors on an unrecognized "tools" field instead
@@ -2226,12 +2226,12 @@
         });
     }
 
-    // Chat (step 2): mode defaults to "chat" server-side, so no stepExtra.
+    // Chat: mode defaults to "chat" server-side, so no stepExtra.
     function runAgentChat(payload, onDone, onError) {
         runAgentLoop("flowpilot/chat", payload, {}, onDone, onError);
     }
 
-    // Phase 6 chunk 4: streaming chat. Posts with stream:true and reads the
+    // Streaming chat. Posts with stream:true and reads the
     // SSE response body incrementally via fetch's ReadableStream. The
     // bouncing "pending" indicator (already in the DOM from showPending) is
     // converted in place into the assistant bubble and filled in as chunks
@@ -2357,7 +2357,7 @@
         }).then(finish, fail);
     }
 
-    // B1: incrementally extracts the value of the JSON envelope's
+    // Incrementally extracts the value of the JSON envelope's
     // "explanation" key from raw streamed text. All three generation system
     // prompts put "explanation" first, so its closing quote arrives well
     // before any other key streams in. Handles JSON string escapes
@@ -2424,7 +2424,7 @@
         setBusy(false);
     }
 
-    // Workstream C: clicking an action chip switches Send to the suggested
+    // Clicking an action chip switches Send to the suggested
     // mode and pre-fills the compose box with the prepared prompt. The user
     // reviews it and hits Send themselves — nothing is sent automatically,
     // and the change still goes through the normal diff review like any
@@ -2439,9 +2439,9 @@
         }
     }
 
-    // Workstream C: renders an optional "suggestedAction" (action chip) below
+    // Renders an optional "suggestedAction" (action chip) below
     // the latest message — a tappable next-step the model proposed. Same
-    // chip shape/renderer regardless of whether an envelope or (Phase 7) a
+    // chip shape/renderer regardless of whether an envelope or a
     // tool call produced it.
     function renderActionChip(suggestedAction) {
         if (!suggestedAction || !suggestedAction.mode || !suggestedAction.prompt) { return; }
@@ -2600,7 +2600,7 @@
         updateSelectionStatus();
     }
 
-    // B1: streaming variant of Generate/Document/Modify. Posts with
+    // Streaming variant of Generate/Document/Modify. Posts with
     // stream:true and progressively renders the envelope's "explanation"
     // field into a bubble as deltas arrive (via createExplanationExtractor),
     // using the same getReader/fallback pattern as sendChatStream. Once the
@@ -2737,9 +2737,8 @@
         }, fail);
     }
 
-    // Phase 4 (first chunk): request a generated flow fragment and show it for
-    // review. This cut displays the explanation + raw JSON in the chat; it does
-    // NOT yet validate node types or import to the workspace.
+    // Request a generated flow fragment and show it for review, validation,
+    // and import via addGeneratedReview.
     function generate() {
         var $promptBox = el("#fp-prompt");
         var prompt = $promptBox.length ? $promptBox.val().trim() : "";
@@ -2750,7 +2749,7 @@
 
         // Selection context lets the model generate something that fits with
         // the nodes you've selected (e.g. "wire this into my MQTT setup").
-        // A2: falls back to the pinned selection if nothing is currently
+        // Falls back to the pinned selection if nothing is currently
         // selected, so follow-up turns need no reselection.
         var context = attachDebugContext(collectSelectionContext(activeSelectionIds()));
         var label = "Generate: " + prompt + contextAttachmentNote(context);
@@ -2758,7 +2757,7 @@
         if (prompt === DEMO_PROMPT) {
             addMessage("assistant", "This is a large request — AI providers may take 20+ seconds to respond.");
         }
-        // #8: snapshot history before pushing this turn (see send()).
+        // Snapshot history before pushing this turn (see send()).
         var historyPayload = buildHistoryPayload();
         pushHistory("user", label);
         $promptBox.val("");
@@ -2782,7 +2781,7 @@
             handleExecuteError(msg, raw);
         }
 
-        // Phase 7 step 4: explore-then-propose. The model may call read
+        // Explore-then-propose: the model may call read
         // tools (e.g. read_node, search_flow) before producing the
         // generation envelope; the loop's final response still goes through
         // the same validate/review pipeline via handleSimpleGenerationResult.
@@ -2793,7 +2792,7 @@
             return;
         }
 
-        // B1: stream the envelope's "explanation" as it's generated; the
+        // Stream the envelope's "explanation" as it's generated; the
         // "flow" JSON is buffered server-side and arrives as a single
         // validated `final` event, handled identically to the non-streaming
         // path via handleSimpleGenerationResult.
@@ -2813,7 +2812,7 @@
     // nothing import-mechanism-specific to build here. The prompt box holds
     // OPTIONAL notes to steer the explanation; the selection is the real input.
     function documentFlow() {
-        // A2: falls back to the pinned selection if nothing is currently
+        // Falls back to the pinned selection if nothing is currently
         // selected, so follow-up turns need no reselection.
         var context = collectSelectionContext(activeSelectionIds());
         if (!context || !Array.isArray(context.nodes) || context.nodes.length === 0) {
@@ -2826,7 +2825,7 @@
         var notes = $promptBox.length ? $promptBox.val().trim() : "";
         var label = "Document selection" + (notes ? ": " + notes : "") + contextAttachmentNote(context);
         addMessage("user", label);
-        // #8: snapshot history before pushing this turn (see send()).
+        // Snapshot history before pushing this turn (see send()).
         var historyPayload = buildHistoryPayload();
         pushHistory("user", label);
         $promptBox.val("");
@@ -2848,7 +2847,7 @@
             handleExecuteError(msg, raw);
         }
 
-        // Phase 7 step 4: explore-then-propose, same as generate().
+        // Explore-then-propose, same as generate().
         if (isAgentLoop) {
             runAgentLoop("flowpilot/document", payload,
                 { mode: "document", context: context, prompt: notes },
@@ -2856,7 +2855,7 @@
             return;
         }
 
-        // B1: stream the envelope's "explanation" as it's generated; see
+        // Stream the envelope's "explanation" as it's generated; see
         // generate() for details.
         if (currentSettings.streamingEnabled) {
             payload.stream = true;
@@ -2867,7 +2866,7 @@
         ajaxJson("POST", "flowpilot/document", payload, handleSimpleGenerationResult, onDocumentError);
     }
 
-    // ---- Phase 5: Modify flow -------------------------------------------
+    // ---- Modify flow ------------------------------------------------------
     // Fields we never include in a property diff: internal editor state that
     // the model correctly omits and that we must never overwrite on apply.
     // "outputs" is intentionally NOT skipped: for node types like "function"
@@ -2936,7 +2935,7 @@
         var placeholderIds = {};
         newNodes.forEach(function (n) { if (n.id) { placeholderIds[n.id] = true; } });
 
-        // D5: group new nodes into connected clusters (by each node's own
+        // Group new nodes into connected clusters (by each node's own
         // "wires" plus any "newWires" edges between two placeholders), so
         // multiple unrelated insertions in one response are each anchored to
         // THEIR OWN existing-node connections instead of bunching together at
@@ -3256,7 +3255,7 @@
         RED.nodes.dirty(true);
         RED.view.redraw(true);
 
-        // Phase 6 chunk 5: ground follow-up turns in what was just inserted.
+        // Ground follow-up turns in what was just inserted.
         var insertedNote = "Touchdown — inserted " + (addedNodes.length + addedJunctions.length) + " node(s)" +
             (addedLinks.length ? " and added " + addedLinks.length + " wire connection(s)" : "") +
             ". Ctrl+Z to undo.";
@@ -3610,7 +3609,7 @@
         scrollMessagesToBottom();
     }
 
-    // Apply mechanism covering all Phase 5 tiers:
+    // Apply mechanism covering all modification tiers:
     //   Tier 1 — property changes: mutate live node + {t:"edit"} history entry
     //   Tier 3 — wire changes: removeLink/addLink + {t:"add", removedLinks} entry
     //   Tier 4 — node removals: collect links, removeLink, remove node + {t:"delete"} entry
@@ -3662,8 +3661,7 @@
         // --- Tier 3: wire changes ---
         // removeLink old + addLink new, then push ONE {t:"add", removedLinks} entry
         // per node. NR's undo for this shape removes the new links AND restores
-        // the old ones — confirmed via the history spike (removedLinks field is
-        // present on every "add" wire event).
+        // the old ones (removedLinks field is present on every "add" wire event).
         nodeDiffs.forEach(function (d) {
             var wd = d.wiresDiff;
             if (!wd || (!wd.toRemove.length && !wd.toAdd.length)) { return; }
@@ -3783,7 +3781,7 @@
                 (parts.length ? "Applied: " + parts.join(", ") + ". " : "") +
                 failed.length + " node(s) not found and skipped: " + failed.join(", "));
         } else if (parts.length) {
-            // Phase 6 chunk 5: ground follow-up turns ("now undo the topic
+            // Ground follow-up turns ("now undo the topic
             // change") in what was actually applied.
             var appliedNote = "Touchdown — applied " + parts.join(", ") + ". Ctrl+Z to undo.";
             addMessage("assistant", appliedNote);
@@ -3793,7 +3791,7 @@
     }
 
     function modifyFlow() {
-        // A2: falls back to the pinned selection if nothing is currently
+        // Falls back to the pinned selection if nothing is currently
         // selected, so follow-up turns need no reselection.
         var context = collectSelectionContext(activeSelectionIds());
         if (!context || !Array.isArray(context.nodes) || context.nodes.length === 0) {
@@ -3809,7 +3807,7 @@
         }
         var label = "Modify: " + instruction + contextAttachmentNote(context);
         addMessage("user", label);
-        // #8: snapshot history before pushing this turn (see send()).
+        // Snapshot history before pushing this turn (see send()).
         var historyPayload = buildHistoryPayload();
         pushHistory("user", label);
         $promptBox.val("");
@@ -3831,7 +3829,7 @@
             handleExecuteError(msg, raw);
         }
 
-        // Phase 7 step 4: explore-then-propose, same as generate(). The
+        // Explore-then-propose, same as generate(). The
         // model may call read tools (e.g. to re-check the selected node's
         // current config) before producing the modify envelope; the final
         // diff still goes through finalizeModifyResult via handleModifyResult.
@@ -3842,7 +3840,7 @@
             return;
         }
 
-        // B1: stream the envelope's "explanation" as it's generated; see
+        // Stream the envelope's "explanation" as it's generated; see
         // generate() for details.
         if (currentSettings.streamingEnabled) {
             payload.stream = true;
@@ -3868,7 +3866,7 @@
         scrollMessagesToBottom();
     }
 
-    // ---- Phase 4: pre-import validation ---------------------------------
+    // ---- Pre-import validation ---------------------------------------------
     // Static list of Node-RED's built-in node types, used only to classify a
     // generated type as "core" vs "non-core but installed". The editor's node
     // registry can tell us whether a type is INSTALLED (RED.nodes.getType),
@@ -4135,7 +4133,7 @@
         return nodes;
     }
 
-    // ---- Phase 4: tabbed review + import ---------------------------------
+    // ---- Tabbed review + import --------------------------------------------
     // Hands validated flow JSON to Node-RED's own import mechanism — the same
     // path the editor's Import menu uses (confirmed live: RED.view.importNodes
     // exists, attaches the new nodes to the cursor for the user to place with
@@ -4145,7 +4143,7 @@
     function importGeneratedFlow(nodes) {
         try {
             RED.view.importNodes(nodes, { generateIds: true });
-            // Phase 6 chunk 5: ground follow-up turns in what was just
+            // Ground follow-up turns in what was just
             // imported (placement itself happens on the next canvas click).
             var n = Array.isArray(nodes) ? nodes.length : 0;
             var importedNote = "Landed — imported " + n + " node(s). Click the canvas to place them.";
@@ -4617,7 +4615,7 @@
             })();
 
             // Live selection indicator. RED.events fires this whenever the
-            // user changes what's selected on the canvas. A2: while armed, a
+            // user changes what's selected on the canvas. While armed, a
             // new non-empty selection refreshes the pinned context (an empty
             // selection does NOT clear it — that's what lets follow-ups skip
             // reselection).
@@ -4759,7 +4757,7 @@
     border-color: rgba(255, 80, 80, 0.65);
 }
 
-/* D2: rendered markdown inside chat bubbles. */
+/* Rendered markdown inside chat bubbles. */
 .fp-md > *:first-child {
     margin-top: 0;
 }
@@ -4843,7 +4841,7 @@
     30% { transform: translateY(-5px); opacity: 1; }
 }
 
-/* Workstream C: action chips ("paper plane" actions) — a tappable next-step
+/* Action chips ("paper plane" actions) — a tappable next-step
    the model suggests, rendered below the message that proposed it. */
 .fp-chip-row {
     margin: -4px 0 12px 4px;
@@ -4894,7 +4892,7 @@
     font-size: 13px;
 }
 
-/* A3b: Recall results — read-only snippets from earlier conversations. */
+/* Recall results — read-only snippets from earlier conversations. */
 .fp-recall {
     background: rgba(150, 120, 255, 0.10);
     border-color: rgba(150, 120, 255, 0.35);
@@ -4930,7 +4928,7 @@
     opacity: 0.6;
 }
 
-/* D6: "Flight log" conversation list. */
+/* "Flight log" conversation list. */
 .fp-history-list {
     margin-top: 10px;
 }
@@ -4989,7 +4987,7 @@
     overflow-y: auto;
 }
 
-/* Phase 4 review — bespoke tabs styled to sit comfortably in the editor's
+/* Generated-flow review — bespoke tabs styled to sit comfortably in the editor's
    theme (--red-ui-* variables) without depending on Node-RED's internal
    tab/export markup, which is undocumented and fragile across versions. */
 .fp-tabs {
@@ -5064,16 +5062,16 @@
     border-top: 1px solid var(--red-ui-secondary-border-color, #ddd);
 }
 
-/* Armed Execute action (e.g. Generate toggled on) — lit blue, matching D3's
-   existing blue = "about to propose changes" coding on #fp-prompt's border. */
+/* Armed Execute action (e.g. Generate toggled on) — lit blue, matching the
+   mode color-coding's blue = "about to propose changes" on #fp-prompt's border. */
 .fp-intents .red-ui-button.fp-action-armed {
     background: rgba(31, 136, 229, 0.16) !important;
     border-color: #1f88e5 !important;
     color: #1f88e5 !important;
 }
 
-/* Armed Query intent — lit amber, matching D3's amber = "won't change your
-   flow" coding on #fp-prompt's border. Equal specificity to the blue rule
+/* Armed Query intent — lit amber, matching the mode color-coding's amber =
+   "won't change your flow" on #fp-prompt's border. Equal specificity to the blue rule
    above, so this later rule wins for buttons inside .fp-intents-query. */
 .fp-intents-query .red-ui-button.fp-action-armed {
     background: rgba(255, 152, 0, 0.16) !important;
@@ -5083,7 +5081,7 @@
 
 /* Send gets the same accent as an armed Execute action so it's clear that
    clicking it now proposes a change rather than chatting — especially after
-   an action chip pre-fills the prompt and switches modes (Workstream C). */
+   an action chip pre-fills the prompt and switches modes. */
 #fp-send.fp-send-armed {
     box-shadow: 0 0 0 2px #1f88e5;
 }
@@ -5139,8 +5137,8 @@
     color: #fff;
 }
 
-/* Cockpit pass: icon-style Query/Execute buttons. Hover/armed accents reuse
-   D3's existing amber=query / blue=execute color coding (see #fp-prompt and
+/* Icon-style Query/Execute buttons. Hover/armed accents reuse the
+   mode color-coding's amber=query / blue=execute coding (see #fp-prompt and
    .fp-action-armed above) so the whole "armed" concept stays one color. */
 .fp-icon-btn {
     width: 32px;
@@ -5266,7 +5264,7 @@
     text-overflow: ellipsis;
 }
 
-/* Cockpit pass: D5's context indicators and the provider/Send footer merged
+/* Context indicators and the provider/Send footer merged
    into one wrap-capable strip below the prompt box — one line when there's
    room, wraps to two on a narrow sidebar (no regression vs. the previous
    always-two-rows layout). */
@@ -5462,7 +5460,7 @@
     transition: box-shadow 0.15s, border-color 0.15s;
 }
 
-/* D3: mode color-coding — Query/chat (default) is orange ("won't change your
+/* Mode color-coding — Query/chat (default) is orange ("won't change your
    flow"); an armed Execute action (Generate/Document/Modify) switches the
    compose area to blue ("about to propose changes"). */
 .fp-compose.fp-mode-execute #fp-prompt {
@@ -5563,7 +5561,7 @@
     padding-bottom: 16px;
 }
 
-/* Phase 5: modify diff review */
+/* Modify diff review */
 .fp-diff-node {
     margin-bottom: 14px;
     padding: 10px 12px;

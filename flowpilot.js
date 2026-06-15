@@ -9,7 +9,7 @@ module.exports = function flowPilotRuntime(RED) {
   const storage = createStorage(RED.settings.userDir);
 
   // ---------------------------------------------------------------------
-  // Phase 6: client-held conversation history. The frontend sends a capped
+  // Client-held conversation history. The frontend sends a capped
   // slice of the visible chat (role/content pairs) with each request; the
   // backend stays stateless and just folds it into the message list. Used
   // by both /chat and the generate/modify/document endpoints so the cap and
@@ -21,7 +21,7 @@ module.exports = function flowPilotRuntime(RED) {
     "that may have been said earlier, ask the user.";
 
   // ---------------------------------------------------------------------
-  // Phase 7 spike: Tier-1 READ tools the model may call autonomously during
+  // Tier-1 READ tools the model may call autonomously during
   // a chat turn. Their data (RED.nodes, live selection, debug buffer) lives
   // only in the editor, so each call is executed CLIENT-SIDE and its result
   // passed back through the same sanitizer as selection context — a tool
@@ -150,7 +150,7 @@ module.exports = function flowPilotRuntime(RED) {
   }
 
   // ---------------------------------------------------------------------
-  // A3: per-conversation transcript persistence. The frontend generates a
+  // Per-conversation transcript persistence. The frontend generates a
   // conversationId (kept for the life of the browser tab, reset on Clear
   // Chat) and sends it with every request; the backend appends each turn to
   // chats/<conversationId>.jsonl. Restricted to a safe filename charset —
@@ -188,7 +188,7 @@ module.exports = function flowPilotRuntime(RED) {
   }
 
   // ---------------------------------------------------------------------
-  // A3b: Recall — user-triggered keyword search across OTHER conversations'
+  // Recall: user-triggered keyword search across OTHER conversations'
   // persisted transcripts (the current conversation is excluded; its own
   // live history is already in context). Deliberately simple
   // retrieval-injection: lowercase word-overlap scoring, no embeddings —
@@ -382,7 +382,7 @@ module.exports = function flowPilotRuntime(RED) {
   }
 
   // ---------------------------------------------------------------------
-  // Phase 6.5 B0: per-request performance fields for the audit log. Character
+  // Per-request performance fields for the audit log. Character
   // counts are always available (provider-agnostic); token usage is included
   // only when the provider returned a `usage` object. Kept separate from
   // appendAudit's other fields so every chat/generate/modify/document audit
@@ -452,9 +452,9 @@ module.exports = function flowPilotRuntime(RED) {
   // ---------------------------------------------------------------------
   // Shared helper: run a single-turn chat against the configured provider,
   // log it, and return the result. Used by both /chat and /test so the two
-  // never drift apart. contextMode is recorded for the Phase 2+ audit trail.
+  // never drift apart. contextMode is recorded for the audit trail.
   // ---------------------------------------------------------------------
-  // useTools (Phase 7 spike): when true, the request offers AGENT_READ_TOOLS
+  // useTools: when true, the request offers AGENT_READ_TOOLS
   // with tool_choice "auto". If the provider responds with tool_calls instead
   // of a final message, we return early with `toolCalls` + the `messages`
   // array built so far (so the caller/frontend can append the tool results
@@ -491,7 +491,7 @@ module.exports = function flowPilotRuntime(RED) {
   }
 
   // ---------------------------------------------------------------------
-  // Phase 6 chunk 4: streaming variant of /chat. Relays provider SSE chunks
+  // Streaming variant of /chat. Relays provider SSE chunks
   // to the browser as they arrive via res.write (Node-RED's httpAdmin routes
   // are plain Express, so chunked relay works the same as any Express app).
   // Generate/modify/document stay non-streamed (their JSON envelope can't be
@@ -629,8 +629,8 @@ module.exports = function flowPilotRuntime(RED) {
   });
 
   // ---- Chat: the real prompt endpoint ----------------------------------
-  // This is the endpoint that will grow in Phase 2/3 (message history,
-  // flow context, streaming). Keep /test minimal and separate from it.
+  // Handles message history, flow context, and streaming. Kept separate
+  // from /test, which stays a minimal connectivity check.
 
   RED.httpAdmin.post("/flowpilot/chat", RED.auth.needsPermission("settings.write"), async function (req, res) {
     const prompt = req.body && req.body.prompt;
@@ -759,7 +759,7 @@ module.exports = function flowPilotRuntime(RED) {
     }
   });
 
-  // ---- Recall: search past conversations' transcripts (A3b) ------------
+  // ---- Recall: search past conversations' transcripts -------------------
   // User-triggered, not automatic: the frontend's "Recall" button sends the
   // current prompt-box text as the query. Results are returned for display
   // only — nothing is injected into the model's context.
@@ -781,8 +781,8 @@ module.exports = function flowPilotRuntime(RED) {
   });
 
   // ---------------------------------------------------------------------
-  // D6: conversation list ("Flight log"), layered over the A3 transcript
-  // files. Summaries are read-only and derived on the fly — title is the
+  // Conversation list ("Flight log"), layered over the per-conversation
+  // transcript files. Summaries are read-only and derived on the fly — title is the
   // first user message, trimmed; full transcripts are fetched on demand.
   // ---------------------------------------------------------------------
   function summarizeTranscript(id) {
@@ -860,9 +860,9 @@ module.exports = function flowPilotRuntime(RED) {
         model: activeProvider.model
       }, perf));
 
-      // Bcap1: capability probe — connectivity already succeeded above, so a
+      // Capability probe — connectivity already succeeded above, so a
       // probe failure here just means "no tool support", not a /test failure.
-      // Persist the result on the provider profile for Phase 7's agentic path.
+      // Persist the result on the provider profile for the agentic tool-calling path.
       const probe = await provider.probeTools(activeProvider);
       storage.appendAudit({
         action: "capability_probe",
@@ -895,7 +895,7 @@ module.exports = function flowPilotRuntime(RED) {
     }
   });
 
-  // ---- Generate: produce an importable flow fragment (Phase 4) ---------
+  // ---- Generate: produce an importable flow fragment --------------------
   // Uses the generation system prompt and expects the model to return a single
   // JSON object { explanation, flow }. This first cut does NOT validate node
   // types or wire integrity yet (that's the next chunk) — it returns the parsed
@@ -934,7 +934,7 @@ module.exports = function flowPilotRuntime(RED) {
     const first = s.indexOf("{");
     const last = s.lastIndexOf("}");
     if (first === -1 || last === -1 || last < first) {
-      // A1: no JSON object found at all — flagged separately from a found-
+      // No JSON object found at all — flagged separately from a found-
       // but-unparseable ({...} present, JSON.parse failed) "garbled" error,
       // so callers can distinguish "model just answered in prose" (tolerate)
       // from "model's JSON envelope is broken" (still an error).
@@ -948,7 +948,7 @@ module.exports = function flowPilotRuntime(RED) {
   // ---------------------------------------------------------------------
   // Shared helper: resolve the active provider and assemble the messages
   // array for a generation-style request (generate/document/modify). Split
-  // out from runFlowGeneration so the streaming variant (B1) can build the
+  // out from runFlowGeneration so the streaming variant can build the
   // same request and swap provider.chat for provider.chatStream.
   // ---------------------------------------------------------------------
   function buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated) {
@@ -960,7 +960,7 @@ module.exports = function flowPilotRuntime(RED) {
   }
 
   // ---------------------------------------------------------------------
-  // Workstream C: pull an optional "suggestedAction" (action chip) out of a
+  // Pull an optional "suggestedAction" (action chip) out of a
   // parsed envelope. Validated but non-critical — a malformed or missing
   // suggestion is just dropped (returns null), never an error, since chips
   // are an additive hint on top of the real response.
@@ -1075,8 +1075,8 @@ module.exports = function flowPilotRuntime(RED) {
   // Shared helper: parse, validate and audit a completed provider response
   // for a generation-style request, returning { question } / { prose } /
   // { explanation, flow, newNodes, newWires }, each optionally carrying a
-  // `suggestedAction` (Workstream C action chip). Used by both the
-  // non-streaming and streaming (B1) paths, which differ only in how
+  // `suggestedAction` (action chip). Used by both the
+  // non-streaming and streaming paths, which differ only in how
   // `content` and `providerResult` were obtained (provider.chat vs
   // provider.chatStream). Throws an Error with .status and (when applicable)
   // .raw for the route to relay.
@@ -1129,7 +1129,7 @@ module.exports = function flowPilotRuntime(RED) {
       try {
         parsed = extractJsonObject(content);
       } catch (parseErr) {
-        // A1: a response with no JSON envelope at all, but non-empty prose
+        // A response with no JSON envelope at all, but non-empty prose
         // (analysis, an answer, a question without the envelope) is tolerated —
         // render it as a normal assistant message and keep the action armed.
         // Errors stay reserved for empty responses or a found-but-broken {...}.
@@ -1157,7 +1157,7 @@ module.exports = function flowPilotRuntime(RED) {
       }
     }
 
-    // Phase 6 chunk 3: clarifying-question envelope. The model may ask ONE
+    // Clarifying-question envelope. The model may ask ONE
     // follow-up question instead of producing a flow when the request is too
     // ambiguous to act on. The frontend renders the question as a normal
     // assistant message and keeps the Execute action armed for the answer.
@@ -1172,7 +1172,7 @@ module.exports = function flowPilotRuntime(RED) {
       return questionResult;
     }
 
-    // B2: /modify returns a sparse "changes" envelope (patches against the
+    // /modify returns a sparse "changes" envelope (patches against the
     // selection) instead of a full "flow" array. "changes", "newNodes",
     // "newWires" and "removeNodes" are all individually optional — a no-op
     // modify can legitimately omit all of them — but the envelope must
@@ -1272,7 +1272,7 @@ module.exports = function flowPilotRuntime(RED) {
   }
 
   // ---------------------------------------------------------------------
-  // B1: streaming variant of runFlowGeneration. Relays each provider delta
+  // Streaming variant of runFlowGeneration. Relays each provider delta
   // via onDelta as it arrives, then runs the SAME parse/validate/audit logic
   // as the non-streaming path once the full response is in. The frontend
   // uses onDelta to progressively render the envelope's "explanation" field
@@ -1298,7 +1298,7 @@ module.exports = function flowPilotRuntime(RED) {
   }
 
   // ---------------------------------------------------------------------
-  // B1: turn a runFlowGeneration(Stream) result into a { status, body }
+  // Turn a runFlowGeneration(Stream) result into a { status, body }
   // response for /generate and /document — they share identical
   // post-processing (question/prose passthrough, else the envelope as-is).
   // Used by both the non-streaming route (res.status(status).json(body)) and
@@ -1321,10 +1321,10 @@ module.exports = function flowPilotRuntime(RED) {
   }
 
   // ---------------------------------------------------------------------
-  // B2: turn a runFlowGeneration(Stream) result into a { status, body }
+  // Turn a runFlowGeneration(Stream) result into a { status, body }
   // response for /modify — question/prose passthrough, else reconstruct the
   // full "flow" by applying the model's sparse "changes" patches on top of
-  // the original selection (B2 patch format: the model returns only
+  // the original selection (the model returns only
   // { id, set: {...changed props} } for nodes it actually touches, instead
   // of repeating every node's full JSON). Also runs the
   // removeNodes/newNodes/newWires validation that previously lived inline in
@@ -1364,7 +1364,7 @@ module.exports = function flowPilotRuntime(RED) {
     }
     const removeSet = new Set(removeNodes.map(String));
 
-    // B2: "changes" is a sparse array of { id, set } patches against the
+    // "changes" is a sparse array of { id, set } patches against the
     // original selection. A node with no entry here is kept exactly as-is —
     // unlike the old full-"flow" format, omission can only mean "unchanged",
     // never "delete", so there's no "implicit removal" failure mode anymore.
@@ -1477,7 +1477,7 @@ module.exports = function flowPilotRuntime(RED) {
   }
 
   // ---------------------------------------------------------------------
-  // B1: streaming variant of /generate, /document and /modify. Opens an SSE
+  // Streaming variant of /generate, /document and /modify. Opens an SSE
   // response, relays each provider delta as `data: {"delta":...}` (the
   // frontend uses these to progressively render the envelope's
   // "explanation" field), then runs `finalize` (finalizeSimpleGeneration or
