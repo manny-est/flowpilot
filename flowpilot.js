@@ -1,3 +1,4 @@
+const http = require("http");
 const createStorage = require("./lib/storage");
 const provider = require("./lib/provider-openai-compatible");
 const generationSystemPrompt = require("./lib/generation-system-prompt");
@@ -268,12 +269,107 @@ module.exports = function flowPilotRuntime(RED) {
     return matches.slice(0, 5);
   }
 
+  // ---------------------------------------------------------------------
+  // Palette awareness / "default nodes first": tell the model which
+  // optional node packages are actually installed in this Node-RED
+  // instance (beyond the always-available core nodes), so it can use
+  // their node types when relevant and otherwise stick to core nodes
+  // rather than proposing types that aren't installed.
+  //
+  // The node-level RED API passed to this module has no direct registry
+  // lookup (no RED.nodes.getNodeList), so the node list is fetched via a
+  // loopback call to Node-RED's own admin API (the same data the palette
+  // sidebar uses) and cached briefly — the palette rarely changes, and
+  // every chat/generate/document/modify request goes through
+  // buildMessages, so this must stay cheap and synchronous.
+  // ---------------------------------------------------------------------
+  let installedNodesCache = null;
+  let installedNodesCacheAt = 0;
+  let installedNodesRefreshInFlight = false;
+  const INSTALLED_NODES_CACHE_TTL_MS = 5 * 60 * 1000;
+
+  function buildInstalledNodesContent(list) {
+    if (!Array.isArray(list)) { return null; }
+
+    const typesByModule = {};
+    list.forEach(function (n) {
+      if (!n || !n.enabled) { return; }
+      if (n.module === "node-red" || n.module === "node-red-contrib-flowpilot") { return; }
+      if (!n.module) { return; }
+      if (!typesByModule[n.module]) { typesByModule[n.module] = new Set(); }
+      (n.types || []).forEach(function (t) { typesByModule[n.module].add(t); });
+    });
+
+    const modules = Object.keys(typesByModule).filter(function (m) { return typesByModule[m].size > 0; });
+    if (modules.length === 0) { return null; }
+
+    let content = "This Node-RED instance's palette (Manage palette > Installed) " +
+      "includes the following optional/non-default node packages, in addition " +
+      "to Node-RED's core/built-in nodes:\n";
+    modules.forEach(function (m) {
+      content += "- " + m + ": " + Array.from(typesByModule[m]).join(", ") + "\n";
+    });
+    content += "\nIf the user asks what's in the palette, which node " +
+      "packages/types are installed or available, or whether a specific node " +
+      "type is installed, answer directly from this list — it's already " +
+      "complete and current, so there's no need to call tools or inspect the " +
+      "current flow to answer those questions.\n\n" +
+      "When generating or modifying flows: default to Node-RED's core/built-in " +
+      "nodes (inject, function, change, switch, http request, debug, etc.) " +
+      "unless the user's request specifically calls for nodes from one of the " +
+      "optional packages listed above. Only use a non-core node type if it's " +
+      "listed above as installed — if a node type you'd otherwise want isn't " +
+      "covered by core nodes or this list, say so and note that the user would " +
+      "need to install it first, rather than proposing it as if it were already " +
+      "available.";
+    return content;
+  }
+
+  function refreshInstalledNodesCache() {
+    if (installedNodesRefreshInFlight) { return; }
+    installedNodesRefreshInFlight = true;
+
+    const root = String(RED.settings.httpAdminRoot || "/").replace(/\/+$/, "");
+    const req = http.get({
+      host: "127.0.0.1",
+      port: RED.settings.uiPort,
+      path: root + "/nodes",
+      headers: { Accept: "application/json" },
+      timeout: 5000
+    }, function (res) {
+      const chunks = [];
+      res.on("data", function (chunk) { chunks.push(chunk); });
+      res.on("end", function () {
+        installedNodesRefreshInFlight = false;
+        if (res.statusCode !== 200) { return; }
+        try {
+          const list = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          installedNodesCache = buildInstalledNodesContent(list);
+          installedNodesCacheAt = Date.now();
+        } catch (err) { /* leave previous cache value in place */ }
+      });
+    });
+    req.on("error", function () { installedNodesRefreshInFlight = false; });
+    req.on("timeout", function () { req.destroy(); installedNodesRefreshInFlight = false; });
+  }
+
+  function describeInstalledNodes() {
+    if (Date.now() - installedNodesCacheAt > INSTALLED_NODES_CACHE_TTL_MS) {
+      refreshInstalledNodesCache();
+    }
+    return installedNodesCache;
+  }
+
   // Assemble the final messages array in the one place both /chat and the
   // generate/modify/document endpoints use: system prompt, optional
-  // truncation notice, history, optional selection-context note, then the
-  // new user turn.
+  // installed-node-package note, optional truncation notice, history,
+  // optional selection-context note, then the new user turn.
   function buildMessages(systemPrompt, history, historyTruncated, described, userPrompt) {
     const messages = [{ role: "system", content: systemPrompt }];
+    const installedNodes = describeInstalledNodes();
+    if (installedNodes) {
+      messages.push({ role: "system", content: installedNodes });
+    }
     if (historyTruncated) {
       messages.push({ role: "system", content: HISTORY_TRUNCATION_NOTICE });
     }
@@ -736,6 +832,17 @@ module.exports = function flowPilotRuntime(RED) {
     }
   });
 
+  RED.httpAdmin.delete("/flowpilot/conversations", RED.auth.needsPermission("settings.write"), function (req, res) {
+    try {
+      const ids = storage.listConversationIds();
+      ids.forEach(function (id) { storage.deleteTranscript(id); });
+      storage.appendAudit({ action: "conversation_delete_all", count: ids.length });
+      res.json({ ok: true, count: ids.length });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ---- Test: connectivity check only -----------------------------------
   // Deliberately minimal. Confirms "can I reach the provider and get a
   // reply at all." Never depends on chat history or flow context.
@@ -857,12 +964,12 @@ module.exports = function flowPilotRuntime(RED) {
   // parsed envelope. Validated but non-critical — a malformed or missing
   // suggestion is just dropped (returns null), never an error, since chips
   // are an additive hint on top of the real response.
-  //   { mode: "generate"|"document"|"modify", prompt: "...", selectionHint?: "..." }
+  //   { mode: "generate"|"document"|"modify"|"chat", prompt: "...", selectionHint?: "..." }
   // ---------------------------------------------------------------------
   function extractSuggestedAction(parsed) {
     const sa = parsed && parsed.suggestedAction;
     if (!sa || typeof sa !== "object") { return null; }
-    if (["generate", "document", "modify"].indexOf(sa.mode) === -1) { return null; }
+    if (["generate", "document", "modify", "chat"].indexOf(sa.mode) === -1) { return null; }
     if (typeof sa.prompt !== "string" || !sa.prompt.trim()) { return null; }
 
     const result = { mode: sa.mode, prompt: sa.prompt.trim() };
@@ -977,6 +1084,28 @@ module.exports = function flowPilotRuntime(RED) {
   function processGenerationContent(content, providerResult, messages, auditAction, described, activeProvider) {
     const perf = performanceAuditFields(messages, content, providerResult);
 
+    // Mode-mismatch redirect: the model may respond in plain prose —
+    // addressing a request that doesn't belong in generate/document/modify —
+    // followed by a hidden <<<FLOWPILOT_DATA>>> block suggesting a mode
+    // switch, exactly like Chat. Detect this BEFORE extractJsonObject, since
+    // it would otherwise grab the "{" inside the data block and treat it as
+    // a broken envelope.
+    if (content.indexOf(CHAT_DATA_MARKER) !== -1) {
+      const preSplit = splitChatDataBlock(content);
+      const proseMessage = preSplit.message.trim();
+      if (proseMessage && proseMessage[0] !== "{") {
+        storage.appendAudit(Object.assign({ action: auditAction + "_prose" }, perf));
+        const proseResult = { prose: proseMessage };
+        if (preSplit.data) {
+          const proseAction = extractSuggestedAction(preSplit.data);
+          if (proseAction) { proseResult.suggestedAction = proseAction; }
+          const proseOptions = extractQuestionOptions(preSplit.data);
+          if (proseOptions) { proseResult.questionOptions = proseOptions; }
+        }
+        return proseResult;
+      }
+    }
+
     let parsed;
     try {
       parsed = extractJsonObject(content);
@@ -987,7 +1116,19 @@ module.exports = function flowPilotRuntime(RED) {
       // Errors stay reserved for empty responses or a found-but-broken {...}.
       if (parseErr.noJsonFound && content.trim()) {
         storage.appendAudit(Object.assign({ action: auditAction + "_prose" }, perf));
-        return { prose: content.trim() };
+        // Mode-mismatch redirect: a prose reply may carry the same hidden
+        // <<<FLOWPILOT_DATA>>> block as Chat, suggesting a mode switch (e.g.
+        // "chat" when the request was actually a question, not a
+        // generate/modify/document instruction).
+        const split = splitChatDataBlock(content.trim());
+        const proseResult = { prose: split.message || content.trim() };
+        if (split.data) {
+          const proseAction = extractSuggestedAction(split.data);
+          if (proseAction) { proseResult.suggestedAction = proseAction; }
+          const proseOptions = extractQuestionOptions(split.data);
+          if (proseOptions) { proseResult.questionOptions = proseOptions; }
+        }
+        return proseResult;
       }
       storage.appendAudit(Object.assign({ action: auditAction + "_parse_error", error: parseErr.message }, perf));
       const err = new Error("Could not parse a flow from the response: " + parseErr.message);
@@ -1151,7 +1292,10 @@ module.exports = function flowPilotRuntime(RED) {
       return { status: 200, body: body };
     }
     if (result.prose) {
-      return { status: 200, body: { explanation: result.prose, prose: true, flow: null } };
+      const proseBody = { explanation: result.prose, prose: true, flow: null };
+      if (result.suggestedAction) { proseBody.suggestedAction = result.suggestedAction; }
+      if (result.questionOptions) { proseBody.questionOptions = result.questionOptions; }
+      return { status: 200, body: proseBody };
     }
     return { status: 200, body: result };
   }
@@ -1175,7 +1319,10 @@ module.exports = function flowPilotRuntime(RED) {
       return { status: 200, body: questionBody };
     }
     if (result.prose) {
-      return { status: 200, body: { explanation: result.prose, prose: true, flow: null } };
+      const proseBody = { explanation: result.prose, prose: true, flow: null };
+      if (result.suggestedAction) { proseBody.suggestedAction = result.suggestedAction; }
+      if (result.questionOptions) { proseBody.questionOptions = result.questionOptions; }
+      return { status: 200, body: proseBody };
     }
 
     const originalIds = new Set(originalNodes.map(function (n) { return n.id; }));

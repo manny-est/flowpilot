@@ -318,6 +318,10 @@
     // action back off), an action chip always means "switch to this mode" —
     // never "disarm."
     function armExecuteAction(action) {
+        // A "chat" suggestion means "switch back to ordinary chat" — there's
+        // no Execute button for it, so disarm whatever's currently armed
+        // instead of trying to set armedExecuteAction to "chat".
+        if (action === "chat") { disarmExecuteAction(); return; }
         if (armedExecuteAction === action) { return; }
         setArmedExecuteAction(action);
     }
@@ -589,6 +593,13 @@
         }, function (msg) {
             $list.empty();
             $("<div>").addClass("fp-consent-hint").text("Unable to load conversation list: " + msg).appendTo($list);
+        });
+    }
+
+    function deleteAllConversations() {
+        if (!window.confirm("Delete ALL saved conversation transcripts? This can't be undone.")) { return; }
+        ajaxJson("DELETE", "flowpilot/conversations", null, function () {
+            loadConversationList();
         });
     }
 
@@ -2380,18 +2391,20 @@
 
         var modeLabel = suggestedAction.mode === "generate" ? "Generate"
             : suggestedAction.mode === "document" ? "Document"
-            : suggestedAction.mode === "modify" ? "Modify" : suggestedAction.mode;
+            : suggestedAction.mode === "modify" ? "Modify"
+            : suggestedAction.mode === "chat" ? "Chat" : suggestedAction.mode;
 
         var preview = suggestedAction.prompt.length > 60
             ? suggestedAction.prompt.slice(0, 57) + "…"
             : suggestedAction.prompt;
 
+        var isChatMode = suggestedAction.mode === "chat";
         var $row = $("<div>").addClass("fp-chip-row");
         $("<button>")
             .addClass("red-ui-button red-ui-button-small fp-chip")
             .attr("type", "button")
-            .attr("title", "Cleared for takeoff — " + suggestedAction.prompt)
-            .append($("<i>").addClass("fa fa-paper-plane"))
+            .attr("title", (isChatMode ? "Switch to Chat — " : "Cleared for takeoff — ") + suggestedAction.prompt)
+            .append($("<i>").addClass(isChatMode ? "fa fa-comment" : "fa fa-paper-plane"))
             .append($("<span>").text(" " + modeLabel + ": " + preview))
             .on("click", function () { applySuggestedAction(suggestedAction); })
             .appendTo($row);
@@ -2487,6 +2500,8 @@
         if (data.prose) {
             addMessage("assistant", data.explanation || "(no content returned)");
             pushHistory("assistant", data.explanation || "");
+            renderActionChip(data.suggestedAction);
+            renderClarifyingQuestion(data.questionOptions);
             setBusy(false);
             updateSelectionStatus();
             return true;
@@ -4404,6 +4419,9 @@
                 '      <div class="fp-consent-hint">Click a conversation to load it back into Chat — ' +
                 '        new messages continue that conversation\'s memory. Deleting a conversation ' +
                 '        removes its saved transcript permanently.</div>' +
+                '      <div class="fp-settings-actions">' +
+                '        <button id="fp-history-delete-all" class="red-ui-button red-ui-button-small" type="button" title="Delete all saved conversation transcripts permanently"><i class="fa fa-trash"></i> Delete all</button>' +
+                '      </div>' +
                 '      <div id="fp-history-list" class="fp-history-list"></div>' +
                 '    </div>' +
                 '  </div>' +
@@ -4417,6 +4435,7 @@
             content.find("#fp-show-chat").on("click", showChat);
             content.find("#fp-show-settings").on("click", showSettings);
             content.find("#fp-show-history").on("click", showHistory);
+            content.find("#fp-history-delete-all").on("click", deleteAllConversations);
             content.find("#fp-clear-chat").on("click", clearChat);
             content.find("#fp-recall").on("click", recallSearch);
             content.find("#fp-debug-log").on("click", showDebugMessages);
