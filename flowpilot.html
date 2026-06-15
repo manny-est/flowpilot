@@ -386,7 +386,7 @@
         var custom = Array.isArray(currentSettings.customIntents)
             ? currentSettings.customIntents : [];
         var builtin = INTENTS.map(function (i) {
-            return { label: i.label, text: i.text, custom: false };
+            return { id: i.id, label: i.label, text: i.text, custom: false };
         });
         var user = custom.filter(function (c) {
             return c && c.label && c.text;
@@ -400,20 +400,37 @@
     // the action bar doesn't grow without bound as users add more.
     var INLINE_CUSTOM_INTENT_LIMIT = 2;
 
+    // Cockpit pass: built-in Query intents render as icon buttons (tooltip
+    // carries the label + template text, same as before). Custom intents
+    // keep their text label — an icon would be ambiguous for an
+    // arbitrary user-defined button.
+    var QUERY_INTENT_ICONS = {
+        explain: "fa-question-circle",
+        troubleshoot: "fa-wrench",
+        review: "fa-list-alt",
+        suggest: "fa-lightbulb-o"
+    };
+
     function renderIntents($container) {
         if (!$container || !$container.length) { $container = el("#fp-intents"); }
         if (!$container.length) { return; }
         $container.empty();
 
         function addIntentButton(intent) {
-            $("<button>")
+            var icon = !intent.custom && QUERY_INTENT_ICONS[intent.id];
+            var $btn = $("<button>")
                 .addClass("red-ui-button red-ui-button-small fp-intent-btn")
                 .toggleClass("fp-intent-custom", !!intent.custom)
+                .toggleClass("fp-icon-btn fp-icon-btn-query", !!icon)
                 .attr("type", "button")
-                .attr("title", intent.text)
-                .text(intent.label)
+                .attr("title", icon ? (intent.label + " — " + intent.text) : intent.text)
                 .on("click", function () { applyIntentText(intent.text); })
                 .appendTo($container);
+            if (icon) {
+                $("<i>").addClass("fa " + icon).appendTo($btn);
+            } else {
+                $btn.text(intent.label);
+            }
         }
 
         var all = getAllIntents();
@@ -439,10 +456,10 @@
                     .appendTo($menu);
             });
             var $toggle = $("<button>")
-                .addClass("red-ui-button red-ui-button-small fp-intent-more")
+                .addClass("red-ui-button red-ui-button-small fp-intent-more fp-icon-btn fp-icon-btn-query")
                 .attr("type", "button")
                 .attr("title", "More query actions")
-                .text("…")
+                .append($("<i>").addClass("fa fa-ellipsis-h"))
                 .on("click", function (e) {
                     e.stopPropagation();
                     $(".fp-intent-menu").not($menu).addClass("fp-hidden");
@@ -1941,9 +1958,11 @@
 
     function setBusy(busy) {
         el("#fp-send").prop("disabled", busy);
-        el("#fp-generate").prop("disabled", busy);
-        el("#fp-document").prop("disabled", busy);
-        el("#fp-modify").prop("disabled", busy);
+        // Allow arming/disarming execute buttons while busy so users can
+        // prepare their next message during a response.
+        // el("#fp-generate").prop("disabled", busy);
+        // el("#fp-document").prop("disabled", busy);
+        // el("#fp-modify").prop("disabled", busy);
         el("#fp-test-provider").prop("disabled", busy);
         el("#fp-recall").prop("disabled", busy);
     }
@@ -4287,35 +4306,30 @@
                 '    <div class="fp-compose">' +
                 '      <div class="fp-action-bar">' +
                 '        <div class="fp-action-group">' +
-                '          <div class="fp-action-label">Query</div>' +
-                '          <div id="fp-intents" class="fp-intents"></div>' +
+                '          <div id="fp-intents" class="fp-intents fp-intents-query"></div>' +
                 '        </div>' +
                 '        <div class="fp-action-divider"></div>' +
                 '        <div class="fp-action-group">' +
-                '          <div class="fp-action-label">Execute</div>' +
-                '          <div class="fp-intents">' +
-                '            <button id="fp-document" class="red-ui-button red-ui-button-small" type="button" title="Toggle document mode — select nodes, optionally add notes, then hit Send to generate a comment-node explanation">Document</button>' +
-                '            <button id="fp-generate" class="red-ui-button red-ui-button-small" type="button" title="Toggle generate mode, then describe the flow and hit Send">Generate</button>' +
-                '            <button id="fp-modify" class="red-ui-button red-ui-button-small" type="button" title="Toggle modify mode — select node(s), describe the change, then hit Send">Modify</button>' +
+                '          <div class="fp-intents fp-intents-execute">' +
+                '            <button id="fp-document" class="red-ui-button red-ui-button-small fp-icon-btn fp-icon-btn-execute" type="button" title="Document — select nodes, optionally add notes, then hit Send to generate a comment-node explanation"><i class="fa fa-file-text-o"></i></button>' +
+                '            <button id="fp-generate" class="red-ui-button red-ui-button-small fp-icon-btn fp-icon-btn-execute" type="button" title="Generate — describe a flow, then hit Send to draft it"><i class="fa fa-magic"></i></button>' +
+                '            <button id="fp-modify" class="red-ui-button red-ui-button-small fp-icon-btn fp-icon-btn-execute" type="button" title="Modify — select node(s), describe the change, then hit Send"><i class="fa fa-pencil"></i></button>' +
                 '          </div>' +
                 '        </div>' +
-                '      </div>' +
-                '      <div class="fp-context-strip">' +
-                '        <span id="fp-selection-status" class="fp-selection-status">No nodes selected</span>' +
-                '        <span id="fp-size-status" class="fp-size-status fp-hidden"></span>' +
-                '        <span id="fp-secrets-status" class="fp-secrets-status fp-hidden" title="Context may include node config and code. Don\'t send credentials or proprietary data. Local/private AI recommended.">⚠</span>' +
-                '        <span id="fp-debug-status" class="fp-debug-status fp-hidden"></span>' +
                 '      </div>' +
                 '      <div class="fp-prompt-wrap">' +
                 '        <textarea id="fp-prompt" placeholder="Select nodes for context, or just type a question…"></textarea>' +
                 '        <div id="fp-prompt-resize" class="fp-resize-handle" title="Drag to resize"><i class="fa fa-arrows-v"></i></div>' +
                 '      </div>' +
-                '      <div class="fp-compose-footer">' +
+                '      <div class="fp-status-strip">' +
+                '        <span id="fp-selection-status" class="fp-selection-status">No nodes selected</span>' +
+                '        <span id="fp-size-status" class="fp-size-status fp-hidden"></span>' +
+                '        <span id="fp-secrets-status" class="fp-secrets-status fp-hidden" title="Context may include node config and code. Don\'t send credentials or proprietary data. Local/private AI recommended.">⚠</span>' +
+                '        <span id="fp-debug-status" class="fp-debug-status fp-hidden"></span>' +
+                '        <span class="fp-status-spacer"></span>' +
                 '        <div id="fp-provider-status">Provider: not loaded</div>' +
-                '        <div class="fp-buttons">' +
-                '          <button id="fp-clear-prompt" class="red-ui-button red-ui-button-small" type="button" title="Clear prompt box">✕</button>' +
-                '          <button id="fp-send" class="red-ui-button red-ui-button-primary" type="button">Send</button>' +
-                '        </div>' +
+                '        <button id="fp-clear-prompt" class="red-ui-button red-ui-button-small" type="button" title="Clear prompt box">✕</button>' +
+                '        <button id="fp-send" class="red-ui-button red-ui-button-primary" type="button">Send</button>' +
                 '      </div>' +
                 '    </div>' +
                 '  </div>' +
@@ -4430,6 +4444,13 @@
 
             // Keep the closure reference to the *inserted* content.
             $root = content;
+
+            // ---- Settings accordion: only one section expanded at a time.
+            // Bind once on the parent (event delegation) rather than per-summary.
+            content.find(".fp-settings-group > summary").on("click", function () {
+                // Close all other details elements
+                content.find(".fp-settings-group").not($(this).closest(".fp-settings-group")).removeAttr("open");
+            });
 
             // ---- Bind events here, after the DOM exists. No inline onclick.
             content.find("#fp-show-chat").on("click", showChat);
@@ -5001,19 +5022,19 @@
     border-top: 1px solid var(--red-ui-secondary-border-color, #ddd);
 }
 
-/* Armed Execute action (e.g. Generate toggled on) — filled, distinct from the
-   chat/settings header accent so the two "active" concepts don't look the same. */
+/* Armed Execute action (e.g. Generate toggled on) — lit blue, matching D3's
+   existing blue = "about to propose changes" coding on #fp-prompt's border. */
 .fp-intents .red-ui-button.fp-action-armed {
-    background: #2a6f4f !important;
-    border-color: #2a6f4f !important;
-    color: #fff !important;
+    background: rgba(31, 136, 229, 0.16) !important;
+    border-color: #1f88e5 !important;
+    color: #1f88e5 !important;
 }
 
 /* Send gets the same accent as an armed Execute action so it's clear that
    clicking it now proposes a change rather than chatting — especially after
    an action chip pre-fills the prompt and switches modes (Workstream C). */
 #fp-send.fp-send-armed {
-    box-shadow: 0 0 0 2px #2a6f4f;
+    box-shadow: 0 0 0 2px #1f88e5;
 }
 
 /* /demo: once the sample prompt has finished typing in, gently pulse Send
@@ -5023,13 +5044,13 @@
 }
 
 @keyframes fp-breathe {
-    0%, 100% { box-shadow: 0 0 0 2px #2a6f4f; transform: scale(1); }
-    50% { box-shadow: 0 0 0 6px rgba(42, 111, 79, 0.35); transform: scale(1.05); }
+    0%, 100% { box-shadow: 0 0 0 2px #1f88e5; transform: scale(1); }
+    50% { box-shadow: 0 0 0 6px rgba(31, 136, 229, 0.35); transform: scale(1.05); }
 }
 
 .fp-action-bar {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: 12px;
     margin-bottom: 10px;
 }
@@ -5039,18 +5060,35 @@
     min-width: 0;
 }
 
-.fp-action-label {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--red-ui-secondary-text-color, #888);
-    margin-bottom: 4px;
-}
-
 .fp-action-divider {
     align-self: stretch;
     width: 1px;
     background: var(--red-ui-secondary-border-color, #ddd);
+}
+
+/* Cockpit pass: icon-style Query/Execute buttons. Hover/armed accents reuse
+   D3's existing amber=query / blue=execute color coding (see #fp-prompt and
+   .fp-action-armed above) so the whole "armed" concept stays one color. */
+.fp-icon-btn {
+    width: 32px;
+    height: 32px;
+    padding: 0 !important;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+}
+
+.fp-icon-btn-query:hover {
+    color: #cc7a00 !important;
+    border-color: rgba(255, 152, 0, 0.5) !important;
+    background: rgba(255, 152, 0, 0.12) !important;
+}
+
+.fp-icon-btn-execute:hover {
+    color: #1f88e5 !important;
+    border-color: rgba(31, 136, 229, 0.5) !important;
+    background: rgba(31, 136, 229, 0.12) !important;
 }
 
 .fp-intents {
@@ -5155,14 +5193,21 @@
     text-overflow: ellipsis;
 }
 
-/* D5: selection / size / secrets indicators consolidated into one compact
-   strip above the prompt box, instead of three stacked lines. */
-.fp-context-strip {
+/* Cockpit pass: D5's context indicators and the provider/Send footer merged
+   into one wrap-capable strip below the prompt box — one line when there's
+   room, wraps to two on a narrow sidebar (no regression vs. the previous
+   always-two-rows layout). */
+.fp-status-strip {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 8px;
+    margin-top: 8px;
     flex-wrap: wrap;
+}
+
+.fp-status-spacer {
+    flex: 1 1 auto;
+    min-width: 8px;
 }
 
 .fp-selection-status {
@@ -5387,23 +5432,16 @@
     background: rgba(127, 127, 127, 0.15);
 }
 
-.fp-compose-footer {
-    display: flex;
-    gap: 10px;
-    align-items: center;
-    margin-top: 10px;
-}
-
 #fp-provider-status {
-    flex: 1;
+    flex: 0 1 auto;
     min-width: 0;
+    max-width: 55%;
     color: var(--red-ui-secondary-text-color, #777);
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
 }
 
-.fp-buttons,
 .fp-settings-actions {
     display: flex;
     gap: 8px;
