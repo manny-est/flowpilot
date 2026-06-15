@@ -11,7 +11,8 @@ Ollama, etc.) and helps you generate, modify, document, and discuss your
 flows — without ever acting behind your back.
 
 See [PROJECT-OVERVIEW.md](PROJECT-OVERVIEW.md) for how FlowPilot was built
-and a full rundown of its features.
+and a full rundown of its features, or [USER-GUIDE.md](USER-GUIDE.md) for
+installation, the sidebar UI, and a chapter on every feature.
 
 ## Design principles
 
@@ -100,8 +101,19 @@ http://172.17.0.1:8080
 
 Click **Pre-flight check** to save and verify connectivity.
 
+## Examples
+
+The `examples/` folder includes a couple of small starter flows, available
+from the editor's **Import → Examples → FlowPilot** menu — see
+[USER-GUIDE.md](USER-GUIDE.md#examples) for what they're for.
+
 ## Development status
 
 FlowPilot is under active development. Every change is reviewable and
 undoable, but as with any AI-assisted tool, review proposed changes before
 applying them — especially on flows you care about.
+
+## Feedback
+
+Found a bug or have a feature request? Please open an issue:
+https://github.com/manny-est/flowpilot/issues

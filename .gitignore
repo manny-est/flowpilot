@@ -1,6 +1,1 @@
 node_modules/
-
-# Local-only dev history (consolidated Phase 1-6.5 docs). Not part of the
-# published package — backups of the original per-phase docs are in
-# /lab/dockerdata/exports/.
-docs/

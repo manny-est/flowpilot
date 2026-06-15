@@ -20,6 +20,9 @@
   "bugs": {
     "url": "https://github.com/manny-est/flowpilot/issues"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "node-red": {
     "nodes": {
       "flowpilot": "flowpilot.js"

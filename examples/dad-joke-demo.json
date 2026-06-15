@@ -1,0 +1,84 @@
+[
+    {
+        "id": "fp-ex2-tab",
+        "type": "tab",
+        "label": "FlowPilot: Dad Joke Demo",
+        "disabled": false,
+        "info": "This is the kind of flow FlowPilot's `/demo` slash command generates from scratch via Generate.\n\nDeploy this flow, then click the inject node to fetch a random dad joke — the node's status will show the joke text, and it'll print in the debug sidebar too.\n\nTry selecting these nodes in FlowPilot and clicking **Explain**, or arm **Modify** and ask it to write the joke to a file instead of the debug sidebar.",
+        "env": []
+    },
+    {
+        "id": "fp-ex2-inject",
+        "type": "inject",
+        "z": "fp-ex2-tab",
+        "name": "get a dad joke",
+        "props": [
+            { "p": "payload" }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 150,
+        "y": 140,
+        "wires": [["fp-ex2-http"]]
+    },
+    {
+        "id": "fp-ex2-http",
+        "type": "http request",
+        "z": "fp-ex2-tab",
+        "name": "icanhazdadjoke",
+        "method": "GET",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "https://icanhazdadjoke.com/",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [
+            { "keyType": "other", "keyValue": "Accept", "valueType": "other", "valueValue": "application/json" }
+        ],
+        "x": 350,
+        "y": 140,
+        "wires": [["fp-ex2-function"]]
+    },
+    {
+        "id": "fp-ex2-function",
+        "type": "function",
+        "z": "fp-ex2-tab",
+        "name": "show joke status",
+        "func": "var joke = (msg.payload && msg.payload.joke) || \"(no joke returned)\";\nnode.status({ fill: \"green\", shape: \"dot\", text: joke });\nmsg.payload = joke;\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 580,
+        "y": 140,
+        "wires": [["fp-ex2-debug"]]
+    },
+    {
+        "id": "fp-ex2-debug",
+        "type": "debug",
+        "z": "fp-ex2-tab",
+        "name": "joke",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 780,
+        "y": 140,
+        "wires": []
+    }
+]

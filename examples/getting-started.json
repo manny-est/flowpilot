@@ -1,0 +1,62 @@
+[
+    {
+        "id": "fp-ex1-tab",
+        "type": "tab",
+        "label": "FlowPilot: Getting Started",
+        "disabled": false,
+        "info": "A tiny flow to try FlowPilot on.\n\n1. Deploy this flow.\n2. Open the FlowPilot sidebar and select the \"say hello\" function node.\n3. Click **Explain** (one of the orange Query buttons) and send.\n4. Try arming **Modify** (blue, the pencil icon) and asking FlowPilot to add a timestamp to the message, or wire in a second debug node.\n\nEvery change FlowPilot proposes is shown as a review before anything is applied, and can be undone with Ctrl+Z.",
+        "env": []
+    },
+    {
+        "id": "fp-ex1-inject",
+        "type": "inject",
+        "z": "fp-ex1-tab",
+        "name": "click to start",
+        "props": [
+            { "p": "payload" }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 160,
+        "y": 120,
+        "wires": [["fp-ex1-function"]]
+    },
+    {
+        "id": "fp-ex1-function",
+        "type": "function",
+        "z": "fp-ex1-tab",
+        "name": "say hello",
+        "func": "msg.payload = \"Hello from FlowPilot's example flow!\";\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 360,
+        "y": 120,
+        "wires": [["fp-ex1-debug"]]
+    },
+    {
+        "id": "fp-ex1-debug",
+        "type": "debug",
+        "z": "fp-ex1-tab",
+        "name": "",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 560,
+        "y": 120,
+        "wires": []
+    }
+]

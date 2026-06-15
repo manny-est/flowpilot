@@ -1824,23 +1824,51 @@
         }
     }
 
-    // First-run welcome + warning. Shows in the chat until the user saves
-    // settings once (saveSettings stamps firstRunAcknowledged server-side).
+    // First-run welcome + cockpit tour. Shows in the chat until the user
+    // saves settings once (saveSettings stamps firstRunAcknowledged
+    // server-side) — saving happens automatically as part of Pre-flight
+    // check, so adding and testing a provider is enough to dismiss this.
     function maybeShowFirstRun(settings) {
         if (settings && settings.firstRunAcknowledged) { return; }
+
         addMessage("assistant",
             "Welcome to FlowPilot. You pick the destination, I help you get there.\n\n" +
             "FlowPilot sends your selected Node-RED nodes — including their " +
             "configuration and any code inside function or template nodes — to " +
             "the AI provider you configure. Please keep in mind:\n\n" +
-            "• Do not include credentials, API keys, or proprietary information " +
+            "- Do not include credentials, API keys, or proprietary information " +
             "in anything you send.\n" +
-            "• A local or private AI provider (e.g. LocalAI, Ollama) is strongly " +
+            "- A local or private AI provider (e.g. LocalAI, Ollama) is strongly " +
             "recommended over a cloud provider.\n" +
-            "• Generate/Modify/Document changes are always shown as a review or " +
-            "diff first — nothing is applied until you click Apply or import.\n\n" +
-            "Open Settings (gear icon), configure your provider, and click Save " +
-            "to dismiss this notice.");
+            "- Generate/Modify/Document changes are always shown as a review or " +
+            "diff first — nothing is applied until you click Apply or import.");
+
+        addMessage("assistant",
+            "### Quick tour of the cockpit\n\n" +
+            "- **Compose box** (bottom) — type a question or instruction, then " +
+            "**Send** (Enter to send, Shift+Enter for a new line).\n" +
+            "- **Query buttons** (orange, left of the prompt) — Explain / " +
+            "Troubleshoot / Review / Suggest: one-click prompts about your " +
+            "current selection.\n" +
+            "- **Execute buttons** (blue, right of the prompt) — Document / " +
+            "Generate / Modify: arm one, describe what you want, then Send. " +
+            "Every change is shown as a review before anything is applied.\n" +
+            "- **Header icons** — eraser clears the chat, magnifying glass " +
+            "searches past conversations (Recall), bug icon attaches recent " +
+            "Debug sidebar output, paper-plane returns to Chat, clock opens " +
+            "your Flight log (past conversations), and the gear opens " +
+            "Settings.\n" +
+            "- Type `/help` any time for the full briefing, or `/demo` to see " +
+            "Generate in action.");
+
+        addMessage("assistant",
+            "### One more thing before takeoff\n\n" +
+            "FlowPilot needs an AI provider to talk to. Click **Settings** " +
+            "(gear icon) and add one — base URL, optional API key, and a " +
+            "model name. Then hit **Pre-flight check** to save and test it. " +
+            "Once that succeeds, you're all set.");
+
+        renderChip("Open Settings", "fa fa-cog", showSettings);
     }
 
     // ---- Slash commands ---------------------------------------------------
@@ -2471,6 +2499,25 @@
         if (suggestedAction.selectionHint) {
             $("<div>").addClass("fp-chip-hint").text("Tip: " + suggestedAction.selectionHint).appendTo($row);
         }
+
+        $box.append($row);
+        scrollMessagesToBottom();
+    }
+
+    // Renders a single-button call-to-action chip below the latest message
+    // — used by first-run onboarding to jump straight to Settings.
+    function renderChip(label, iconClass, onClick) {
+        var $box = el("#fp-messages");
+        if (!$box.length) { return; }
+
+        var $row = $("<div>").addClass("fp-chip-row");
+        $("<button>")
+            .addClass("red-ui-button red-ui-button-small fp-chip")
+            .attr("type", "button")
+            .append($("<i>").addClass(iconClass))
+            .append($("<span>").text(" " + label))
+            .on("click", onClick)
+            .appendTo($row);
 
         $box.append($row);
         scrollMessagesToBottom();
