@@ -611,6 +611,7 @@
         fpChatSnappedToBottom = true;
         updateSelectionStatus();
         updateDebugStatus();
+        showChat();
     }
 
     // D6: "Flight log" — a conversation list layered over the A3 transcript
@@ -718,6 +719,7 @@
     // a "Use this" button (A3c) that the user can click to add that exchange
     // to conversationHistory, so the model sees it on the next message.
     function recallSearch() {
+        showChat();
         var $promptBox = el("#fp-prompt");
         var query = $promptBox.length ? $promptBox.val().trim() : "";
         if (!query) {
@@ -788,6 +790,7 @@
     // attachedDebugMessages, which is merged into the next request(s)'
     // context by attachDebugContext().
     function showDebugMessages() {
+        showChat();
         var $box = el("#fp-messages");
         if (!$box.length) { return; }
 
@@ -4365,7 +4368,7 @@
                 '        <span id="fp-debug-status" class="fp-debug-status fp-hidden"></span>' +
                 '        <span class="fp-status-spacer"></span>' +
                 '        <div id="fp-provider-status">Provider: not loaded</div>' +
-                '        <button id="fp-clear-prompt" class="red-ui-button red-ui-button-small" type="button" title="Clear prompt box">✕</button>' +
+                '        <button id="fp-clear-prompt" class="red-ui-button" type="button" title="Clear prompt box">Clear</button>' +
                 '        <button id="fp-send" class="red-ui-button red-ui-button-primary" type="button">Send</button>' +
                 '      </div>' +
                 '    </div>' +
@@ -4697,6 +4700,8 @@
 .fp-view-buttons {
     display: flex;
     gap: 6px;
+    position: relative;
+    top: 2px;
 }
 
 .fp-panel {
