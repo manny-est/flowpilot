@@ -7,6 +7,8 @@ overview of what FlowPilot is and how it was built, see
 
 ## Getting Started
 
+▶ **[Watch a full walkthrough](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/full-intro-demo.mp4)** (MP4, ~30MB) — first launch, setting a provider, `/help`, and `/demo` end to end.
+
 ### Install from the Palette
 
 In the Node-RED editor, open the menu (top-right) → **Manage palette** →
@@ -36,15 +38,23 @@ alone is not enough.
 
 ### First launch
 
+![The FlowPilot tab in the Node-RED editor's sidebar](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/Node-Red-Tool-Menu.png)
+
 Open the FlowPilot sidebar tab (the paper-plane icon, usually grouped with
-Info/Debug/etc. on the right edge of the editor). On first launch, FlowPilot
+Info/Debug/etc. on the right edge of the editor) — or watch [a short clip of
+finding it](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/finding-flowpilot.mp4).
+On first launch, FlowPilot
 walks you through the basics in the chat panel and ends by pointing you at
 **Settings** to add a provider — see [Set a Provider](#set-a-provider) below.
 This walkthrough only appears once; it disappears for good after you save
 settings (which happens automatically the first time you run a **Pre-flight
 check**).
 
+![FlowPilot's first-run welcome and cockpit tour](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/first-run-welcome.png)
+
 ## UI Basics
+
+![The FlowPilot sidebar's Chat panel](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/sidebar-chat-overview.png)
 
 The FlowPilot sidebar has three panels, switched using the icons in the
 header row (top-right of the sidebar):
@@ -111,8 +121,13 @@ Ollama (with its OpenAI-compatible endpoint), LM Studio, etc.
      provider's available models (via `GET /v1/models`) and pick from the
      list.
    - **Temperature** — a starting value of `0.2` works well for most uses.
+
+![Provider settings: Base URL, API key, model, and temperature fields](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/sidebar-settings-providers.png)
+
 4. Click **Pre-flight check**. This saves your settings and sends a small
    test request. A reply in the chat panel means you're connected.
+
+![A successful Pre-flight check reply in Chat](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/preflight-success.png)
 
 You can configure multiple providers and switch between them with the
 **Active provider** dropdown — useful for comparing models, or keeping a
@@ -144,6 +159,8 @@ You can add your own custom intent buttons under **Settings → Behavior →
 Custom intent buttons** — give it a label and the instruction text it should
 send.
 
+![Explain run on a selected node](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/query-explain-example.png)
+
 ### Generate
 
 Describe a new flow in plain language (e.g. "fetch the weather every hour and
@@ -156,6 +173,12 @@ normal paste.
 Try `/demo` in the prompt box for a ready-made example: it types a Generate
 request for a small "fetch a dad joke" flow into the box for you.
 
+![A Generate request and the resulting reply](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/generate-example.png)
+
+![Generate's review step, with the raw flow JSON](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/generate-review-json.png)
+
+![Generate's review/diff before import](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/generate-review.png)
+
 ### Modify
 
 Select the node(s) you want to change, arm **Modify**, and describe the
@@ -164,11 +187,19 @@ also log errors"). FlowPilot proposes property changes, rewiring, additions,
 and removals as a diff. You review and apply each change — every applied
 change is a single native Node-RED undo step (Ctrl+Z).
 
+![Modify's proposed diff before applying](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/modify-diff.png)
+
+![The same change applied to the flow](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/modify-diff-applied.png)
+
 ### Document
 
 Select node(s), arm **Document**, and (optionally) add notes about what you
 want highlighted, then **Send**. FlowPilot generates a "Read Me" comment node
 summarizing the selection, which you review and place like any other change.
+
+![A generated Read Me comment node, reviewed before placing](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/document-readme-node.png)
+
+![The Read Me comment node placed on the canvas](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/document-readme-node-placed.png)
 
 ### Recall & Flight log
 
@@ -178,6 +209,8 @@ summarizing the selection, which you review and place like any other change.
 - **Flight log** (clock icon) — browse and reload past conversations
   directly, or delete saved transcripts.
 
+![The Flight log panel listing past conversations](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/flight-log.png)
+
 ### Debug context attachment
 
 Click the **bug icon** to view recent messages from Node-RED's Debug sidebar.
@@ -186,6 +219,10 @@ Click **Attach** on any entry to include it as context for your next request
 wrong?"). The status strip shows how many debug messages are attached; clear
 them from there or by clicking **Clear chat**.
 
+![The Debug log panel with recent entries](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/debug-log.png)
+
+![A debug message attached, shown in the status strip](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/debug-log-attached.png)
+
 ### Action chips
 
 When FlowPilot's reply describes a change you could make, it may offer an
@@ -193,11 +230,17 @@ action chip — a one-click button that switches to the suggested mode
 (Generate/Modify/Document/Chat) with the request pre-filled. Nothing is sent
 until you review and hit Send yourself.
 
+![A reply with an action chip below it](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/action-chip.png)
+
+![The full chat thread leading up to an action chip](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/action-chip-full.png)
+
 ### Clarifying questions
 
 If your instruction is too vague to act on safely, FlowPilot asks **one**
 clarifying question instead of guessing — often with quick-reply buttons (plus
 an "Other" option for free text). Picking an answer sends it immediately.
+
+![A clarifying question with quick-reply buttons](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/clarifying-question.png)
 
 ### Agentic exploration
 
@@ -208,11 +251,15 @@ reading the Debug sidebar. This is read-only, bounded by a step count and
 token budget, shown to you as it happens, and can be interrupted with the
 **Stop** button.
 
+![An agentic exploration run in progress](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/agentic-exploration.png)
+
 ### Streaming replies
 
 Chat (and Generate/Modify/Document) responses can stream in as they're
 generated rather than appearing all at once. Toggle this under **Settings →
 Behavior → Stream chat replies**.
+
+![Settings → Behavior, including streaming and custom intents](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/settings-behavior.png)
 
 ### Slash commands
 
@@ -225,6 +272,12 @@ Type these directly into the prompt box:
 - `/history` — open the Flight log
 - `/settings` — open Settings
 - `/demo` — load a sample Generate request into the prompt box
+
+![`/help`'s full command/feature briefing](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/slash-help.png)
+
+![`/demo` pre-filling a Generate request](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/demo-command.png)
+
+![The flow generated by `/demo`, reviewed and imported](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/slash-demo-complete.png)
 
 ### Privacy and safety
 
@@ -239,6 +292,8 @@ Type these directly into the prompt box:
 - Every Generate/Modify/Document result is shown as a review or diff —
   nothing is applied until you click Apply/import, and every applied change
   is a normal Node-RED undo step.
+
+![Settings → Context & Safety](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/settings-context-safety.png)
 
 ## Examples
 

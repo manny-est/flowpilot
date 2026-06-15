@@ -10,6 +10,10 @@ editor sidebar. It talks to any OpenAI-compatible API (OpenAI, LocalAI,
 Ollama, etc.) and helps you generate, modify, document, and discuss your
 flows — without ever acting behind your back.
 
+![FlowPilot sidebar](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/sidebar-chat-overview.png)
+
+▶ [Watch a full walkthrough](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/full-intro-demo.mp4) (MP4, ~30MB) — first launch, setting a provider, `/help`, and `/demo`.
+
 See [PROJECT-OVERVIEW.md](PROJECT-OVERVIEW.md) for how FlowPilot was built
 and a full rundown of its features, or [USER-GUIDE.md](USER-GUIDE.md) for
 installation, the sidebar UI, and a chapter on every feature.
