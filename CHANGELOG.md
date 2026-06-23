@@ -2,7 +2,7 @@
 
 All notable changes to FlowPilot are documented here.
 
-## [Unreleased]
+## [0.3.0] - 2026-06-23
 
 ### Added
 - `/feedback` slash command — links to the repo and issue tracker, with a note on what makes a good bug report.
