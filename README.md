@@ -74,6 +74,10 @@ See the [User Guide](USER-GUIDE.md#privacy-and-safety) for the full details.
   safely, FlowPilot asks ONE question instead of guessing.
 - **Streaming replies** — optional SSE streaming for chat responses.
 
+## Requirements
+
+Node-RED 4.x and 5.x, tested. Node.js 16+.
+
 ## Install in a local Node-RED user directory
 
 From your Node-RED user directory:

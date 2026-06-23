@@ -21,6 +21,12 @@
     // user's thresholds and suppression preference without refetching.
     var currentSettings = {};
 
+    // JSON snapshot of collectSettings() as of the last load/save, used by
+    // the explicit Save button to tell "no changes" from "saved" without
+    // hitting the backend for a no-op write.
+    var savedSettingsSnapshot = null;
+    var saveStatusTimer = null;
+
     // ---------------------------------------------------------------------
     // Identifies this conversation for server-side transcript
     // persistence (chats/<conversationId>.jsonl). Kept in sessionStorage so
@@ -112,7 +118,14 @@
     // the name-based check. Structural data (numbers, booleans, short
     // strings, object/array shape) passes through untouched, preserving
     // diagnostic value.
+    //
+    // currentSettings.redactionEnabled defaults true (settings.json default,
+    // and an empty {} before settings ever load) — explicitly opting OUT via
+    // the type-to-confirm Settings toggle is required to disable this. The
+    // Node-RED credentials field is a SEPARATE, always-on mechanism (dropped
+    // entirely in sanitizeNode's INTERNAL_FIELDS) and is unaffected either way.
     function redactDebugValue(value, key) {
+        if (currentSettings.redactionEnabled === false) { return value; }
         if (typeof value === "string") {
             var kind = matchSecretValue(value);
             if (kind) { return "[redacted: " + kind + ", " + value.length + " chars]"; }
@@ -150,7 +163,14 @@
     // request is sent.
     // ---------------------------------------------------------------------
     var DEBUG_BUFFER_MAX = 50;
-    var DEBUG_VALUE_MAX_CHARS = 500;
+    // Two different caps for two different jobs. PREVIEW is just for the
+    // scannable debug-log list (many short entries). SEND is what actually
+    // gets attached/transmitted — much higher, because a value truncated
+    // mid-JSON at 500 chars (e.g. cut inside a string or property name) can
+    // arrive at the model as malformed JSON, which looks indistinguishable
+    // from "the model ignored the attached data".
+    var DEBUG_VALUE_PREVIEW_MAX_CHARS = 500;
+    var DEBUG_VALUE_SEND_MAX_CHARS = 20000;
     var debugMessageBuffer = [];
     var attachedDebugMessages = [];
     var nextDebugMessageId = 1;
@@ -179,17 +199,31 @@
         if (!msg) { return; }
         var redactedValue = redactDebugValue(msg.msg, undefined);
         var redactedTopic = redactDebugValue(msg.topic || "", undefined);
+        var stringified = stringifyDebugValue(redactedValue);
         var entry = {
             id: nextDebugMessageId++,
             timestamp: Date.now(),
             name: msg.name || msg.id || "(unnamed node)",
             topic: redactedTopic,
-            value: truncateForDebug(stringifyDebugValue(redactedValue), DEBUG_VALUE_MAX_CHARS)
+            // previewValue: short, for the scannable debug-log list only.
+            // value: the much-less-truncated version that actually gets
+            // attached/sent and shown by "Preview debug" — never the raw
+            // unredacted value either way.
+            previewValue: truncateForDebug(stringified, DEBUG_VALUE_PREVIEW_MAX_CHARS),
+            value: truncateForDebug(stringified, DEBUG_VALUE_SEND_MAX_CHARS)
         };
         debugMessageBuffer.push(entry);
         if (debugMessageBuffer.length > DEBUG_BUFFER_MAX) {
             debugMessageBuffer = debugMessageBuffer.slice(-DEBUG_BUFFER_MAX);
         }
+    }
+
+    // The exact shape sent to the backend (and shown by "Preview debug") —
+    // excludes previewValue, which exists only for the debug-log list.
+    function buildDebugMessagesForSend() {
+        return attachedDebugMessages.map(function (m) {
+            return { id: m.id, timestamp: m.timestamp, name: m.name, topic: m.topic, value: m.value };
+        });
     }
 
     // Merges any attached debug messages into a request's context object —
@@ -199,7 +233,7 @@
     function attachDebugContext(context) {
         if (!attachedDebugMessages.length) { return context; }
         context = context || { nodes: [], connections: {} };
-        return Object.assign({}, context, { debugMessages: attachedDebugMessages.slice() });
+        return Object.assign({}, context, { debugMessages: buildDebugMessagesForSend() });
     }
 
     // Updates the "🐛 N debug message(s) attached" indicator in the context
@@ -214,6 +248,12 @@
         $status.removeClass("fp-hidden").empty();
         var n = attachedDebugMessages.length;
         $status.append(document.createTextNode("🐛 " + n + " debug message" + (n === 1 ? "" : "s") + " attached "));
+        var $preview = $("<a>").attr("href", "#").text("preview").attr("title", "Show the exact debug payload that will be sent");
+        $preview.on("click", function (ev) {
+            ev.preventDefault();
+            showJsonPreview("Debug payload preview — exactly what will be sent", buildDebugMessagesForSend());
+        });
+        $status.append($preview).append(document.createTextNode(" "));
         var $clear = $("<a>").attr("href", "#").text("✕").attr("title", "Remove all attached debug messages");
         $clear.on("click", function (ev) {
             ev.preventDefault();
@@ -221,6 +261,29 @@
             updateDebugStatus();
         });
         $status.append($clear);
+    }
+
+    // Diagnostic tool: dumps `data` as a fenced JSON code block into the chat
+    // thread (UI-only — never added to conversationHistory). Lets the user
+    // see exactly what a request would carry, instead of guessing whether
+    // the model received it or silently ignored it.
+    function showJsonPreview(title, data) {
+        addMessage("assistant", "**" + title + "**\n\n```json\n" + JSON.stringify(data, null, 2) + "\n```");
+    }
+
+    // Resolves the node-selection context that would actually be sent right
+    // now: the live canvas selection, or (while an Execute action is armed
+    // with nothing currently selected) the pinned selection from when it was
+    // armed. Used by "Preview JSON" so it can never show different context
+    // than what Send actually uses.
+    function resolveCurrentSelectionContext() {
+        var sel = (RED.view && RED.view.selection) ? RED.view.selection() : null;
+        var liveCount = (sel && sel.nodes) ? sel.nodes.length : 0;
+        if (liveCount > 0) { return collectSelectionContext(); }
+        if (armedExecuteAction && pinnedSelectionIds) {
+            return collectSelectionContext(pinnedSelectionIds);
+        }
+        return null;
     }
 
     function getHistoryMaxExchanges() {
@@ -812,7 +875,7 @@
             var when = new Date(entry.timestamp).toLocaleTimeString();
             var meta = when + " · " + entry.name + (entry.topic ? " · topic: " + entry.topic : "");
             $("<div>").addClass("fp-recall-meta").text(meta).appendTo($item);
-            $("<div>").addClass("fp-recall-text").text(entry.value).appendTo($item);
+            $("<div>").addClass("fp-recall-text").text(entry.previewValue).appendTo($item);
 
             var already = !!attachedIds[entry.id];
             var $use = $("<button>").addClass("fp-recall-use red-ui-button red-ui-button-small")
@@ -1118,7 +1181,9 @@
         el("#fp-high-tokens").val(settings.contextHighTokens || 8000);
         el("#fp-history-max").val(settings.historyMaxExchanges !== undefined ? settings.historyMaxExchanges : 10);
         el("#fp-streaming-enabled").prop("checked", !!settings.streamingEnabled);
+        el("#fp-request-timeout").val(Math.round((settings.requestTimeoutMs !== undefined ? settings.requestTimeoutMs : 180000) / 1000));
         el("#fp-suppress-warnings").prop("checked", !!settings.suppressContextWarnings);
+        el("#fp-redaction-disabled").prop("checked", settings.redactionEnabled === false);
 
         // The dev/test banner is part of the warning set the user can silence
         // via the type-to-confirm acknowledgement.
@@ -1137,6 +1202,24 @@
             ? (ap.providerName + " / " + ap.model)
             : ((ap ? ap.providerName : "Provider") + ": model not configured");
         el("#fp-provider-status").text("Provider: " + providerText);
+
+        // Anchor point for "no changes to save" detection — this is the form
+        // state as of the last successful load/save.
+        savedSettingsSnapshot = JSON.stringify(collectSettings());
+    }
+
+    // Shows a short-lived status message next to the Save settings button.
+    // Only used for that explicit, user-initiated action — the many internal
+    // saveSettings() calls (Pre-flight check, Refresh models, custom intent
+    // add/remove) have their own dedicated feedback elsewhere and would just
+    // add noise here.
+    function showSaveStatus(text, isError) {
+        var $status = el("#fp-save-status");
+        clearTimeout(saveStatusTimer);
+        $status.text(text).toggleClass("fp-save-status-error", !!isError).removeClass("fp-hidden");
+        saveStatusTimer = setTimeout(function () {
+            $status.addClass("fp-hidden");
+        }, 4000);
     }
 
     // Read the form's provider fields back into the active provider profile.
@@ -1159,11 +1242,22 @@
         var typed = (el("#fp-suppress-confirm").val() || "").trim();
         var suppress = wantSuppress && typed === "I understand the risk";
 
+        // Same type-to-confirm gate as suppressContextWarnings above, and for
+        // the same reason: the confirm box is never pre-filled from settings,
+        // so disabling redaction stays off unless re-confirmed on every save —
+        // "off-able, not off-by-accident".
+        var wantRedactionOff = el("#fp-redaction-disabled").prop("checked");
+        var redactionTyped = (el("#fp-redaction-confirm").val() || "").trim();
+        var redactionEnabled = !(wantRedactionOff && redactionTyped === "disable redaction");
+
         // Fold the form's provider fields back into the active profile first.
         captureProviderFields();
 
         var historyMax = Number(el("#fp-history-max").val());
         if (!isFinite(historyMax) || historyMax < 0) { historyMax = 10; }
+
+        var requestTimeoutSec = Number(el("#fp-request-timeout").val());
+        if (!isFinite(requestTimeoutSec) || requestTimeoutSec < 5) { requestTimeoutSec = 180; }
 
         return {
             providers: providersList(),
@@ -1173,7 +1267,9 @@
             contextHighTokens: Number(el("#fp-high-tokens").val() || 8000),
             historyMaxExchanges: historyMax,
             streamingEnabled: el("#fp-streaming-enabled").prop("checked"),
+            requestTimeoutMs: Math.round(requestTimeoutSec * 1000),
             suppressContextWarnings: suppress,
+            redactionEnabled: redactionEnabled,
             customIntents: Array.isArray(currentSettings.customIntents)
                 ? currentSettings.customIntents : []
         };
@@ -1305,7 +1401,11 @@
         });
     }
 
-    function saveSettings(callback) {
+    // `announce` is true only for the explicit Save settings button — the
+    // many internal callers (Pre-flight check, Refresh models, custom intent
+    // add/remove) save as a side effect of some other action and already
+    // have their own feedback, so they stay silent here.
+    function saveSettings(callback, announce) {
         var payload = collectSettings();
         var list = payload.providers || [];
 
@@ -1316,7 +1416,9 @@
         });
         if (noUrl.length) {
             var urlNames = noUrl.map(function (p) { return p.providerName || "(unnamed)"; }).join(", ");
-            addMessage("error", "Cannot save: these provider(s) need a Base URL: " + urlNames + ".");
+            var noUrlMsg = "Cannot save: these provider(s) need a Base URL: " + urlNames + ".";
+            addMessage("error", noUrlMsg);
+            if (announce) { showSaveStatus(noUrlMsg, true); }
             showSettings();
             return;
         }
@@ -1329,7 +1431,9 @@
             return !p.providerName || !String(p.providerName).trim();
         });
         if (blankName.length) {
-            addMessage("error", "Cannot save: every provider needs a name.");
+            var blankNameMsg = "Cannot save: every provider needs a name.";
+            addMessage("error", blankNameMsg);
+            if (announce) { showSaveStatus(blankNameMsg, true); }
             showSettings();
             return;
         }
@@ -1343,18 +1447,29 @@
             seen[key] = true;
         });
         if (dupes.length) {
-            addMessage("error", "Cannot save: provider names must be unique. Duplicate: " + dupes.join(", ") + ".");
+            var dupesMsg = "Cannot save: provider names must be unique. Duplicate: " + dupes.join(", ") + ".";
+            addMessage("error", dupesMsg);
+            if (announce) { showSaveStatus(dupesMsg, true); }
             showSettings();
+            return;
+        }
+
+        // Nothing changed since the last load/save — skip the round trip.
+        if (announce && savedSettingsSnapshot !== null && JSON.stringify(payload) === savedSettingsSnapshot) {
+            showSaveStatus("No changes to save.");
+            if (callback) { callback(); }
             return;
         }
 
         ajaxJson("POST", "flowpilot/settings", payload, function (data) {
             fillSettings(data);
             addMessage("assistant", "Settings saved.");
+            if (announce) { showSaveStatus("Settings saved."); }
             updateSelectionStatus();
             if (callback) { callback(); }
         }, function (msg) {
             addMessage("error", "Unable to save FlowPilot settings: " + msg);
+            if (announce) { showSaveStatus("Unable to save: " + msg, true); }
         });
     }
 
@@ -1391,7 +1506,8 @@
             // way to reason about (or fix) auth configuration while protecting
             // nothing. Real credential VALUES are already excluded entirely via
             // INTERNAL_FIELDS.credentials.
-            if (SECRET_KEY.test(k) && typeof v === "string" && v.length > SECRET_NAME_MIN_LEN) {
+            if (currentSettings.redactionEnabled !== false &&
+                    SECRET_KEY.test(k) && typeof v === "string" && v.length > SECRET_NAME_MIN_LEN) {
                 out[k] = "[redacted: secret field, " + v.length + " chars]";
                 return;
             }
@@ -1794,13 +1910,16 @@
                    .addClass("fp-has-selection");
         }
 
-        // Size line: selection context + conversation history —
-        // whichever of the two apply right now.
+        el("#fp-preview-nodes").toggleClass("fp-hidden", count === 0);
+
+        // Size line: selection context + attached debug messages +
+        // conversation history.
         var contextTokens = liveCount > 0 ? estimateTokens(collectSelectionContext())
             : pinnedContext ? estimateTokens(pinnedContext) : 0;
+        var debugTokens = attachedDebugMessages.length ? estimateTokens(buildDebugMessagesForSend()) : 0;
         var historyPayload = buildHistoryPayload();
         var historyTokens = estimateTokens(historyPayload.messages);
-        var tokens = contextTokens + historyTokens;
+        var tokens = contextTokens + debugTokens + historyTokens;
 
         if (tokens === 0) {
             $size.text("").addClass("fp-hidden");
@@ -1810,6 +1929,7 @@
 
             var parts = [];
             if (contextTokens) { parts.push("context ~" + contextTokens.toLocaleString()); }
+            if (debugTokens) { parts.push("debug ~" + debugTokens.toLocaleString()); }
             if (historyTokens) {
                 parts.push("history ~" + historyTokens.toLocaleString() +
                     (historyPayload.truncated ? " (earlier messages omitted)" : ""));
@@ -1831,11 +1951,17 @@
         }
 
         // Secrets reminder (suppressible) — only relevant when a selection is
-        // attached as context.
-        if (count === 0 || currentSettings.suppressContextWarnings) {
+        // attached as context. When redaction is actually OFF, this can't be
+        // suppressed and gets a starker tooltip — at that point the warning is
+        // no longer "just in case", it's literally true.
+        var redactionOff = currentSettings.redactionEnabled === false;
+        if (count === 0 || (currentSettings.suppressContextWarnings && !redactionOff)) {
             $secrets.addClass("fp-hidden");
         } else {
-            $secrets.removeClass("fp-hidden");
+            $secrets.removeClass("fp-hidden").toggleClass("fp-secrets-status-off", redactionOff);
+            $secrets.attr("title", redactionOff
+                ? "Redaction is OFF — secret-shaped values are sent as-is, unredacted. Don't send credentials or proprietary data unless you trust this AI provider."
+                : "Context may include node config and code. Don't send credentials or proprietary data. Local/private AI recommended.");
         }
     }
 
@@ -1907,7 +2033,8 @@
         "- `/history` — open the Flight log (past conversations)\n" +
         "- `/settings` — open the Hangar (providers, behavior, safety)\n\n" +
         "Typing a shortcut with extra text, e.g. `/modify add a debug node`, switches mode and leaves the rest in the box so you can review before sending.\n\n" +
-        "- `/demo` — load a sample Generate request (a dad joke flow) into the compose box\n\n" +
+        "- `/demo` — load a sample Generate request (a dad joke flow) into the compose box\n" +
+        "- `/feedback` — bug report / feature request info\n\n" +
         "### Also worth knowing\n\n" +
         "- Action chips (paper-plane buttons) offer a one-click follow-up — review and send, nothing fires automatically.\n" +
         "- When I ask a clarifying question, I'll often offer quick-reply buttons (plus \"Other\" for your own answer) — clicking one sends it right away.\n" +
@@ -1918,6 +2045,17 @@
     // flow-generation capability end to end (HTTP request, status, debug)
     // with a small, fast-to-generate flow.
     var DEMO_PROMPT = "Using an online dad joke API (e.g. https://icanhazdadjoke.com/ with an \"Accept: application/json\" header), make an API call for a dad joke when triggered by an inject node. Set the node's status to show the joke text, and wire a debug node to output the joke itself.";
+
+    // /feedback: links back to the repo/issues, shown entirely client-side.
+    var FEEDBACK_TEXT = "## Thanks for flying with FlowPilot\n\n" +
+        "Bug? Rough edge? Idea for a feature? I'd love to hear about it — the " +
+        "human crew reads every report.\n\n" +
+        "- **Report an issue**: https://github.com/manny-est/flowpilot/issues\n" +
+        "- **Browse the repo**: https://github.com/manny-est/flowpilot\n\n" +
+        "A good report travels light but packs the essentials: your Node-RED " +
+        "version, the provider/model you're flying with, and the steps to " +
+        "reproduce. That's usually enough to get a fix off the ground.\n\n" +
+        "Safe travels.";
 
     var demoTypeTimer = null;
 
@@ -2001,6 +2139,10 @@
                 typeIntoPrompt(DEMO_PROMPT, function () {
                     el("#fp-send").addClass("fp-send-breathe");
                 });
+                break;
+            case "/feedback":
+                addMessage("assistant", FEEDBACK_TEXT);
+                if ($promptBox.length) { $promptBox.val(""); }
                 break;
             default:
                 addMessage("assistant", "Unrecognized command `" + command + "`. Type `/help` for the full list.");
@@ -2276,21 +2418,24 @@
 
     // Streaming chat. Posts with stream:true and reads the
     // SSE response body incrementally via fetch's ReadableStream. The
-    // bouncing "pending" indicator (already in the DOM from showPending) is
-    // converted in place into the assistant bubble and filled in as chunks
+    // bouncing "pending" indicator (already in the DOM from showPending)
+    // stays up until the first real delta arrives, then ensureBubble()
+    // swaps it for the assistant bubble that gets filled in as chunks
     // arrive — generate/modify/document never call this; their JSON envelope
     // can't be rendered until complete.
     function sendChatStream(payload) {
         var $box = el("#fp-messages");
         if (!$box.length) { return; }
 
-        var $msg = $box.find("#fp-pending");
+        // Bug #4: this used to grab the just-shown #fp-pending indicator and
+        // convert it into an empty bubble right here, synchronously, before
+        // fetch() even started — so the dots were destroyed in the same tick
+        // they were created and never got a chance to render. $msg/$text now
+        // start null and ensureBubble() (below) does the conversion lazily,
+        // on the FIRST actual delta — the dots stay visible for the entire
+        // wait until real content starts arriving.
+        var $msg = null;
         var $text = null;
-        if ($msg.length) {
-            $msg.removeAttr("id").empty();
-            $("<div>").addClass("fp-label").text("FLOWPILOT").appendTo($msg);
-            $text = $("<div>").addClass("fp-md").appendTo($msg);
-        }
 
         var fullText = "";
         var finalData = null;
@@ -2674,13 +2819,10 @@
         var $box = el("#fp-messages");
         if (!$box.length) { return; }
 
-        var $msg = $box.find("#fp-pending");
+        // See the matching comment in sendChatStream — same fix, same bug
+        // (#4): don't pre-convert #fp-pending before any data has arrived.
+        var $msg = null;
         var $text = null;
-        if ($msg.length) {
-            $msg.removeAttr("id").empty();
-            $("<div>").addClass("fp-label").text("FLOWPILOT").appendTo($msg);
-            $text = $("<div>").addClass("fp-md").appendTo($msg);
-        }
 
         var extractor = createExplanationExtractor();
         var finalData = null;
@@ -3968,6 +4110,7 @@
         var summary = [];
         var typeWarnings = [];
         var brokenWires = [];
+        var realWireCount = 0;
 
         nodes.forEach(function (n) {
             if (!n || !n.id || !n.type) { return; }
@@ -3984,12 +4127,22 @@
                 (Array.isArray(port) ? port : []).forEach(function (targetId) {
                     if (!ids[targetId]) {
                         brokenWires.push({ from: n.id, type: n.type, target: targetId });
+                    } else {
+                        realWireCount++;
                     }
                 });
             });
         });
 
-        return { summary: summary, typeWarnings: typeWarnings, brokenWires: brokenWires };
+        // A multi-node flow with zero connections anywhere is almost always
+        // a generation slip (the model omitted "wires" on every node) rather
+        // than something the user actually wanted — flag it, but don't
+        // block import; a handful of genuinely independent nodes is rare
+        // but not impossible.
+        var nonCommentCount = nodes.filter(function (n) { return n && n.type !== "comment"; }).length;
+        var noConnections = nonCommentCount > 1 && realWireCount === 0;
+
+        return { summary: summary, typeWarnings: typeWarnings, brokenWires: brokenWires, noConnections: noConnections };
     }
 
     // The generation prompt deliberately omits x/y ("the editor assigns those
@@ -4299,6 +4452,14 @@
             $list.append($li);
         });
 
+        if (v.noConnections) {
+            var $wireWarn = $("<div>").addClass("fp-warning fp-review-warning").appendTo($summaryPanel);
+            $("<strong>").text("⚠ These nodes aren't wired to each other.").appendTo($wireWarn);
+            $("<div>").text("None of the " + nodes.length + " generated nodes connect to one another — " +
+                "they'll land on the canvas disconnected. You can wire them manually, or ask FlowPilot " +
+                "to regenerate.").appendTo($wireWarn);
+        }
+
         if (v.typeWarnings.length) {
             var $warn = $("<div>").addClass("fp-warning fp-review-warning").appendTo($summaryPanel);
             $("<strong>").text("Type warnings — review before adding:").appendTo($warn);
@@ -4423,6 +4584,7 @@
                 '      </div>' +
                 '      <div class="fp-status-strip">' +
                 '        <span id="fp-selection-status" class="fp-selection-status">No nodes selected</span>' +
+                '        <a href="#" id="fp-preview-nodes" class="fp-preview-link fp-hidden" title="Show the exact sanitized node JSON that will be sent">Preview JSON</a>' +
                 '        <span id="fp-size-status" class="fp-size-status fp-hidden"></span>' +
                 '        <span id="fp-secrets-status" class="fp-secrets-status fp-hidden" title="Context may include node config and code. Don\'t send credentials or proprietary data. Local/private AI recommended.">⚠</span>' +
                 '        <span id="fp-debug-status" class="fp-debug-status fp-hidden"></span>' +
@@ -4435,14 +4597,14 @@
                 '  </div>' +
 
                 '  <div id="fp-settings-panel" class="fp-panel fp-hidden">' +
-                '    <div class="fp-warning">' +
-                '      <strong>Provider settings.</strong><br>' +
-                '      Stored locally under the Node-RED user directory in <code>flowpilot/settings.json</code>.' +
-                '    </div>' +
                 '    <div class="fp-form">' +
 
                 '      <details class="fp-settings-group" open>' +
                 '      <summary title="Hangar — where your AI providers are configured">Providers</summary>' +
+                '      <div class="fp-warning">' +
+                '        <strong>Provider settings.</strong><br>' +
+                '        Stored locally under the Node-RED user directory in <code>flowpilot/settings.json</code>.' +
+                '      </div>' +
                 '      <label>Active provider</label>' +
                 '      <select id="fp-provider-select"></select>' +
                 '      <div class="fp-provider-actions">' +
@@ -4461,6 +4623,9 @@
                 '      <div id="fp-models-hint" class="fp-consent-hint fp-hidden"></div>' +
                 '      <label>Temperature</label>' +
                 '      <input id="fp-temperature" type="number" min="0" max="2" step="0.1" placeholder="0.2">' +
+                '      <div class="fp-consent-hint">Controls randomness. Lower (e.g. 0.2) is more ' +
+                '        focused and consistent; higher is more creative and varied. 0.2 is a good ' +
+                '        default for flow generation.</div>' +
                 '      <div class="fp-settings-actions">' +
                 '        <button id="fp-test-provider" class="red-ui-button" type="button" title="Pre-flight check — save and send a quick test to this provider">Pre-flight check</button>' +
                 '        <button id="fp-refresh-models" class="red-ui-button" type="button" title="Save settings, then fetch this provider\'s model list via GET /v1/models">Refresh models</button>' +
@@ -4488,6 +4653,13 @@
                 '      </label>' +
                 '      <div class="fp-consent-hint">Only applies to chat replies — Generate, ' +
                 '        Document, and Modify always wait for the full response.</div>' +
+
+                '      <div class="fp-settings-section">Request timeout</div>' +
+                '      <label>Give up after (seconds)</label>' +
+                '      <input id="fp-request-timeout" type="number" min="5" step="5" placeholder="180">' +
+                '      <div class="fp-consent-hint">How long to wait for a provider response before ' +
+                '        giving up. Raise this if you\'re running a large local model on slow hardware ' +
+                '        (e.g. Ollama without a GPU) and seeing timeout errors.</div>' +
 
                 '      <div class="fp-settings-section">Custom intent buttons</div>' +
                 '      <div class="fp-consent-hint">Add your own one-click prompt buttons. ' +
@@ -4519,10 +4691,25 @@
                 '        <strong>I understand the risk</strong> below. ' +
                 '        Anything you send may leave this Node-RED instance.</div>' +
                 '      <input id="fp-suppress-confirm" type="text" placeholder="Type: I understand the risk">' +
+
+                '      <div class="fp-settings-section">Redaction</div>' +
+                '      <label class="fp-checkbox-row">' +
+                '        <input id="fp-redaction-disabled" type="checkbox"> ' +
+                '        Disable secret-shaped-value redaction' +
+                '      </label>' +
+                '      <div class="fp-consent-hint">By default, values that look like secrets ' +
+                '        (passwords, tokens, API keys) are replaced with a placeholder before sending. ' +
+                '        This opt-out is intended for environments using local or private AIs. Debug ' +
+                '        nodes and context may share confidential data, including secret keys, and ' +
+                '        credentials. Use at your own risk! Node-RED\'s own credential store is never ' +
+                '        sent either way. To disable, check the box and type ' +
+                '        <strong>disable redaction</strong> below.</div>' +
+                '      <input id="fp-redaction-confirm" type="text" placeholder="Type: disable redaction">' +
                 '      </details>' +
 
                 '      <div class="fp-settings-actions">' +
                 '        <button id="fp-save-settings" class="red-ui-button red-ui-button-primary" type="button">Save settings</button>' +
+                '        <span id="fp-save-status" class="fp-save-status fp-hidden"></span>' +
                 '      </div>' +
                 '    </div>' +
                 '  </div>' +
@@ -4560,6 +4747,10 @@
             content.find("#fp-clear-chat").on("click", clearChat);
             content.find("#fp-recall").on("click", recallSearch);
             content.find("#fp-debug-log").on("click", showDebugMessages);
+            content.find("#fp-preview-nodes").on("click", function (ev) {
+                ev.preventDefault();
+                showJsonPreview("Node JSON preview — exactly what will be sent", resolveCurrentSelectionContext());
+            });
 
             // Subscribe once to the same RED.comms "debug" topic the built-in
             // Debug sidebar uses, to buffer recent messages locally for
@@ -4614,7 +4805,7 @@
             });
 
             content.find("#fp-save-settings").on("click", function () {
-                saveSettings();
+                saveSettings(null, true);
             });
             content.find("#fp-add-intent").on("click", function () {
                 addCustomIntent();
@@ -5402,6 +5593,12 @@
     flex: 0 0 auto;
 }
 
+.fp-secrets-status-off {
+    background: rgba(192, 57, 43, 0.18);
+    border-color: rgba(192, 57, 43, 0.6);
+    color: #c0392b;
+}
+
 .fp-debug-status {
     font-size: 12px;
     color: var(--red-ui-secondary-text-color, #888);
@@ -5416,6 +5613,16 @@
 }
 
 .fp-debug-status a:hover {
+    text-decoration: underline;
+}
+
+.fp-preview-link {
+    font-size: 12px;
+    color: var(--red-ui-secondary-text-color, #888);
+    text-decoration: none;
+}
+
+.fp-preview-link:hover {
     text-decoration: underline;
 }
 
@@ -5586,6 +5793,16 @@
 .fp-settings-actions {
     display: flex;
     gap: 8px;
+}
+
+.fp-save-status {
+    font-size: 12px;
+    align-self: center;
+    color: var(--red-ui-secondary-text-color, #888);
+}
+
+.fp-save-status-error {
+    color: #c0392b;
 }
 
 .fp-form {

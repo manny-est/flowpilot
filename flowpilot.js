@@ -406,7 +406,7 @@ module.exports = function flowPilotRuntime(RED) {
   // Returns null when there's no selection — used by both /chat and
   // /generate so the two describe context identically and never drift.
   // ---------------------------------------------------------------------
-  function describeSelectionContext(context) {
+  function describeSelectionContext(context, redactionEnabled) {
     const nodes = context && Array.isArray(context.nodes) ? context.nodes : [];
     const debugMessages = context && Array.isArray(context.debugMessages) ? context.debugMessages : [];
     if (nodes.length === 0 && debugMessages.length === 0) { return null; }
@@ -416,10 +416,26 @@ module.exports = function flowPilotRuntime(RED) {
     const perNode = Array.isArray(connections.perNode) ? connections.perNode : [];
     const subFlowCount = (typeof connections.subFlowCount === "number") ? connections.subFlowCount : 0;
 
+    // Node-RED's own credential store (config node "credentials" fields) is
+    // dropped by the frontend's sanitizer unconditionally — that part never
+    // changes. redactionEnabled only controls the SEPARATE secret-shaped-value
+    // scrubbing (password/token/apiKey-looking fields elsewhere in a node's
+    // config) — tell the model the truth about which protection is active.
+    const credentialNote = redactionEnabled === false
+      ? "Redaction is OFF for this session — context may contain sensitive " +
+        "values the user chose to share (e.g. embedded API keys or tokens); " +
+        "handle carefully and never volunteer them. Node-RED's separate " +
+        "credential store is still never included. This is a setting in the " +
+        "editor's FlowPilot Settings panel (Context & Safety section) — you " +
+        "have no ability to read, change, or report on it beyond this note; " +
+        "if the user wants to turn it back on, tell them to uncheck it there " +
+        "(it requires re-confirming a type-to-confirm phrase, by design)."
+      : "This is sanitized configuration; credentials are redacted.";
+
     let content = "";
     if (nodes.length > 0) {
       content += "The user has selected the following Node-RED nodes as context. " +
-                "This is sanitized configuration; credentials are redacted.\n\n" +
+                credentialNote + "\n\n" +
                 "Nodes:\n```json\n" + JSON.stringify(nodes) + "\n```";
       if (edges.length > 0) {
         content += "\n\nConnections — directed edges by node id (a node's wires " +
@@ -464,7 +480,7 @@ module.exports = function flowPilotRuntime(RED) {
     const settings = storage.getSettings();
     const activeProvider = storage.getActiveProvider(settings);
 
-    const described = describeSelectionContext(context);
+    const described = describeSelectionContext(context, settings.redactionEnabled);
     const messages = buildMessages(
       settings.systemPrompt || "You are FlowPilot, a Node-RED development assistant.",
       history, historyTruncated, described, prompt
@@ -501,7 +517,7 @@ module.exports = function flowPilotRuntime(RED) {
     const settings = storage.getSettings();
     const activeProvider = storage.getActiveProvider(settings);
 
-    const described = describeSelectionContext(context);
+    const described = describeSelectionContext(context, settings.redactionEnabled);
     const messages = buildMessages(
       settings.systemPrompt || "You are FlowPilot, a Node-RED development assistant.",
       history, historyTruncated, described, prompt
@@ -735,7 +751,7 @@ module.exports = function flowPilotRuntime(RED) {
 
       if (mode !== "chat") {
         const context = req.body.context;
-        const described = describeSelectionContext(context);
+        const described = describeSelectionContext(context, settings.redactionEnabled);
         const generated = processGenerationContent(result.content || "", result, messages, mode, described, activeProvider);
         recordTranscriptTurn(req.body.conversationId, mode, req.body.prompt || null, transcriptTextFromGenerationResult(generated));
         const finalize = (mode === "modify")
@@ -954,7 +970,7 @@ module.exports = function flowPilotRuntime(RED) {
   function buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated) {
     const settings = storage.getSettings();
     const activeProvider = storage.getActiveProvider(settings);
-    const described = describeSelectionContext(context);
+    const described = describeSelectionContext(context, settings.redactionEnabled);
     const messages = buildMessages(systemPrompt, history, historyTruncated, described, userPrompt);
     return { activeProvider, described, messages };
   }
@@ -1558,7 +1574,7 @@ module.exports = function flowPilotRuntime(RED) {
 
   RED.httpAdmin.post("/flowpilot/document", RED.auth.needsPermission("settings.write"), async function (req, res) {
     const context = req.body && req.body.context;
-    const described = describeSelectionContext(context);
+    const described = describeSelectionContext(context, storage.getSettings().redactionEnabled);
 
     if (!described) {
       return res.status(400).json({ error: "Select the node(s) you want documented first." });
@@ -1598,7 +1614,7 @@ module.exports = function flowPilotRuntime(RED) {
 
   RED.httpAdmin.post("/flowpilot/modify", RED.auth.needsPermission("settings.write"), async function (req, res) {
     const context = req.body && req.body.context;
-    const described = describeSelectionContext(context);
+    const described = describeSelectionContext(context, storage.getSettings().redactionEnabled);
 
     if (!described) {
       return res.status(400).json({ error: "Select the node(s) you want to modify first." });
