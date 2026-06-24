@@ -373,6 +373,7 @@
         if (armedExecuteAction === "generate") { label = "Send (Generate)"; }
         else if (armedExecuteAction === "document") { label = "Send (Document)"; }
         else if (armedExecuteAction === "modify") { label = "Send (Modify)"; }
+        else if (armedExecuteAction === "build") { label = "Send (Build)"; }
         el("#fp-send").text(label).addClass("fp-send-armed");
         el(".fp-compose").addClass("fp-mode-execute");
     }
@@ -1993,7 +1994,8 @@
         } else if (liveCount === 0 && pinnedCount > 0) {
             var actionLabel = armedExecuteAction === "generate" ? "Generate"
                 : armedExecuteAction === "document" ? "Document"
-                : armedExecuteAction === "modify" ? "Modify" : "Execute";
+                : armedExecuteAction === "modify" ? "Modify"
+                : armedExecuteAction === "build" ? "Build" : "Execute";
             $status.text("Pinned: " + count + (count === 1 ? " node" : " nodes") +
                          " for " + actionLabel + " — will be sent as context")
                    .addClass("fp-has-selection");
@@ -2199,6 +2201,12 @@
                 addMessage("assistant", "Cleared for **Generate** — describe the flow you'd like me to build, then send.");
                 if ($promptBox.length) { $promptBox.val(rest); }
                 break;
+            case "/build":
+                armExecuteAction("build");
+                addMessage("assistant", "Cleared for **Build** — describe the goal. I'll plan, propose a first step, " +
+                    "and after you apply/deploy/test it, walk through fix cycles with you until it works or we hit the attempt limit.");
+                if ($promptBox.length) { $promptBox.val(rest); }
+                break;
             case "/document":
                 armExecuteAction("document");
                 addMessage("assistant", "Cleared for **Document** — select the node(s) you want explained, then send.");
@@ -2292,6 +2300,8 @@
 
         if (armedExecuteAction === "generate") {
             generate();
+        } else if (armedExecuteAction === "build") {
+            buildFlow();
         } else if (armedExecuteAction === "document") {
             documentFlow();
         } else if (armedExecuteAction === "modify") {
@@ -3065,11 +3075,15 @@
 
     // Request a generated flow fragment and show it for review, validation,
     // and import via addGeneratedReview.
-    function generate() {
+    // Shared by Generate and Build — Build's first step is Generate-shaped
+    // (see lib/build-system-prompt.js): same envelope, same review/import
+    // pipeline. Only the endpoint, audit-mode name, and the "user" chat
+    // bubble's label prefix differ.
+    function runGenerateLikeAction(endpointName, mode, labelPrefix, onResult) {
         var $promptBox = el("#fp-prompt");
         var prompt = $promptBox.length ? $promptBox.val().trim() : "";
         if (!prompt) {
-            addMessage("error", "Describe what you'd like to generate first.");
+            addMessage("error", "Describe what you'd like to " + mode + " first.");
             return;
         }
 
@@ -3078,7 +3092,7 @@
         // Falls back to the pinned selection if nothing is currently
         // selected, so follow-up turns need no reselection.
         var context = attachDebugContext(collectSelectionContext(activeSelectionIds()));
-        var label = "Generate: " + prompt + contextAttachmentNote(context);
+        var label = labelPrefix + prompt + contextAttachmentNote(context);
         addMessage("user", label);
         if (prompt === DEMO_PROMPT) {
             addMessage("assistant", "This is a large request — AI providers may take 20+ seconds to respond.");
@@ -3099,7 +3113,7 @@
             conversationId: conversationId
         };
 
-        function onGenerateError(msg, xhr) {
+        function onError(msg, xhr) {
             hidePending();
             // 422 with raw text means the model replied but we couldn't parse a
             // flow; show the raw so the user can see what happened.
@@ -3107,28 +3121,44 @@
             handleExecuteError(msg, raw);
         }
 
+        var fullEndpoint = "flowpilot/" + endpointName;
+
         // Explore-then-propose: the model may call read
         // tools (e.g. read_node, search_flow) before producing the
         // generation envelope; the loop's final response still goes through
-        // the same validate/review pipeline via handleSimpleGenerationResult.
+        // the same validate/review pipeline via onResult.
         if (isAgentLoop) {
-            runAgentLoop("flowpilot/generate", payload,
-                { mode: "generate", context: context, prompt: prompt },
-                handleSimpleGenerationResult, onGenerateError);
+            runAgentLoop(fullEndpoint, payload,
+                { mode: mode, context: context, prompt: prompt },
+                onResult, onError);
             return;
         }
 
         // Stream the envelope's "explanation" as it's generated; the
         // "flow" JSON is buffered server-side and arrives as a single
         // validated `final` event, handled identically to the non-streaming
-        // path via handleSimpleGenerationResult.
+        // path via onResult.
         if (currentSettings.streamingEnabled) {
             payload.stream = true;
-            sendExecuteStream("generate", payload, handleSimpleGenerationResult);
+            sendExecuteStream(endpointName, payload, onResult);
             return;
         }
 
-        ajaxJson("POST", "flowpilot/generate", payload, handleSimpleGenerationResult, onGenerateError);
+        ajaxJson("POST", fullEndpoint, payload, onResult, onError);
+    }
+
+    function generate() {
+        runGenerateLikeAction("generate", "generate", "Generate: ", handleSimpleGenerationResult);
+    }
+
+    // /build's first step. Reuses Generate's pipeline wholesale — the loop
+    // state machine that turns this into an actual multi-step build-test-fix
+    // cycle (apply -> deploy -> attach debug -> AI review -> fix/done) is a
+    // separate, larger piece not wired up yet. For now /build behaves
+    // exactly like Generate, just with the planning preamble in
+    // build-system-prompt.js and its own endpoint/audit-mode name.
+    function buildFlow() {
+        runGenerateLikeAction("build", "build", "Build: ", handleSimpleGenerationResult);
     }
 
     // Document feature: explain the SELECTED nodes and produce a single
