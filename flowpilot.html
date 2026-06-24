@@ -4969,8 +4969,11 @@
                 '        <input id="fp-streaming-enabled" type="checkbox"> ' +
                 '        Stream chat replies as they generate' +
                 '      </label>' +
-                '      <div class="fp-consent-hint">Only applies to chat replies — Generate, ' +
-                '        Document, and Modify always wait for the full response.</div>' +
+                '      <div class="fp-consent-hint">Applies to every mode (Chat, Generate, ' +
+                '        Document, Modify, Build) the same way — but only when the active ' +
+                '        provider doesn\'t support tool/function calling. Tool-capable ' +
+                '        providers always wait for the full response regardless of this ' +
+                '        setting, since the read-tool loop has no streaming variant.</div>' +
 
                 '      <div class="fp-settings-section">Request timeout</div>' +
                 '      <label>Give up after (seconds)</label>' +
