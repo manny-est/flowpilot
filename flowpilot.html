@@ -1266,6 +1266,7 @@
         el("#fp-history-max").val(settings.historyMaxExchanges !== undefined ? settings.historyMaxExchanges : 10);
         el("#fp-streaming-enabled").prop("checked", !!settings.streamingEnabled);
         el("#fp-request-timeout").val(Math.round((settings.requestTimeoutMs !== undefined ? settings.requestTimeoutMs : 180000) / 1000));
+        el("#fp-agent-loop-max-iterations").val(settings.agentLoopMaxIterations !== undefined ? settings.agentLoopMaxIterations : 5);
         el("#fp-suppress-warnings").prop("checked", !!settings.suppressContextWarnings);
         el("#fp-redaction-disabled").prop("checked", settings.redactionEnabled === false);
 
@@ -1346,6 +1347,9 @@
         var personaIntensity = Number(el("#fp-persona-intensity").val());
         if (!isFinite(personaIntensity) || personaIntensity < 1 || personaIntensity > 10) { personaIntensity = 3; }
 
+        var agentLoopMaxIterations = Number(el("#fp-agent-loop-max-iterations").val());
+        if (!isFinite(agentLoopMaxIterations) || agentLoopMaxIterations < 1) { agentLoopMaxIterations = 5; }
+
         return {
             providers: providersList(),
             activeProviderId: currentSettings.activeProviderId,
@@ -1356,6 +1360,7 @@
             historyMaxExchanges: historyMax,
             streamingEnabled: el("#fp-streaming-enabled").prop("checked"),
             requestTimeoutMs: Math.round(requestTimeoutSec * 1000),
+            agentLoopMaxIterations: agentLoopMaxIterations,
             suppressContextWarnings: suppress,
             redactionEnabled: redactionEnabled,
             customIntents: Array.isArray(currentSettings.customIntents)
@@ -4787,6 +4792,13 @@
                 '      <div class="fp-consent-hint">How long to wait for a provider response before ' +
                 '        giving up. Raise this if you\'re running a large local model on slow hardware ' +
                 '        (e.g. Ollama without a GPU) and seeing timeout errors.</div>' +
+
+                '      <div class="fp-settings-section">Agentic build loop</div>' +
+                '      <label>Max build/fix attempts</label>' +
+                '      <input id="fp-agent-loop-max-iterations" type="number" min="1" max="20" step="1" placeholder="5">' +
+                '      <div class="fp-consent-hint">When using <code>/build</code>, how many build → deploy → ' +
+                '        test → fix cycles to try before stopping with an honest "couldn\'t fully verify" ' +
+                '        instead of proposing another fix.</div>' +
 
                 '      <div class="fp-settings-section">Custom intent buttons</div>' +
                 '      <div class="fp-consent-hint">Add your own one-click prompt buttons. ' +

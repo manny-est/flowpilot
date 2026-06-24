@@ -4,6 +4,7 @@ const provider = require("./lib/provider-openai-compatible");
 const generationSystemPrompt = require("./lib/generation-system-prompt");
 const documentSystemPrompt = require("./lib/document-system-prompt");
 const modifySystemPrompt = require("./lib/modify-system-prompt");
+const buildSystemPrompt = require("./lib/build-system-prompt");
 const personaPrompt = require("./lib/persona-prompt");
 
 module.exports = function flowPilotRuntime(RED) {
@@ -1585,6 +1586,46 @@ module.exports = function flowPilotRuntime(RED) {
       res.status(status).json(body);
     } catch (err) {
       sendGenerationError(res, "generate", err);
+    }
+  });
+
+  // First step of the agentic /build loop. Envelope-shaped and validated
+  // identically to /generate (processGenerationContent only special-cases
+  // auditAction === "modify"; "build" falls through to the same flow-array
+  // handling "generate"/"document" already use) — the only difference is
+  // buildSystemPrompt's planning preamble. Later loop iterations (fix
+  // proposals) go through /flowpilot/modify instead, not this route.
+  RED.httpAdmin.post("/flowpilot/build", RED.auth.needsPermission("settings.write"), async function (req, res) {
+    const prompt = req.body && req.body.prompt;
+
+    if (!prompt || !String(prompt).trim()) {
+      return res.status(400).json({ error: "A description of what to build is required." });
+    }
+
+    const history = sanitizeHistory(req.body.history);
+    const historyTruncated = !!req.body.historyTruncated;
+
+    if (req.body.stream) {
+      return runExecuteStream(
+        req, res, buildSystemPrompt, "build", prompt, req.body && req.body.context,
+        history, historyTruncated, finalizeSimpleGeneration, req.body.conversationId
+      );
+    }
+
+    try {
+      const useTools = !!req.body.tools;
+      const built = await runFlowGeneration(
+        buildSystemPrompt, "build", prompt, req.body && req.body.context,
+        history, historyTruncated, useTools
+      );
+      if (built.toolCalls) {
+        return res.json({ toolCalls: built.toolCalls, messages: built.messages, content: built.content, usage: built.usage });
+      }
+      recordTranscriptTurn(req.body.conversationId, "build", prompt, transcriptTextFromGenerationResult(built));
+      const { status, body } = finalizeSimpleGeneration(built);
+      res.status(status).json(body);
+    } catch (err) {
+      sendGenerationError(res, "build", err);
     }
   });
 
