@@ -67,6 +67,23 @@
         conversationHistory.push({ role: role, content: String(content) });
     }
 
+    // Every turn pushes its "user" entry before the request goes out (see
+    // send()'s comment), but a stopped/errored/empty turn never gets a
+    // matching assistant reply. Left alone, that dangling "user" entry sits
+    // at the end of conversationHistory and the NEXT turn's own "user" push
+    // lands right after it — two consecutive "user" entries with no
+    // assistant turn between them, corrupting the role-alternation shape of
+    // every request built from history from then on. Called from every
+    // failure exit (chat and generate/document/modify/build alike) to undo
+    // exactly that push. Safe even if called when nothing needs undoing: it
+    // only pops when the most recent entry is a "user" turn.
+    function popDanglingUserHistory() {
+        var last = conversationHistory[conversationHistory.length - 1];
+        if (last && last.role === "user") {
+            conversationHistory.pop();
+        }
+    }
+
     // ---------------------------------------------------------------------
     // Secret detection — shared by the node-selection sanitizer (below)
     // and the live debug-message redactor (next section). Two
@@ -2401,6 +2418,7 @@
 
         function handleSendError(msg) {
             hidePending();
+            if (isChat) { popDanglingUserHistory(); }
             addMessage("error", msg);
             setBusy(false);
         }
@@ -2584,6 +2602,7 @@
             hidePending();
             if (!fullText) {
                 if ($msg && $msg.length) { $msg.remove(); }
+                popDanglingUserHistory();
                 addMessage("error", "No response received from the provider.");
             } else {
                 pushHistory("assistant", fullText);
@@ -2599,6 +2618,7 @@
         function fail(err) {
             hidePending();
             if ($msg && $msg.length) { $msg.remove(); }
+            popDanglingUserHistory();
             addMessage("error", (err && err.message) ? err.message : String(err));
             setBusy(false);
         }
@@ -2739,6 +2759,7 @@
     // with raw text means the model replied but we couldn't parse/validate a
     // flow; show the raw so the user can see what happened.
     function handleExecuteError(msg, raw) {
+        popDanglingUserHistory();
         addMessage("error", msg);
         if (raw) { addGeneratedJson(raw, true); }
         setBusy(false);
