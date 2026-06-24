@@ -870,7 +870,11 @@
         $("<div>").addClass("fp-debug-warning").text("Debug payloads can contain credentials from connected " +
             "systems. Common secret patterns are redacted automatically, but review before attaching.").appendTo($msg);
 
-        debugMessageBuffer.slice().reverse().forEach(function (entry) {
+        // Oldest first, newest last — matches the chat panel's natural
+        // top-to-bottom, auto-scroll-to-bottom behavior, so the most recent
+        // message is immediately visible without scrolling up past everything
+        // else. debugMessageBuffer is already append-ordered (oldest-first).
+        debugMessageBuffer.slice().forEach(function (entry) {
             var $item = $("<div>").addClass("fp-recall-item");
             var when = new Date(entry.timestamp).toLocaleTimeString();
             var meta = when + " · " + entry.name + (entry.topic ? " · topic: " + entry.topic : "");
@@ -927,8 +931,31 @@
         }).join("");
     }
 
-    // Block-level markdown: fenced code blocks, headings, bullet/numbered
-    // lists, and paragraphs (consecutive lines joined with <br>).
+    // Unique per-block id so the delegated copy-button handler (bound once,
+    // see content.find("#fp-messages").on("click", ".fp-code-copy", ...))
+    // can find the right <pre> — chat messages are injected as raw HTML
+    // strings via .html(), so a per-element .on() bind at construction time
+    // isn't possible here the way it is for the Generate review panel's
+    // JSON-tab copy button.
+    var nextCodeBlockId = 1;
+
+    // GFM table helpers, used by renderMarkdown below.
+    function isTableSeparatorRow(line) {
+        var trimmed = line.trim();
+        if (!trimmed) { return false; }
+        return /^\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?$/.test(trimmed);
+    }
+
+    function splitTableRow(line) {
+        var trimmed = line.trim();
+        if (trimmed.charAt(0) === "|") { trimmed = trimmed.slice(1); }
+        if (trimmed.charAt(trimmed.length - 1) === "|") { trimmed = trimmed.slice(0, -1); }
+        return trimmed.split("|").map(function (c) { return c.trim(); });
+    }
+
+    // Block-level markdown: fenced code blocks, headings, tables,
+    // bullet/numbered lists, and paragraphs (consecutive lines joined with
+    // <br>).
     function renderMarkdown(raw) {
         var lines = String(raw || "").split("\n");
         var html = "";
@@ -951,16 +978,26 @@
         while (i < lines.length) {
             var line = lines[i];
 
-            var fence = line.match(/^```(\w*)\s*$/);
+            // Leading whitespace allowed: models commonly indent a fenced
+            // block nested under a numbered/bulleted list item (e.g. "1. Try
+            // this:\n   ```bash\n   curl ...\n   ```"). An anchored-at-column-0
+            // regex misses that entirely, so the fence markers and everything
+            // inside fall through to plain paragraph text instead of a code
+            // block — exactly the "code blocks failed to load" bug.
+            var fence = line.match(/^\s*```(\w*)\s*$/);
             if (fence) {
                 flushPara(); closeList();
                 var codeLines = [];
                 i++;
-                while (i < lines.length && !/^```\s*$/.test(lines[i])) {
+                while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) {
                     codeLines.push(lines[i]);
                     i++;
                 }
-                html += "<pre><code>" + escapeHtml(codeLines.join("\n")) + "</code></pre>";
+                var codeBlockId = "fp-code-" + (nextCodeBlockId++);
+                html += "<div class=\"fp-code-toolbar\">" +
+                    "<button class=\"fp-code-copy red-ui-button red-ui-button-small\" type=\"button\" data-code-id=\"" + codeBlockId + "\">Copy</button>" +
+                    "</div>" +
+                    "<pre id=\"" + codeBlockId + "\"><code>" + escapeHtml(codeLines.join("\n")) + "</code></pre>";
                 i++;
                 continue;
             }
@@ -971,6 +1008,34 @@
                 var level = Math.min(6, heading[1].length + 2);
                 html += "<h" + level + ">" + renderInlineMarkdown(escapeHtml(heading[2])) + "</h" + level + ">";
                 i++;
+                continue;
+            }
+
+            // GFM-style pipe table: a header row immediately followed by a
+            // separator row (---/:--/--:), then zero or more body rows. Models
+            // reach for tables constantly in comparison-style answers; without
+            // this, every row just fell through to a paragraph line, showing
+            // the raw "| a | b |" syntax verbatim.
+            if (line.indexOf("|") !== -1 && i + 1 < lines.length && isTableSeparatorRow(lines[i + 1])) {
+                flushPara(); closeList();
+                var headerCells = splitTableRow(line);
+                i += 2;
+                var bodyRows = [];
+                while (i < lines.length && lines[i].trim() && lines[i].indexOf("|") !== -1) {
+                    bodyRows.push(splitTableRow(lines[i]));
+                    i++;
+                }
+                html += "<table><thead><tr>" +
+                    headerCells.map(function (c) {
+                        return "<th>" + renderInlineMarkdown(escapeHtml(c)) + "</th>";
+                    }).join("") +
+                    "</tr></thead><tbody>" +
+                    bodyRows.map(function (row) {
+                        return "<tr>" + row.map(function (c) {
+                            return "<td>" + renderInlineMarkdown(escapeHtml(c)) + "</td>";
+                        }).join("") + "</tr>";
+                    }).join("") +
+                    "</tbody></table>";
                 continue;
             }
 
@@ -1169,6 +1234,23 @@
         el("#fp-test-provider").prop("disabled", !(p.model && String(p.model).trim()));
     }
 
+    // Short descriptive band shown under the Personality slider, matching
+    // the reference points lib/persona-prompt.js gives the model.
+    function personaLabelFor(n) {
+        n = Number(n);
+        if (n <= 1) { return "Plain engineer — no aviation language at all."; }
+        if (n <= 4) { return "Subtle co-pilot (default) — light, occasional flavor."; }
+        if (n <= 7) { return "Noticeable captain energy — more frequent, more colorful."; }
+        if (n <= 9) { return "Heavy captain energy — leans hard into the bit."; }
+        return "Full captain — comically over-the-top.";
+    }
+
+    function updatePersonaLabel() {
+        var n = el("#fp-persona-intensity").val();
+        el("#fp-persona-value").text(n);
+        el("#fp-persona-label").text(personaLabelFor(n));
+    }
+
     function fillSettings(settings) {
         settings = settings || {};
         currentSettings = settings;
@@ -1177,6 +1259,8 @@
         fillProviderFields(activeProvider());
 
         el("#fp-system-prompt").val(settings.systemPrompt || "");
+        el("#fp-persona-intensity").val(settings.personaIntensity !== undefined ? settings.personaIntensity : 3);
+        updatePersonaLabel();
         el("#fp-warn-tokens").val(settings.contextWarnTokens || 4000);
         el("#fp-high-tokens").val(settings.contextHighTokens || 8000);
         el("#fp-history-max").val(settings.historyMaxExchanges !== undefined ? settings.historyMaxExchanges : 10);
@@ -1259,10 +1343,14 @@
         var requestTimeoutSec = Number(el("#fp-request-timeout").val());
         if (!isFinite(requestTimeoutSec) || requestTimeoutSec < 5) { requestTimeoutSec = 180; }
 
+        var personaIntensity = Number(el("#fp-persona-intensity").val());
+        if (!isFinite(personaIntensity) || personaIntensity < 1 || personaIntensity > 10) { personaIntensity = 3; }
+
         return {
             providers: providersList(),
             activeProviderId: currentSettings.activeProviderId,
             systemPrompt: el("#fp-system-prompt").val(),
+            personaIntensity: personaIntensity,
             contextWarnTokens: Number(el("#fp-warn-tokens").val() || 4000),
             contextHighTokens: Number(el("#fp-high-tokens").val() || 8000),
             historyMaxExchanges: historyMax,
@@ -2034,7 +2122,8 @@
         "- `/settings` — open the Hangar (providers, behavior, safety)\n\n" +
         "Typing a shortcut with extra text, e.g. `/modify add a debug node`, switches mode and leaves the rest in the box so you can review before sending.\n\n" +
         "- `/demo` — load a sample Generate request (a dad joke flow) into the compose box\n" +
-        "- `/feedback` — bug report / feature request info\n\n" +
+        "- `/feedback` — bug report / feature request info\n" +
+        "- `/compact` — hide labels on the selected node(s) (icon-only); `/expand` restores them. Instant, no AI involved — one Ctrl+Z undoes it.\n\n" +
         "### Also worth knowing\n\n" +
         "- Action chips (paper-plane buttons) offer a one-click follow-up — review and send, nothing fires automatically.\n" +
         "- When I ask a clarifying question, I'll often offer quick-reply buttons (plus \"Other\" for your own answer) — clicking one sends it right away.\n" +
@@ -2142,6 +2231,34 @@
                 break;
             case "/feedback":
                 addMessage("assistant", FEEDBACK_TEXT);
+                if ($promptBox.length) { $promptBox.val(""); }
+                break;
+            // Deterministic, no LLM round-trip: just invokes Node-RED's own
+            // native "show/hide selected node labels" action (RED.actions
+            // "core:show-selected-node-labels" / "core:hide-selected-node-
+            // labels", confirmed present in both NR4 and NR5 — the same
+            // action a right-click context menu item triggers). Reusing it
+            // outright means group-member expansion, no-op skipping, and
+            // batching every affected node into ONE compound undo step are
+            // already handled correctly — nothing to reimplement.
+            case "/compact":
+            case "/expand":
+                var sel = (RED.view && RED.view.selection) ? RED.view.selection() : null;
+                var selCount = (sel && sel.nodes) ? sel.nodes.length : 0;
+                if (selCount === 0) {
+                    addMessage("error", "Select one or more nodes first.");
+                    if ($promptBox.length) { $promptBox.val(""); }
+                    break;
+                }
+                if (command === "/expand") {
+                    RED.actions.invoke("core:show-selected-node-labels");
+                    addMessage("assistant", "Touchdown — expanded " + selCount +
+                        " node label" + (selCount === 1 ? "" : "s") + ". Ctrl+Z to undo.");
+                } else {
+                    RED.actions.invoke("core:hide-selected-node-labels");
+                    addMessage("assistant", "Touchdown — compacted " + selCount +
+                        " node label" + (selCount === 1 ? "" : "s") + ". Ctrl+Z to undo.");
+                }
                 if ($promptBox.length) { $promptBox.val(""); }
                 break;
             default:
@@ -4640,6 +4757,16 @@
                 '        <button id="fp-reset-system-prompt" class="red-ui-button" type="button" title="Replace this text with FlowPilot\'s current built-in default — useful after an update adds new instructions">Reset to default</button>' +
                 '      </div>' +
 
+                '      <div class="fp-settings-section">Personality</div>' +
+                '      <label>Persona intensity: <span id="fp-persona-value">3</span>/10</label>' +
+                '      <input id="fp-persona-intensity" type="range" min="1" max="10" step="1">' +
+                '      <div id="fp-persona-label" class="fp-consent-hint"></div>' +
+                '      <div class="fp-consent-hint">Chat only. Scales the AI\'s voice at greetings, ' +
+                '        capability questions, and brief transitions — 1 is a plain Node-RED engineer, ' +
+                '        10 is a comically over-the-top airline captain who happens to be a Node-RED ' +
+                '        expert. Explanations, troubleshooting, and errors always stay plain regardless ' +
+                '        of this setting. Generate, Document, and Modify are unaffected.</div>' +
+
                 '      <div class="fp-settings-section">Conversation memory</div>' +
                 '      <label>Remember last N exchanges</label>' +
                 '      <input id="fp-history-max" type="number" min="0" step="1" placeholder="10">' +
@@ -4766,6 +4893,14 @@
                 fpChatSnappedToBottom = (this.scrollHeight - this.scrollTop - this.clientHeight) <= FP_SCROLL_SNAP_PX;
             });
 
+            // Delegated: code blocks are injected as raw HTML (renderMarkdown
+            // -> .html()), so individual buttons never exist at bind time.
+            content.find("#fp-messages").on("click", ".fp-code-copy", function () {
+                var $btn = $(this);
+                var $pre = el("#" + $btn.attr("data-code-id"));
+                if ($pre.length) { copyToClipboard($btn, $pre.text()); }
+            });
+
             content.find("#fp-clear-prompt").on("click", function () {
                 el("#fp-prompt").val("").focus();
             });
@@ -4798,6 +4933,7 @@
             content.find("#fp-test-provider").on("click", function () { testProvider(); });
             content.find("#fp-refresh-models").on("click", function () { refreshModels(); });
             content.find("#fp-reset-system-prompt").on("click", function () { resetSystemPrompt(); });
+            content.find("#fp-persona-intensity").on("input", updatePersonaLabel);
 
             // Re-enable Test provider live as the user types a model.
             content.find("#fp-model").on("input", function () {
@@ -5050,8 +5186,34 @@
     background: none;
     padding: 0;
 }
+.fp-md .fp-code-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 2px;
+}
 .fp-md a {
     color: var(--red-ui-text-color-link, #1f88e5);
+}
+.fp-md table {
+    margin: 0 0 8px 0;
+    border-collapse: collapse;
+    width: 100%;
+    overflow-x: auto;
+    display: block;
+}
+.fp-md table tbody, .fp-md table thead {
+    display: table;
+    width: 100%;
+    table-layout: auto;
+}
+.fp-md th, .fp-md td {
+    border: 1px solid var(--red-ui-secondary-border-color, #ddd);
+    padding: 4px 8px;
+    text-align: left;
+}
+.fp-md th {
+    background: rgba(127, 127, 127, 0.15);
+    font-weight: 600;
 }
 
 /* Pending "typing" indicator — three bouncing dots. */
@@ -5833,6 +5995,15 @@
     min-height: 180px;
     resize: vertical;
     font-family: monospace;
+}
+
+/* Range sliders shouldn't get the bordered/padded text-field box — the
+   padding above insets the native track from both edges, leaving the thumb
+   short of the true ends even at min/max. */
+.fp-form input[type="range"] {
+    padding: 0;
+    border: none;
+    background: transparent;
 }
 
 .fp-settings-actions {

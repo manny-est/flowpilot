@@ -4,6 +4,7 @@ const provider = require("./lib/provider-openai-compatible");
 const generationSystemPrompt = require("./lib/generation-system-prompt");
 const documentSystemPrompt = require("./lib/document-system-prompt");
 const modifySystemPrompt = require("./lib/modify-system-prompt");
+const personaPrompt = require("./lib/persona-prompt");
 
 module.exports = function flowPilotRuntime(RED) {
   const storage = createStorage(RED.settings.userDir);
@@ -360,6 +361,16 @@ module.exports = function flowPilotRuntime(RED) {
     return installedNodesCache;
   }
 
+  // Chat-only: the user's base system prompt plus a freshly-generated
+  // persona instruction (never baked into the persisted prompt itself, so
+  // it always reflects the current personaIntensity slider value).
+  // Generate/Document/Modify use their own mode-specific prompts and don't
+  // call this — aviation flavor has no place in a structured JSON envelope.
+  function buildChatSystemPrompt(settings) {
+    const base = settings.systemPrompt || "You are FlowPilot, a Node-RED development assistant.";
+    return base + "\n\n" + personaPrompt.buildPersonaInstruction(settings.personaIntensity);
+  }
+
   // Assemble the final messages array in the one place both /chat and the
   // generate/modify/document endpoints use: system prompt, optional
   // installed-node-package note, optional truncation notice, history,
@@ -482,7 +493,7 @@ module.exports = function flowPilotRuntime(RED) {
 
     const described = describeSelectionContext(context, settings.redactionEnabled);
     const messages = buildMessages(
-      settings.systemPrompt || "You are FlowPilot, a Node-RED development assistant.",
+      buildChatSystemPrompt(settings),
       history, historyTruncated, described, prompt
     );
 
@@ -519,7 +530,7 @@ module.exports = function flowPilotRuntime(RED) {
 
     const described = describeSelectionContext(context, settings.redactionEnabled);
     const messages = buildMessages(
-      settings.systemPrompt || "You are FlowPilot, a Node-RED development assistant.",
+      buildChatSystemPrompt(settings),
       history, historyTruncated, described, prompt
     );
 
@@ -971,7 +982,12 @@ module.exports = function flowPilotRuntime(RED) {
     const settings = storage.getSettings();
     const activeProvider = storage.getActiveProvider(settings);
     const described = describeSelectionContext(context, settings.redactionEnabled);
-    const messages = buildMessages(systemPrompt, history, historyTruncated, described, userPrompt);
+    // Persona applies to the "explanation" field only (a real hand-off/
+    // transition moment — "here's the flow I built for you") — never to
+    // node names, ids, or any structural JSON, which stays exactly as each
+    // mode's own system prompt above already specifies.
+    const personaInstruction = personaPrompt.buildPersonaInstruction(settings.personaIntensity, { scope: "explanation" });
+    const messages = buildMessages(systemPrompt + "\n\n" + personaInstruction, history, historyTruncated, described, userPrompt);
     return { activeProvider, described, messages };
   }
 
