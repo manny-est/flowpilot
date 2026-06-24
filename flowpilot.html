@@ -233,6 +233,20 @@
         if (debugMessageBuffer.length > DEBUG_BUFFER_MAX) {
             debugMessageBuffer = debugMessageBuffer.slice(-DEBUG_BUFFER_MAX);
         }
+
+        // /build loop: the first debug message to arrive once deployed is
+        // auto-attached (reusing the same attachedDebugMessages array/UI
+        // the manual "Attach" button uses, so the status strip's "🐛 N
+        // attached" indicator just works) and advances the waypoint to
+        // "review". Sending the actual review request from there is a
+        // later step — for now this just gets the output captured and
+        // visible without an extra manual click.
+        if (activeBuildLoop && activeBuildLoop.waypoint === "attach") {
+            attachedDebugMessages.push(entry);
+            updateDebugStatus();
+            activeBuildLoop.waypoint = "review";
+            renderLoopStepper(activeBuildLoop);
+        }
     }
 
     // The exact shape sent to the backend (and shown by "Preview debug") —
@@ -306,6 +320,11 @@
     function getHistoryMaxExchanges() {
         var n = Number(currentSettings.historyMaxExchanges);
         return (isFinite(n) && n >= 0) ? n : 10;
+    }
+
+    function getAgentLoopMaxIterations() {
+        var n = Number(currentSettings.agentLoopMaxIterations);
+        return (isFinite(n) && n >= 1) ? n : 5;
     }
 
     // Returns the history to send with a request, plus whether anything has
@@ -3142,6 +3161,13 @@
             handleExecuteError(msg, raw);
         }
 
+        // Wraps onResult so callers (currently just buildFlow(), for the
+        // /build loop) can see the original prompt text alongside the
+        // response — without changing the single-argument calling
+        // convention that runAgentLoop/sendExecuteStream/ajaxJson all share
+        // across every other mode.
+        function wrappedOnResult(data) { onResult(data, prompt); }
+
         var fullEndpoint = "flowpilot/" + endpointName;
 
         // Explore-then-propose: the model may call read
@@ -3151,7 +3177,7 @@
         if (isAgentLoop) {
             runAgentLoop(fullEndpoint, payload,
                 { mode: mode, context: context, prompt: prompt },
-                onResult, onError);
+                wrappedOnResult, onError);
             return;
         }
 
@@ -3161,25 +3187,41 @@
         // path via onResult.
         if (currentSettings.streamingEnabled) {
             payload.stream = true;
-            sendExecuteStream(endpointName, payload, onResult);
+            sendExecuteStream(endpointName, payload, wrappedOnResult);
             return;
         }
 
-        ajaxJson("POST", fullEndpoint, payload, onResult, onError);
+        ajaxJson("POST", fullEndpoint, payload, wrappedOnResult, onError);
     }
 
     function generate() {
         runGenerateLikeAction("generate", "generate", "Generate: ", handleSimpleGenerationResult);
     }
 
-    // /build's first step. Reuses Generate's pipeline wholesale — the loop
-    // state machine that turns this into an actual multi-step build-test-fix
-    // cycle (apply -> deploy -> attach debug -> AI review -> fix/done) is a
-    // separate, larger piece not wired up yet. For now /build behaves
-    // exactly like Generate, just with the planning preamble in
-    // build-system-prompt.js and its own endpoint/audit-mode name.
+    // /build's first step. Reuses Generate's pipeline wholesale for the
+    // proposal itself (review/import), but on a successful import also
+    // starts the build loop (startBuildLoop) — unlike plain Generate, a
+    // build proposal is the first waypoint of a longer apply -> deploy ->
+    // attach debug -> review -> fix/done cycle, not a one-shot. The loop
+    // only starts once an actual flow lands, not on a clarifying question
+    // or prose-only reply (renderQuestionOrProse handles those the same as
+    // Generate/Document, with no loop involved).
     function buildFlow() {
-        runGenerateLikeAction("build", "build", "Build: ", handleSimpleGenerationResult);
+        runGenerateLikeAction("build", "build", "Build: ", handleBuildResult);
+    }
+
+    function handleBuildResult(data, goalPrompt) {
+        hidePending();
+        if (renderQuestionOrProse(data)) { return; }
+
+        // Lay nodes out before review/import — see layoutGeneratedFlow for why.
+        var flow = Array.isArray(data.flow) ? layoutGeneratedFlow(data.flow) : data.flow;
+        addMessage("assistant", data.explanation || "(no explanation returned)");
+        pushHistory("assistant", data.explanation || "(no explanation returned)");
+        addGeneratedReview(flow, function () { startBuildLoop(goalPrompt); });
+        renderActionChip(data.suggestedAction);
+        setBusy(false);
+        updateSelectionStatus();
     }
 
     // Document feature: explain the SELECTED nodes and produce a single
@@ -4521,6 +4563,95 @@
         return nodes;
     }
 
+    // ---- /build loop: state machine + stepper ------------------------------
+    // /build's first proposal reuses Generate's pipeline verbatim (see
+    // buildFlow() below); this is what turns that one-shot proposal into a
+    // build -> apply -> deploy -> attach -> review -> fix/done cycle. Every
+    // proposed change (including fix iterations, added in a later step)
+    // still goes through the normal diff-review-then-Apply UI — this state
+    // machine only sequences WHEN the next request happens, never what
+    // happens to the canvas directly.
+    //
+    // null when no loop is active. waypoint is one of:
+    //   "apply"  — proposal imported, waiting for the user to place + Deploy.
+    //   "attach" — deployed, waiting for debug output to try it.
+    //   "review" — debug output attached; review request not yet wired up
+    //              (next step) so this is currently the end of the line.
+    //   "done"/"stopped" — terminal; activeBuildLoop is cleared instead of
+    //              held in these states.
+    var activeBuildLoop = null;
+
+    var BUILD_LOOP_WAYPOINTS = [
+        { id: "apply", label: "Apply" },
+        { id: "attach", label: "Attach debug" },
+        { id: "review", label: "Review" },
+        { id: "done", label: "Done" }
+    ];
+
+    function stopBuildLoop(note) {
+        activeBuildLoop = null;
+        el("#fp-loop-stepper").remove();
+        if (note) { addMessage("assistant", note); }
+    }
+
+    // Re-rendered (replacing any previous one, not stacked) every time the
+    // loop advances a waypoint — the chat log above it already shows the
+    // turn-by-turn history, so only the CURRENT state needs to be visible
+    // here. Modeled on addGeneratedReview's look (.fp-review) rather than a
+    // new visual language.
+    function renderLoopStepper(loop) {
+        var $box = el("#fp-messages");
+        if (!$box.length) { return; }
+        $box.find("#fp-loop-stepper").remove();
+
+        var $msg = $("<div>").addClass("fp-message fp-review").attr("id", "fp-loop-stepper");
+        $("<div>").addClass("fp-label")
+            .text("BUILD LOOP — ITERATION " + loop.iteration + "/" + loop.maxIterations)
+            .appendTo($msg);
+
+        var $steps = $("<div>").addClass("fp-loop-steps").appendTo($msg);
+        BUILD_LOOP_WAYPOINTS.forEach(function (wp, i) {
+            var $step = $("<span>").addClass("fp-loop-step").text((i + 1) + ". " + wp.label);
+            if (wp.id === loop.waypoint) { $step.addClass("fp-loop-step-active"); }
+            $steps.append($step);
+        });
+
+        var hint = "";
+        if (loop.waypoint === "apply") {
+            hint = "Click the canvas to place the new node(s), then Deploy — I'll move on automatically once you deploy.";
+        } else if (loop.waypoint === "attach") {
+            hint = "Trigger the flow, then check the Debug sidebar — I'll attach the next debug message automatically.";
+        } else if (loop.waypoint === "review") {
+            hint = "Debug output attached. Reviewing against the goal isn't wired up yet — more soon.";
+        }
+        if (hint) { $("<div>").addClass("fp-loop-hint").text(hint).appendTo($msg); }
+
+        var $actions = $("<div>").addClass("fp-loop-actions").appendTo($msg);
+        $("<button>").addClass("red-ui-button red-ui-button-small").attr("type", "button")
+            .text("Stop build loop")
+            .on("click", function () { stopBuildLoop("Build loop stopped. Whatever's already applied stays as-is."); })
+            .appendTo($actions);
+
+        $box.append($msg);
+        scrollMessagesToBottom();
+    }
+
+    // Called once the first build proposal is actually imported (not on a
+    // clarifying question or prose-only reply — see handleBuildResult). goal
+    // is the original prompt text, kept verbatim so the eventual review step
+    // can compare debug output against what the user actually asked for
+    // rather than re-deriving it from the model's own "explanation".
+    function startBuildLoop(goal) {
+        activeBuildLoop = {
+            goal: goal,
+            iteration: 1,
+            maxIterations: getAgentLoopMaxIterations(),
+            waypoint: "apply",
+            conversationId: conversationId
+        };
+        renderLoopStepper(activeBuildLoop);
+    }
+
     // ---- Tabbed review + import --------------------------------------------
     // Hands validated flow JSON to Node-RED's own import mechanism — the same
     // path the editor's Import menu uses (confirmed live: RED.view.importNodes
@@ -4528,7 +4659,10 @@
     // one click, and registers the whole add as a single native undo step).
     // generateIds avoids id clashes with existing nodes, matching the behavior
     // already validated via manual import of a generated flow.
-    function importGeneratedFlow(nodes) {
+    // onImported: optional, called only after a successful import — used by
+    // the /build loop to advance to the "apply" waypoint once the proposal
+    // actually lands. Plain Generate passes nothing, so it's a no-op there.
+    function importGeneratedFlow(nodes, onImported) {
         try {
             RED.view.importNodes(nodes, { generateIds: true });
             // Ground follow-up turns in what was just
@@ -4538,6 +4672,7 @@
             addMessage("assistant", importedNote);
             pushHistory("assistant", importedNote);
             updateSelectionStatus();
+            if (typeof onImported === "function") { onImported(); }
         } catch (e) {
             addMessage("error", "Import failed: " + (e && e.message ? e.message : String(e)));
         }
@@ -4591,7 +4726,7 @@
     // block the "Add to workspace" action (the JSON itself is malformed, not
     // a normal "node not installed" situation); type warnings do not — the
     // user is informed and decides whether to proceed or regenerate.
-    function addGeneratedReview(flow) {
+    function addGeneratedReview(flow, onImported) {
         var $box = el("#fp-messages");
         if (!$box.length) { return; }
 
@@ -4682,7 +4817,7 @@
                 .text("Add to workspace")
                 .on("click", function () {
                     $addBtn.prop("disabled", true).text("Click the canvas to place…");
-                    importGeneratedFlow(nodes);
+                    importGeneratedFlow(nodes, onImported);
                 });
             $actions.append($addBtn);
             $("<span>").addClass("fp-review-hint")
@@ -5074,6 +5209,18 @@
             RED.events.on("view:selection-changed", function () {
                 if (armedExecuteAction) { pinCurrentSelection(); }
                 updateSelectionStatus();
+            });
+
+            // /build loop: "deploy" only fires on a SUCCESSFUL deploy (no
+            // native "deploy failed" event exists — a failed deploy just
+            // shows the user a notification, nothing programmatic), so a
+            // failed deploy simply leaves the loop waiting at "apply"
+            // rather than advancing — exactly what we want.
+            RED.events.on("deploy", function () {
+                if (activeBuildLoop && activeBuildLoop.waypoint === "apply") {
+                    activeBuildLoop.waypoint = "attach";
+                    renderLoopStepper(activeBuildLoop);
+                }
             });
 
             // Build intent buttons from built-in INTENTS plus any user-defined
@@ -5526,6 +5673,40 @@
 .fp-review-hint {
     font-size: 12px;
     color: var(--red-ui-secondary-text-color, #888);
+}
+
+/* /build loop stepper — reuses .fp-review's card look (see addGeneratedReview)
+   rather than introducing a new visual language. */
+.fp-loop-steps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.fp-loop-step {
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 12px;
+    background: var(--red-ui-secondary-background, #eee);
+    color: var(--red-ui-secondary-text-color, #888);
+}
+
+.fp-loop-step-active {
+    background: #1f88e5;
+    color: #fff;
+    font-weight: 600;
+}
+
+.fp-loop-hint {
+    font-size: 12px;
+    color: var(--red-ui-secondary-text-color, #888);
+    margin-bottom: 8px;
+}
+
+.fp-loop-actions {
+    display: flex;
+    justify-content: flex-end;
 }
 
 .fp-json-toolbar {
