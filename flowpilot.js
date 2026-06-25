@@ -929,6 +929,33 @@ module.exports = function flowPilotRuntime(RED) {
   // types or wire integrity yet (that's the next chunk) — it returns the parsed
   // envelope so the frontend can display it for review.
 
+  // Given s[startIdx] === "{", scans forward with brace-depth counting that
+  // ignores braces inside string literals (so a value like "{{payload}}"
+  // can't be mistaken for structure) to find the index of the MATCHING
+  // closing "}". Returns -1 if the braces never balance before the string
+  // ends (truncated/malformed input).
+  function findMatchingBrace(s, startIdx) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = startIdx; i < s.length; i++) {
+      const ch = s[i];
+      if (inString) {
+        if (escaped) { escaped = false; }
+        else if (ch === "\\") { escaped = true; }
+        else if (ch === "\"") { inString = false; }
+        continue;
+      }
+      if (ch === "\"") { inString = true; }
+      else if (ch === "{") { depth++; }
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) { return i; }
+      }
+    }
+    return -1;
+  }
+
   function extractJsonObject(text) {
     if (!text) { throw new Error("Empty response from provider."); }
     let s = String(text).trim();
@@ -958,10 +985,8 @@ module.exports = function flowPilotRuntime(RED) {
       }
     }
 
-    // If there's leading/trailing prose, grab the outermost {...}.
-    const first = s.indexOf("{");
-    const last = s.lastIndexOf("}");
-    if (first === -1 || last === -1 || last < first) {
+    const firstObjIdx = s.indexOf("{");
+    if (firstObjIdx === -1) {
       // No JSON object found at all — flagged separately from a found-
       // but-unparseable ({...} present, JSON.parse failed) "garbled" error,
       // so callers can distinguish "model just answered in prose" (tolerate)
@@ -970,7 +995,32 @@ module.exports = function flowPilotRuntime(RED) {
       err.noJsonFound = true;
       throw err;
     }
-    return JSON.parse(s.slice(first, last + 1));
+
+    // There may be more than one "{" before the real envelope — e.g. prose
+    // explaining a fix that mentions inline code like "{{payload}}" before
+    // the actual JSON (seen live: a review response started with "The
+    // template node is using `{{payload}}` with...", and slicing from THAT
+    // brace to the envelope's real closing "}" produced unparseable
+    // garbage). Try each candidate "{" in order with string-aware brace
+    // matching (findMatchingBrace, which ignores braces inside quoted
+    // strings) rather than just slicing from the first "{" to the last
+    // "}". The first candidate that both balances and parses wins —
+    // incidental braces in prose essentially never parse as standalone
+    // JSON, so this naturally skips past them to the real envelope.
+    let lastError = null;
+    let searchFrom = firstObjIdx;
+    while (searchFrom !== -1 && searchFrom < s.length) {
+      const end = findMatchingBrace(s, searchFrom);
+      if (end !== -1) {
+        try {
+          return JSON.parse(s.slice(searchFrom, end + 1));
+        } catch (e) {
+          lastError = e;
+        }
+      }
+      searchFrom = s.indexOf("{", searchFrom + 1);
+    }
+    throw lastError || new Error("Provider's JSON object could not be parsed.");
   }
 
   // ---------------------------------------------------------------------

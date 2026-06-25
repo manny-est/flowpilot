@@ -4683,7 +4683,11 @@
             loop.goal + "\". If it fully satisfies the goal, say so in plain text " +
             "— no changes needed. If something's wrong, propose the fix directly " +
             "as a patch in this same response, exactly as you would for any other " +
-            "review request.";
+            "review request — respond with ONLY the {\"explanation\", \"changes\", " +
+            "...} JSON object, no sentence of analysis before it. Put your " +
+            "diagnosis of what's wrong INSIDE \"explanation\" — never write it as " +
+            "prose first and the JSON second; that produces no diff for the user " +
+            "to review.";
 
         var historyPayload = buildHistoryPayload();
         var label = "Build review (iteration " + loop.iteration + "/" + loop.maxIterations + ")";
