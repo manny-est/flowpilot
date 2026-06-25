@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>FlowPilot</title>
+<link rel="stylesheet" href="/red/style.min.css">
+<link rel="stylesheet" href="/vendor/font-awesome/css/font-awesome.min.css">
+<link rel="stylesheet" href="/flowpilot/core.css">
+<style>
+    /* Minimal page chrome — the real layout lives in flowpilot-core.css's
+       #fp-root rules, same as the sidebar. This pop-out has no settings/
+       history panels in v1, so #fp-root just needs to fill the window. */
+    html, body { height: 100%; margin: 0; }
+    #fp-popout-root { height: 100%; }
+</style>
+</head>
+<body class="red-ui-editor">
+<div id="fp-popout-root"></div>
+<script src="/vendor/vendor.js"></script>
+<script src="/red/red.min.js"></script>
+<script src="/flowpilot/core.js"></script>
+<script type="text/javascript">
+    // v1 review-only: this window never connects to the runtime or loads a
+    // live flow (RED.nodes/RED.view here are inert, disconnected shells,
+    // exactly like Node-RED's own debug pop-out) — it only renders a relayed
+    // mirror of the main window's chat thread. See flowpilot-core.js's
+    // initPopout() for the actual logic.
+    FlowPilotCore.initPopout();
+</script>
+</body>
+</html>

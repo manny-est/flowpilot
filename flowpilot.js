@@ -1,4 +1,5 @@
 const http = require("http");
+const path = require("path");
 const createStorage = require("./lib/storage");
 const provider = require("./lib/provider-openai-compatible");
 const generationSystemPrompt = require("./lib/generation-system-prompt");
@@ -614,6 +615,27 @@ module.exports = function flowPilotRuntime(RED) {
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // ---- Pop-out window (Phase 8.5 C1, v1 review-only) -------------------
+  // Serves the shared renderer (flowpilot-core.js, the same script
+  // flowpilot.html loads for the sidebar) plus its stylesheet and the
+  // pop-out's own minimal page — mirroring core Node-RED's debug-node
+  // pattern (RED.httpAdmin.get("/debug/view/view.html", ...) serving a
+  // static lib/debug/view.html that loads the SAME debug-utils.js the
+  // sidebar uses). Gated the same as every other FlowPilot route, unlike
+  // NR5's own debug view route, which has no permission check at all.
+
+  RED.httpAdmin.get("/flowpilot/core.js", RED.auth.needsPermission("settings.read"), function (req, res) {
+    res.sendFile(path.join(__dirname, "flowpilot-core.js"));
+  });
+
+  RED.httpAdmin.get("/flowpilot/core.css", RED.auth.needsPermission("settings.read"), function (req, res) {
+    res.sendFile(path.join(__dirname, "flowpilot-core.css"));
+  });
+
+  RED.httpAdmin.get("/flowpilot/popout/view.html", RED.auth.needsPermission("settings.read"), function (req, res) {
+    res.sendFile(path.join(__dirname, "lib", "popout", "view.html"));
   });
 
   // ---- Settings: write -------------------------------------------------

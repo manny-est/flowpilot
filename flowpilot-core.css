@@ -1,0 +1,1189 @@
+#fp-root {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    background: var(--red-ui-primary-background, #fff);
+    color: var(--red-ui-primary-text-color, #333);
+    overflow: hidden;
+}
+
+.fp-header {
+    padding: 16px;
+    border-bottom: 1px solid var(--red-ui-secondary-border-color, #ddd);
+    background: var(--red-ui-secondary-background, #f8f8f8);
+}
+
+.fp-header-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.fp-logo {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    background: #1f2f46;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+}
+
+.fp-heading {
+    flex: 1;
+    min-width: 0;
+}
+
+.fp-title {
+    font-size: 20px;
+    font-weight: 700;
+}
+
+.fp-subtitle {
+    font-size: 14px;
+    color: var(--red-ui-secondary-text-color, #777);
+}
+
+.fp-view-buttons {
+    display: flex;
+    gap: 6px;
+    position: relative;
+    top: 2px;
+}
+
+.fp-panel {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.fp-hidden {
+    display: none !important;
+}
+
+.fp-warning {
+    margin: 16px;
+    padding: 12px 14px;
+    border: 1px solid #ff9800;
+    border-radius: 8px;
+    background: rgba(255, 152, 0, 0.12);
+    line-height: 1.45;
+}
+
+.fp-messages {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0 16px 16px 16px;
+}
+
+.fp-message {
+    margin-bottom: 12px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--red-ui-secondary-border-color, #ddd);
+    background: var(--red-ui-secondary-background, #f7f7f7);
+    line-height: 1.45;
+    white-space: pre-wrap;
+}
+
+.fp-label {
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    color: var(--red-ui-secondary-text-color, #888);
+    margin-bottom: 6px;
+}
+
+.fp-user {
+    background: rgba(80, 130, 255, 0.12);
+    border-color: rgba(80, 130, 255, 0.35);
+}
+
+.fp-error {
+    background: rgba(255, 80, 80, 0.12);
+    border-color: rgba(255, 80, 80, 0.65);
+}
+
+/* Rendered markdown inside chat bubbles. */
+.fp-md > *:first-child {
+    margin-top: 0;
+}
+.fp-md > *:last-child {
+    margin-bottom: 0;
+}
+.fp-md p {
+    margin: 0 0 8px 0;
+}
+.fp-md ul, .fp-md ol {
+    margin: 0 0 8px 0;
+    padding-left: 22px;
+}
+.fp-md li {
+    margin-bottom: 2px;
+}
+.fp-md h3, .fp-md h4, .fp-md h5, .fp-md h6 {
+    margin: 10px 0 6px 0;
+    line-height: 1.3;
+}
+.fp-md code {
+    font-family: monospace;
+    background: rgba(127, 127, 127, 0.15);
+    border-radius: 3px;
+    padding: 1px 4px;
+    white-space: pre-wrap;
+}
+.fp-md pre {
+    margin: 0 0 8px 0;
+    padding: 8px 10px;
+    border-radius: 5px;
+    background: rgba(127, 127, 127, 0.12);
+    overflow-x: auto;
+    white-space: pre;
+}
+.fp-md pre code {
+    background: none;
+    padding: 0;
+}
+.fp-md .fp-code-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 2px;
+}
+.fp-md a {
+    color: var(--red-ui-text-color-link, #1f88e5);
+}
+.fp-md table {
+    margin: 0 0 8px 0;
+    border-collapse: collapse;
+    width: 100%;
+    overflow-x: auto;
+    display: block;
+}
+.fp-md table tbody, .fp-md table thead {
+    display: table;
+    width: 100%;
+    table-layout: auto;
+}
+.fp-md th, .fp-md td {
+    border: 1px solid var(--red-ui-secondary-border-color, #ddd);
+    padding: 4px 8px;
+    text-align: left;
+}
+.fp-md th {
+    background: rgba(127, 127, 127, 0.15);
+    font-weight: 600;
+}
+
+/* Pending "typing" indicator — three bouncing dots. */
+.fp-typing {
+    display: flex;
+    gap: 5px;
+    padding: 4px 0;
+}
+
+.fp-typing span:not(.fp-typing-label) {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--red-ui-secondary-text-color, #999);
+    opacity: 0.4;
+    animation: fp-bounce 1.2s infinite ease-in-out;
+}
+
+.fp-typing span:nth-child(2) { animation-delay: 0.18s; }
+.fp-typing span:nth-child(3) { animation-delay: 0.36s; }
+
+.fp-typing-label {
+    font-size: 11px;
+    color: var(--red-ui-secondary-text-color, #999);
+    margin-left: 4px;
+    align-self: center;
+}
+
+.fp-agent-stop {
+    margin-left: 8px;
+    align-self: center;
+}
+
+.fp-agent-stop:disabled {
+    opacity: 0.6;
+}
+
+@keyframes fp-bounce {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+    30% { transform: translateY(-5px); opacity: 1; }
+}
+
+/* Action chips ("paper plane" actions) — a tappable next-step
+   the model suggests, rendered below the message that proposed it. */
+.fp-chip-row {
+    margin: -4px 0 12px 4px;
+}
+
+.fp-chip {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Big icon-tile chip card (renderActionChip/renderChip's single-CTA
+   chips only — NOT the multi-option clarifying-question buttons below,
+   which stay small/inline since several sit side by side). Cockpit-family
+   styling matching .fp-action-bar's fixed dark palette intentionally —
+   "AI-armed and user-armed controls read as one language." */
+.fp-chip-card {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: #141a21;
+    border: 1px solid #2c3742;
+    border-radius: 9px;
+    padding: 10px 12px;
+    color: #dfe6ee;
+    cursor: pointer;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 2px 6px rgba(0, 0, 0, 0.18);
+    transition: border-color .12s ease, box-shadow .12s ease;
+    text-align: left;
+    white-space: normal;
+}
+
+.fp-chip-card:hover {
+    border-color: #46d39a;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 0 1px #46d39a, 0 0 14px -2px #46d39a;
+}
+
+.fp-chip-card:active {
+    transform: translateY(1px);
+}
+
+.fp-chip-card .fp-chip-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    flex: none;
+    border-radius: 7px;
+    color: #46d39a;
+    background: rgba(70, 211, 154, 0.10);
+    border: 1px solid rgba(70, 211, 154, 0.35);
+}
+
+.fp-chip-card .fp-chip-body {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: block;
+}
+
+.fp-chip-card .fp-chip-title {
+    display: block;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: #fff;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fp-chip-card .fp-chip-sub {
+    display: block;
+    font-size: 11px;
+    color: #8a96a3;
+    margin-top: 1px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fp-chip-card .fp-chip-go {
+    flex: none;
+    color: #46d39a;
+    font-size: 16px;
+}
+
+.fp-chip-hint {
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--red-ui-secondary-text-color, #888);
+}
+
+/* Clarifying-question quick replies: option buttons + a free-text "Other"
+   that reveals an inline input. Reuses .fp-chip's look, wrapped in a row. */
+.fp-question-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+}
+
+.fp-question-option,
+.fp-question-other {
+    white-space: nowrap;
+}
+
+.fp-question-other-row {
+    display: flex;
+    gap: 6px;
+    margin: 6px 0 12px 4px;
+}
+
+.fp-question-other-input {
+    flex: 1;
+    min-width: 0;
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--red-ui-form-input-border-color, #ccc);
+    background: var(--red-ui-form-input-background, #fff);
+    color: var(--red-ui-form-text-color, #333);
+    font-family: inherit;
+    font-size: 13px;
+}
+
+/* Recall results — read-only snippets from earlier conversations. */
+.fp-recall {
+    background: rgba(150, 120, 255, 0.10);
+    border-color: rgba(150, 120, 255, 0.35);
+}
+
+.fp-recall-item {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--red-ui-secondary-border-color, #ddd);
+}
+
+.fp-recall-item:first-of-type {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+}
+
+.fp-recall-meta {
+    font-size: 11px;
+    color: var(--red-ui-secondary-text-color, #888);
+    margin-bottom: 2px;
+}
+
+.fp-recall-text {
+    font-size: 13px;
+}
+
+.fp-recall-use {
+    margin-top: 6px;
+}
+
+.fp-recall-use:disabled {
+    opacity: 0.6;
+}
+
+/* "Flight log" conversation list. */
+.fp-history-list {
+    margin-top: 10px;
+}
+
+.fp-history-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--red-ui-secondary-border-color, #ddd);
+    margin-bottom: 6px;
+}
+
+.fp-history-current {
+    border-color: rgba(31, 136, 229, 0.5);
+    background: rgba(31, 136, 229, 0.08);
+}
+
+.fp-history-main {
+    flex: 1;
+    min-width: 0;
+    cursor: pointer;
+}
+
+.fp-history-title {
+    font-size: 13px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fp-history-meta {
+    font-size: 11px;
+    color: var(--red-ui-secondary-text-color, #888);
+    margin-top: 2px;
+}
+
+.fp-history-delete {
+    flex: 0 0 auto;
+}
+
+.fp-json {
+    margin: 0;
+    padding: 10px;
+    border-radius: 6px;
+    background: var(--red-ui-secondary-background, #f0f0f0);
+    border: 1px solid var(--red-ui-secondary-border-color, #ddd);
+    font-family: monospace;
+    font-size: 12px;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+/* Generated-flow review — bespoke tabs styled to sit comfortably in the editor's
+   theme (--red-ui-* variables) without depending on Node-RED's internal
+   tab/export markup, which is undocumented and fragile across versions. */
+.fp-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 10px;
+    border-bottom: 1px solid var(--red-ui-secondary-border-color, #ddd);
+}
+
+.fp-tab {
+    padding: 6px 14px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    color: var(--red-ui-secondary-text-color, #888);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.fp-tab-active {
+    color: var(--red-ui-primary-text-color, #333);
+    border-bottom-color: #1f88e5;
+    font-weight: 600;
+}
+
+.fp-review-count {
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.fp-review-list {
+    margin: 0 0 10px 0;
+    padding-left: 20px;
+}
+
+.fp-review-list li {
+    margin-bottom: 4px;
+}
+
+.fp-type-flag {
+    color: #b35900;
+    font-size: 11px;
+}
+
+.fp-review-warning ul {
+    margin: 6px 0;
+    padding-left: 20px;
+}
+
+.fp-review-actions {
+    margin-top: 12px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.fp-review-hint {
+    font-size: 12px;
+    color: var(--red-ui-secondary-text-color, #888);
+}
+
+/* /build loop stepper — reuses .fp-review's card look (see addGeneratedReview)
+   rather than introducing a new visual language. */
+.fp-loop-steps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.fp-loop-step {
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 12px;
+    background: var(--red-ui-secondary-background, #eee);
+    color: var(--red-ui-secondary-text-color, #888);
+}
+
+.fp-loop-step-active {
+    background: #1f88e5;
+    color: #fff;
+    font-weight: 600;
+}
+
+.fp-loop-hint {
+    font-size: 12px;
+    color: var(--red-ui-secondary-text-color, #888);
+    margin-bottom: 8px;
+}
+
+.fp-loop-actions {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.fp-json-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 6px;
+}
+
+.fp-compose {
+    flex-shrink: 0;
+    padding: 14px 16px;
+    border-top: 1px solid var(--red-ui-secondary-border-color, #ddd);
+}
+
+/* Armed Execute action (e.g. Generate toggled on) — lit blue, matching the
+   mode color-coding's blue = "about to propose changes" on #fp-prompt's border. */
+.fp-intents .red-ui-button.fp-action-armed {
+    background: rgba(31, 136, 229, 0.16) !important;
+    border-color: #1f88e5 !important;
+    color: #1f88e5 !important;
+    box-shadow: inset 0 -1px 3px rgba(0, 0, 0, 0.3), 0 0 10px -2px rgba(31, 136, 229, 0.8) !important;
+}
+
+/* Armed Query intent — lit amber, matching the mode color-coding's amber =
+   "won't change your flow" on #fp-prompt's border. Equal specificity to the blue rule
+   above, so this later rule wins for buttons inside .fp-intents-query. */
+.fp-intents-query .red-ui-button.fp-action-armed {
+    background: rgba(255, 152, 0, 0.16) !important;
+    border-color: #ff9800 !important;
+    color: #cc7a00 !important;
+    box-shadow: inset 0 -1px 3px rgba(0, 0, 0, 0.3), 0 0 10px -2px rgba(255, 152, 0, 0.8) !important;
+}
+
+/* Annunciator "on" lamp — a small lit dot in the corner of an armed Execute
+   button, on top of the blue glow above. Query intents don't get this (no
+   "armed and about to act" implication for a read-only Query action). */
+.fp-intents-execute .red-ui-button.fp-action-armed {
+    position: relative;
+}
+
+.fp-intents-execute .red-ui-button.fp-action-armed::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: #1f88e5;
+    box-shadow: 0 0 6px 1px #1f88e5;
+}
+
+/* Send gets the same accent as an armed Execute action so it's clear that
+   clicking it now proposes a change rather than chatting — especially after
+   an action chip pre-fills the prompt and switches modes. */
+#fp-send.fp-send-armed {
+    box-shadow: 0 0 0 2px #1f88e5;
+}
+
+/* Mirrors the blue Execute-armed glow above for an armed Query intent —
+   Send adopts the same amber the prompt border already shows. */
+.fp-compose.fp-mode-query #fp-send {
+    box-shadow: 0 0 0 2px #ff9800;
+    border-color: #ff9800;
+}
+
+/* Idle "ready to fly" hover — only when nothing is armed at all, so it
+   never fights the blue/amber armed treatments above. */
+.fp-compose:not(.fp-mode-query):not(.fp-mode-execute) #fp-send:hover {
+    border-color: #46d39a;
+    box-shadow: 0 0 0 2px #46d39a;
+}
+
+/* /demo: once the sample prompt has finished typing in, gently pulse Send
+   to draw the eye towards it. Stops the moment the user sends or edits. */
+#fp-send.fp-send-breathe {
+    animation: fp-breathe 1.6s ease-in-out infinite;
+}
+
+@keyframes fp-breathe {
+    0%, 100% { box-shadow: 0 0 0 2px #1f88e5; transform: scale(1); }
+    50% { box-shadow: 0 0 0 6px rgba(31, 136, 229, 0.35); transform: scale(1.05); }
+}
+
+/* Cockpit strip: fixed dark background (not theme-derived, by design — a
+   stable "instrument panel" the amber/blue accents read against in both
+   light and dark editor themes). Scoped tightly to the action bar itself,
+   not the whole compose area. */
+.fp-action-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+    background: #1f2f46;
+    border-radius: 6px;
+    padding: 6px 10px;
+}
+
+.fp-action-group {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.fp-action-divider {
+    align-self: stretch;
+    width: 1px;
+    background: rgba(255, 255, 255, 0.35);
+}
+
+/* Default (non-hover, non-armed) look for buttons on the dark cockpit
+   strip — light-on-dark, with a recessed inset shadow so idle buttons
+   read as physical "instrument panel" keys, not flat UI chrome.
+   Deliberately NOT !important so the existing amber/blue hover and
+   .fp-action-armed rules (above) keep winning. */
+.fp-action-bar .red-ui-button {
+    background: transparent;
+    border-color: rgba(255, 255, 255, 0.35);
+    color: #f0f4f8;
+    box-shadow: inset 0 -2px 4px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.fp-action-bar .red-ui-button:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.5);
+    color: #fff;
+}
+
+/* Icon-style Query/Execute buttons. Hover/armed accents reuse the
+   mode color-coding's amber=query / blue=execute coding (see #fp-prompt and
+   .fp-action-armed above) so the whole "armed" concept stays one color. */
+.fp-icon-btn {
+    width: 32px;
+    height: 32px;
+    padding: 0 !important;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+}
+
+.fp-icon-btn-query:hover {
+    color: #cc7a00 !important;
+    border-color: rgba(255, 152, 0, 0.5) !important;
+    background: rgba(255, 152, 0, 0.12) !important;
+    box-shadow: inset 0 -2px 4px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.05),
+        0 0 8px -2px rgba(255, 152, 0, 0.6) !important;
+}
+
+.fp-icon-btn-execute:hover {
+    color: #1f88e5 !important;
+    border-color: rgba(31, 136, 229, 0.5) !important;
+    background: rgba(31, 136, 229, 0.12) !important;
+    box-shadow: inset 0 -2px 4px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.05),
+        0 0 8px -2px rgba(31, 136, 229, 0.6) !important;
+}
+
+.fp-intents {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+.fp-intent-more-wrap {
+    position: relative;
+    flex: 0 0 auto;
+}
+
+.fp-intent-more {
+    flex: 0 0 auto;
+}
+
+.fp-intent-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 20;
+    margin-top: 4px;
+    min-width: 140px;
+    background: var(--red-ui-primary-background, #fff);
+    border: 1px solid var(--red-ui-secondary-border-color, #ddd);
+    border-radius: 4px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+    padding: 4px 0;
+}
+
+.fp-intent-menu a {
+    display: block;
+    padding: 6px 12px;
+    color: var(--red-ui-primary-text-color, #333);
+    text-decoration: none;
+    white-space: nowrap;
+    font-size: 12px;
+}
+
+.fp-intent-menu a:hover {
+    background: var(--red-ui-secondary-background, #f0f0f0);
+}
+
+.fp-intent-btn {
+    flex: 0 0 auto;
+}
+
+.fp-intent-custom {
+    border-style: dashed !important;
+}
+
+/* Active view button (chat/settings) — filled, using the header color. */
+.fp-view-buttons .red-ui-button.fp-active {
+    background: #1f2f46 !important;
+    border-color: #1f2f46 !important;
+    color: #fff !important;
+}
+
+.fp-view-buttons .red-ui-button.fp-active i {
+    color: #fff !important;
+}
+
+/* De-emphasize Test relative to the primary Send action. */
+/* Provider selector + actions in settings. */
+#fp-provider-select {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px;
+    border-radius: 5px;
+    border: 1px solid var(--red-ui-form-input-border-color, #ccc);
+    background: var(--red-ui-form-input-background, #fff);
+    color: var(--red-ui-form-text-color, #333);
+}
+
+.fp-provider-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.fp-custom-intents {
+    margin: 8px 0;
+}
+
+.fp-custom-intent-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 8px;
+    margin-bottom: 4px;
+    border: 1px solid var(--red-ui-secondary-border-color, #ddd);
+    border-radius: 5px;
+}
+
+.fp-custom-intent-label {
+    font-weight: 600;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+/* Context indicators and the provider/Send footer merged
+   into one wrap-capable strip below the prompt box — one line when there's
+   room, wraps to two on a narrow sidebar (no regression vs. the previous
+   always-two-rows layout). */
+.fp-status-strip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+}
+
+.fp-status-spacer {
+    flex: 1 1 auto;
+    min-width: 8px;
+}
+
+.fp-selection-status {
+    font-size: 12px;
+    color: var(--red-ui-secondary-text-color, #888);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.fp-selection-status::before {
+    content: "";
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--red-ui-secondary-border-color, #ccc);
+}
+
+.fp-selection-status.fp-has-selection {
+    color: var(--red-ui-primary-text-color, #333);
+    font-weight: 600;
+}
+
+.fp-selection-status.fp-has-selection::before {
+    background: #4caf50;
+}
+
+.fp-size-status {
+    font-size: 12px;
+    color: var(--red-ui-secondary-text-color, #888);
+    padding-left: 8px;
+    border-left: 1px solid var(--red-ui-secondary-border-color, #ddd);
+}
+
+.fp-size-status.fp-size-warn {
+    color: #b8860b;
+    font-weight: 600;
+}
+
+.fp-size-status.fp-size-high {
+    color: #c0392b;
+    font-weight: 600;
+}
+
+/* Compact secrets reminder: a small badge icon carrying the full reminder as
+   a tooltip, instead of a persistent multi-line warning box. */
+.fp-secrets-status {
+    font-size: 12px;
+    width: 18px;
+    height: 18px;
+    line-height: 18px;
+    text-align: center;
+    border-radius: 50%;
+    background: rgba(255, 152, 0, 0.18);
+    border: 1px solid rgba(255, 152, 0, 0.5);
+    color: #b35900;
+    cursor: default;
+    flex: 0 0 auto;
+}
+
+.fp-secrets-status-off {
+    background: rgba(192, 57, 43, 0.18);
+    border-color: rgba(192, 57, 43, 0.6);
+    color: #c0392b;
+}
+
+.fp-debug-status {
+    font-size: 12px;
+    color: var(--red-ui-secondary-text-color, #888);
+    padding-left: 8px;
+    border-left: 1px solid var(--red-ui-secondary-border-color, #ddd);
+}
+
+.fp-debug-status a {
+    margin-left: 4px;
+    color: inherit;
+    text-decoration: none;
+}
+
+.fp-debug-status a:hover {
+    text-decoration: underline;
+}
+
+.fp-preview-link {
+    font-size: 12px;
+    color: var(--red-ui-secondary-text-color, #888);
+    text-decoration: none;
+}
+
+.fp-preview-link:hover {
+    text-decoration: underline;
+}
+
+.fp-settings-section {
+    margin-top: 18px;
+    padding-top: 12px;
+    border-top: 1px solid var(--red-ui-secondary-border-color, #ddd);
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.03em;
+    color: var(--red-ui-secondary-text-color, #777);
+}
+
+.fp-settings-group {
+    margin-top: 14px;
+    padding: 0 12px 12px 12px;
+    border: 1px solid var(--red-ui-secondary-border-color, #ddd);
+    border-radius: 6px;
+}
+
+.fp-settings-group > summary {
+    margin: 0 -12px;
+    cursor: pointer;
+    padding: 10px 12px;
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.03em;
+    color: var(--red-ui-primary-text-color, #333);
+    list-style: none;
+    user-select: none;
+}
+
+.fp-settings-group > summary::-webkit-details-marker {
+    display: none;
+}
+
+.fp-settings-group > summary::before {
+    content: "▸";
+    display: inline-block;
+    width: 1em;
+    color: var(--red-ui-secondary-text-color, #888);
+}
+
+.fp-settings-group[open] > summary::before {
+    content: "▾";
+}
+
+.fp-settings-group > .fp-settings-section:first-of-type {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+}
+
+.fp-checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    margin-top: 12px;
+}
+
+.fp-checkbox-row input {
+    width: auto;
+}
+
+.fp-consent-hint {
+    font-size: 12px;
+    color: var(--red-ui-secondary-text-color, #888);
+    margin: 6px 0;
+    line-height: 1.4;
+}
+
+.fp-agent-stats {
+    margin: -4px 0 8px 4px;
+    font-size: 11px;
+}
+
+.fp-debug-warning {
+    font-size: 12px;
+    color: var(--red-ui-secondary-text-color, #888);
+    text-decoration: underline;
+    margin: 2px 0 6px;
+    line-height: 1.4;
+}
+
+.fp-prompt-wrap {
+    position: relative;
+}
+
+#fp-prompt {
+    display: block;
+    width: 100%;
+    min-height: 88px;
+    box-sizing: border-box;
+    resize: none;
+    padding: 10px;
+    border-radius: 6px;
+    border: 1px solid var(--red-ui-form-input-border-color, #ccc);
+    background: var(--red-ui-form-input-background, #fff);
+    color: var(--red-ui-form-text-color, #333);
+    font-family: inherit;
+    font-size: 14px;
+    box-shadow: 0 0 0 1px rgba(255, 152, 0, 0.35);
+    transition: box-shadow 0.15s, border-color 0.15s;
+}
+
+/* Mode color-coding — Query/chat (default) is orange ("won't change your
+   flow"); an armed Execute action (Generate/Document/Modify) switches the
+   compose area to blue ("about to propose changes"). */
+.fp-compose.fp-mode-execute #fp-prompt {
+    border-color: #1f88e5;
+    box-shadow: 0 0 0 1px rgba(31, 136, 229, 0.5);
+}
+
+/* An armed Query intent strengthens the default amber glow into a solid
+   border — the "mode readout" confirming a template is loaded and ready
+   to send, mirroring .fp-mode-execute's blue treatment above. */
+.fp-compose.fp-mode-query #fp-prompt {
+    border-color: #ff9800;
+    box-shadow: 0 0 0 1px rgba(255, 152, 0, 0.5);
+}
+
+/* Custom resize handle, top-right: native `resize: vertical` puts its grip
+   at the bottom-right corner, right next to the Send/Clear buttons, which
+   makes it fiddly to grab. This sits in the clear space below the context
+   strip instead, and dragging it changes #fp-prompt's height directly.
+   Offset further from the edge (right: 20px) so it doesn't sit on top of
+   the textarea's scrollbar arrows when the prompt overflows, and hidden
+   until the prompt area is hovered so it doesn't clutter that corner. */
+.fp-resize-handle {
+    position: absolute;
+    top: 4px;
+    right: 20px;
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+    color: var(--red-ui-secondary-text-color, #999);
+    opacity: 0;
+    cursor: ns-resize;
+    font-size: 11px;
+    user-select: none;
+    transition: opacity 0.15s;
+}
+
+.fp-prompt-wrap:hover .fp-resize-handle {
+    opacity: 0.5;
+}
+
+.fp-resize-handle:hover,
+.fp-resize-handle.fp-resizing {
+    opacity: 1;
+    background: rgba(127, 127, 127, 0.15);
+}
+
+#fp-provider-status {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 55%;
+    color: var(--red-ui-secondary-text-color, #777);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.fp-settings-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.fp-save-status {
+    font-size: 12px;
+    align-self: center;
+    color: var(--red-ui-secondary-text-color, #888);
+}
+
+.fp-save-status-error {
+    color: #c0392b;
+}
+
+.fp-form {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 16px 16px 16px;
+}
+
+.fp-form label {
+    display: block;
+    margin-top: 12px;
+    margin-bottom: 5px;
+    font-weight: 600;
+}
+
+.fp-form input,
+.fp-form textarea {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid var(--red-ui-form-input-border-color, #ccc);
+    background: var(--red-ui-form-input-background, #fff);
+    color: var(--red-ui-form-text-color, #333);
+    border-radius: 5px;
+    padding: 8px;
+}
+
+.fp-form textarea {
+    min-height: 180px;
+    resize: vertical;
+    font-family: monospace;
+}
+
+/* Range sliders shouldn't get the bordered/padded text-field box — the
+   padding above insets the native track from both edges, leaving the thumb
+   short of the true ends even at min/max. */
+.fp-form input[type="range"] {
+    padding: 0;
+    border: none;
+    background: transparent;
+}
+
+.fp-settings-actions {
+    margin-top: 16px;
+    padding-bottom: 16px;
+}
+
+/* Modify diff review */
+.fp-diff-node {
+    margin-bottom: 14px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--red-ui-secondary-border-color, #ddd);
+    background: var(--red-ui-secondary-background, #f7f7f7);
+}
+
+.fp-diff-node-title {
+    font-weight: 600;
+    font-size: 12px;
+    margin-bottom: 8px;
+    color: var(--red-ui-primary-text-color, #333);
+}
+
+.fp-diff-row {
+    display: grid;
+    grid-template-columns: 120px 1fr 20px 1fr;
+    gap: 4px 8px;
+    align-items: baseline;
+    margin-bottom: 5px;
+    font-size: 12px;
+    font-family: monospace;
+}
+
+.fp-diff-key {
+    font-weight: 600;
+    color: var(--red-ui-secondary-text-color, #666);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fp-diff-old {
+    color: #c0392b;
+    text-decoration: line-through;
+    word-break: break-all;
+}
+
+.fp-diff-arrow {
+    color: var(--red-ui-secondary-text-color, #888);
+    text-align: center;
+}
+
+.fp-diff-new {
+    color: #27ae60;
+    font-weight: 600;
+    word-break: break-all;
+}
+
+.fp-diff-unchanged {
+    font-size: 12px;
+    color: var(--red-ui-secondary-text-color, #888);
+    font-style: italic;
+}
+
+.fp-diff-warn {
+    font-size: 12px;
+    color: #b35900;
+    margin-bottom: 6px;
+}
