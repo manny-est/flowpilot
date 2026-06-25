@@ -4919,6 +4919,17 @@
         var v = validateGeneratedFlow(nodes);
 
         var $msg = $("<div>").addClass("fp-message fp-review");
+        // Pop-out slice 3: tag plain Generate/Document panels (no
+        // onImported — the /build loop always passes one, since it needs
+        // to start the loop after import) with the raw flow data so the
+        // relay can wire up a WORKING "Add to workspace" button in the
+        // pop-out, instead of the inert HTML it'd otherwise be. The build
+        // loop's import has loop-state semantics (startBuildLoop) that
+        // can't be safely re-triggered from a relayed click, so its panels
+        // intentionally keep relaying as plain inert HTML for now.
+        if (!onImported) {
+            $msg.attr("data-fp-apply-flow", JSON.stringify(nodes));
+        }
         $("<div>").addClass("fp-label").text("GENERATED FLOW — REVIEW").appendTo($msg);
 
         var $tabSummary = $("<button>").addClass("fp-tab fp-tab-active").attr("type", "button").text("Summary");
@@ -5012,18 +5023,29 @@
 
         $box.append($msg);
         scrollMessagesToBottom();
+        return $msg;
     }
 
-    // ---- Pop-out window (Phase 8.5 C1, v1 review-only) -------------------
+    // ---- Pop-out window (Phase 8.5 C1) ------------------------------------
     // Mirrors how Node-RED 5's own Debug panel pops out (confirmed against
     // @node-red/nodes/core/common/21-debug.html / debug.js): the SAME
-    // renderer (this whole file) loads in both windows; only the canvas-
-    // touching pieces would need a swapped implementation when added in a
-    // later slice. v1 is read-only — no sending, no Apply, just a mirror of
-    // the chat thread — so addMessage() and everything it calls runs
-    // completely unmodified in either window; only the relay plumbing below
-    // is new. Unlike NR5's own reference code (which uses "*" everywhere),
-    // every postMessage here pins targetOrigin to location.origin.
+    // renderer (this whole file) loads in both windows; canvas-touching
+    // pieces (importGeneratedFlow et al.) stay running in the MAIN window
+    // always — the pop-out only ever proxies an intent back via
+    // postMessage, never calls RED.* itself. addMessage() and everything it
+    // calls runs completely unmodified in either window. Unlike NR5's own
+    // reference code (which uses "*" everywhere), every postMessage here
+    // pins targetOrigin to location.origin.
+    //
+    // Slice 1: read-only chat mirror. Slice 2: sending chat from the
+    // pop-out (relays a "sendChat" intent; the parent's own send() does the
+    // rest, reply included, via this same relay). Slice 3 (below): a plain
+    // Generate/Document review panel's "Add to workspace" button becomes
+    // functional in the pop-out too — Modify and the /build loop are NOT
+    // covered yet (Modify's diff is computed against LIVE RED.nodes state,
+    // which the pop-out doesn't have; the build loop's import has loop-
+    // state follow-up that can't be safely re-triggered from a relayed
+    // click) — both stay inert-HTML-only for now, known gaps.
 
     // Relays one newly-added top-level #fp-messages child to the pop-out by
     // its rendered HTML. Event handlers don't survive serialization, so the
@@ -5133,6 +5155,37 @@
         $promptBox.val("");
     }
 
+    // Slice 3: relayed HTML for a plain Generate/Document review panel
+    // (addGeneratedReview tags these with data-fp-apply-flow — see there
+    // for why the /build loop's panels are excluded) carries the flow data
+    // right in the markup, since outerHTML serializes every attribute.
+    // Re-validating/re-rendering in the pop-out isn't needed (and wouldn't
+    // work anyway — RED.nodes.getType has no installed types in this
+    // window) — the parent already validated everything before the
+    // snapshot was relayed. This just rebinds ONE button to ask the parent
+    // to do exactly what it would do if the same button were clicked in
+    // the sidebar.
+    function bindApplyButtons($scope) {
+        // appendMessage's scope IS the tagged panel itself (a single newly
+        // relayed top-level element); initialSync's scope is the container
+        // around many descendants — cover both with filter()+find().
+        $scope.filter("[data-fp-apply-flow]").add($scope.find("[data-fp-apply-flow]")).each(function () {
+            var $panel = $(this);
+            if ($panel.data("fp-apply-bound")) { return; }
+            $panel.data("fp-apply-bound", true);
+            var flow;
+            try { flow = JSON.parse($panel.attr("data-fp-apply-flow")); } catch (e) { return; }
+            $panel.find(".fp-review-actions button.red-ui-button-primary").on("click", function () {
+                var $btn = $(this);
+                $btn.prop("disabled", true).text("Click the canvas to place…");
+                if (!window.opener || window.opener.closed) { return; }
+                try {
+                    window.opener.postMessage({ event: "applyGenerated", flow: flow }, location.origin);
+                } catch (e) { /* ignore */ }
+            });
+        });
+    }
+
     function initPopout() {
         var content = $(
             '<div id="fp-root">' +
@@ -5175,9 +5228,11 @@
             var data = evt.data || {};
             if (data.event === "initialSync") {
                 el("#fp-messages").html(data.html);
+                bindApplyButtons(el("#fp-messages"));
                 scrollMessagesToBottom(true);
             } else if (data.event === "appendMessage") {
                 el("#fp-messages").append(data.html);
+                bindApplyButtons(el("#fp-messages").children().last());
                 scrollMessagesToBottom();
             } else if (data.event === "removeMessage") {
                 el("#" + data.id).remove();
@@ -5591,19 +5646,20 @@
                 }
             });
 
-            // Pop-out slice 2: the ONLY child->parent intent so far is
-            // "send this chat message" — the pop-out itself never calls
-            // send()/collectSelectionContext() directly (see
-            // sendChatFromPopout's comment), it just asks the main window
-            // to run the exact same send("chat", ...) a sidebar Send click
-            // would. The reply reaches the pop-out via the existing
-            // #fp-messages relay, same as any other new message.
+            // Pop-out child->parent intents: "send this chat message"
+            // (slice 2) and "import this already-reviewed flow" (slice 3).
+            // Neither runs anything in the pop-out's own window — both just
+            // ask the main window to do exactly what the equivalent sidebar
+            // click would. Replies/confirmations reach the pop-out via the
+            // existing #fp-messages relay, same as any other new message.
             window.addEventListener("message", function (evt) {
                 if (evt.origin !== location.origin) { return; }
                 if (evt.source !== popoutWindow) { return; }
                 var data = evt.data || {};
                 if (data.event === "sendChat" && data.prompt) {
                     send("chat", data.prompt);
+                } else if (data.event === "applyGenerated" && Array.isArray(data.flow)) {
+                    importGeneratedFlow(data.flow);
                 }
             });
 
