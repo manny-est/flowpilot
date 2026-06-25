@@ -2823,15 +2823,22 @@
             : suggestedAction.prompt;
 
         var isChatMode = suggestedAction.mode === "chat";
+        var titleText = isChatMode ? "Switch to Chat" : "Cleared for takeoff — " + modeLabel;
+
         var $row = $("<div>").addClass("fp-chip-row");
-        $("<button>")
-            .addClass("red-ui-button red-ui-button-small fp-chip")
+        var $card = $("<button>")
+            .addClass("fp-chip fp-chip-card")
             .attr("type", "button")
-            .attr("title", (isChatMode ? "Switch to Chat — " : "Cleared for takeoff — ") + suggestedAction.prompt)
+            .attr("title", suggestedAction.prompt)
+            .on("click", function () { applySuggestedAction(suggestedAction); });
+        $("<span>").addClass("fp-chip-icon")
             .append($("<i>").addClass(isChatMode ? "fa fa-comment" : "fa fa-paper-plane"))
-            .append($("<span>").text(" " + modeLabel + ": " + preview))
-            .on("click", function () { applySuggestedAction(suggestedAction); })
-            .appendTo($row);
+            .appendTo($card);
+        var $body = $("<span>").addClass("fp-chip-body").appendTo($card);
+        $("<span>").addClass("fp-chip-title").text(titleText).appendTo($body);
+        $("<span>").addClass("fp-chip-sub").text(preview).appendTo($body);
+        $("<span>").addClass("fp-chip-go").html("&rsaquo;").appendTo($card);
+        $card.appendTo($row);
 
         if (suggestedAction.selectionHint) {
             $("<div>").addClass("fp-chip-hint").text("Tip: " + suggestedAction.selectionHint).appendTo($row);
@@ -2842,19 +2849,23 @@
     }
 
     // Renders a single-button call-to-action chip below the latest message
-    // — used by first-run onboarding to jump straight to Settings.
+    // — used by first-run onboarding to jump straight to Settings. Same
+    // big icon-tile card as renderActionChip, just without a sub-line.
     function renderChip(label, iconClass, onClick) {
         var $box = el("#fp-messages");
         if (!$box.length) { return; }
 
         var $row = $("<div>").addClass("fp-chip-row");
-        $("<button>")
-            .addClass("red-ui-button red-ui-button-small fp-chip")
+        var $card = $("<button>")
+            .addClass("fp-chip fp-chip-card")
             .attr("type", "button")
-            .append($("<i>").addClass(iconClass))
-            .append($("<span>").text(" " + label))
-            .on("click", onClick)
-            .appendTo($row);
+            .on("click", onClick);
+        $("<span>").addClass("fp-chip-icon").append($("<i>").addClass(iconClass)).appendTo($card);
+        $("<span>").addClass("fp-chip-body")
+            .append($("<span>").addClass("fp-chip-title").text(label))
+            .appendTo($card);
+        $("<span>").addClass("fp-chip-go").html("&rsaquo;").appendTo($card);
+        $card.appendTo($row);
 
         $box.append($row);
         scrollMessagesToBottom();
@@ -5649,6 +5660,82 @@
     white-space: nowrap;
 }
 
+/* Big icon-tile chip card (renderActionChip/renderChip's single-CTA
+   chips only — NOT the multi-option clarifying-question buttons below,
+   which stay small/inline since several sit side by side). Cockpit-family
+   styling matching .fp-action-bar's fixed dark palette intentionally —
+   "AI-armed and user-armed controls read as one language." */
+.fp-chip-card {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: #141a21;
+    border: 1px solid #2c3742;
+    border-radius: 9px;
+    padding: 10px 12px;
+    color: #dfe6ee;
+    cursor: pointer;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 2px 6px rgba(0, 0, 0, 0.18);
+    transition: border-color .12s ease, box-shadow .12s ease;
+    text-align: left;
+    white-space: normal;
+}
+
+.fp-chip-card:hover {
+    border-color: #46d39a;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 0 1px #46d39a, 0 0 14px -2px #46d39a;
+}
+
+.fp-chip-card:active {
+    transform: translateY(1px);
+}
+
+.fp-chip-card .fp-chip-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    flex: none;
+    border-radius: 7px;
+    color: #46d39a;
+    background: rgba(70, 211, 154, 0.10);
+    border: 1px solid rgba(70, 211, 154, 0.35);
+}
+
+.fp-chip-card .fp-chip-body {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: block;
+}
+
+.fp-chip-card .fp-chip-title {
+    display: block;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: #fff;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fp-chip-card .fp-chip-sub {
+    display: block;
+    font-size: 11px;
+    color: #8a96a3;
+    margin-top: 1px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fp-chip-card .fp-chip-go {
+    flex: none;
+    color: #46d39a;
+    font-size: 16px;
+}
+
 .fp-chip-hint {
     margin-top: 4px;
     font-size: 12px;
@@ -5897,6 +5984,7 @@
     background: rgba(31, 136, 229, 0.16) !important;
     border-color: #1f88e5 !important;
     color: #1f88e5 !important;
+    box-shadow: inset 0 -1px 3px rgba(0, 0, 0, 0.3), 0 0 10px -2px rgba(31, 136, 229, 0.8) !important;
 }
 
 /* Armed Query intent — lit amber, matching the mode color-coding's amber =
@@ -5906,6 +5994,26 @@
     background: rgba(255, 152, 0, 0.16) !important;
     border-color: #ff9800 !important;
     color: #cc7a00 !important;
+    box-shadow: inset 0 -1px 3px rgba(0, 0, 0, 0.3), 0 0 10px -2px rgba(255, 152, 0, 0.8) !important;
+}
+
+/* Annunciator "on" lamp — a small lit dot in the corner of an armed Execute
+   button, on top of the blue glow above. Query intents don't get this (no
+   "armed and about to act" implication for a read-only Query action). */
+.fp-intents-execute .red-ui-button.fp-action-armed {
+    position: relative;
+}
+
+.fp-intents-execute .red-ui-button.fp-action-armed::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: #1f88e5;
+    box-shadow: 0 0 6px 1px #1f88e5;
 }
 
 /* Send gets the same accent as an armed Execute action so it's clear that
@@ -5913,6 +6021,20 @@
    an action chip pre-fills the prompt and switches modes. */
 #fp-send.fp-send-armed {
     box-shadow: 0 0 0 2px #1f88e5;
+}
+
+/* Mirrors the blue Execute-armed glow above for an armed Query intent —
+   Send adopts the same amber the prompt border already shows. */
+.fp-compose.fp-mode-query #fp-send {
+    box-shadow: 0 0 0 2px #ff9800;
+    border-color: #ff9800;
+}
+
+/* Idle "ready to fly" hover — only when nothing is armed at all, so it
+   never fights the blue/amber armed treatments above. */
+.fp-compose:not(.fp-mode-query):not(.fp-mode-execute) #fp-send:hover {
+    border-color: #46d39a;
+    box-shadow: 0 0 0 2px #46d39a;
 }
 
 /* /demo: once the sample prompt has finished typing in, gently pulse Send
@@ -5952,12 +6074,15 @@
 }
 
 /* Default (non-hover, non-armed) look for buttons on the dark cockpit
-   strip — light-on-dark. Deliberately NOT !important so the existing
-   amber/blue hover and .fp-action-armed rules (above) keep winning. */
+   strip — light-on-dark, with a recessed inset shadow so idle buttons
+   read as physical "instrument panel" keys, not flat UI chrome.
+   Deliberately NOT !important so the existing amber/blue hover and
+   .fp-action-armed rules (above) keep winning. */
 .fp-action-bar .red-ui-button {
     background: transparent;
     border-color: rgba(255, 255, 255, 0.35);
     color: #f0f4f8;
+    box-shadow: inset 0 -2px 4px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 .fp-action-bar .red-ui-button:hover {
@@ -5983,12 +6108,16 @@
     color: #cc7a00 !important;
     border-color: rgba(255, 152, 0, 0.5) !important;
     background: rgba(255, 152, 0, 0.12) !important;
+    box-shadow: inset 0 -2px 4px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.05),
+        0 0 8px -2px rgba(255, 152, 0, 0.6) !important;
 }
 
 .fp-icon-btn-execute:hover {
     color: #1f88e5 !important;
     border-color: rgba(31, 136, 229, 0.5) !important;
     background: rgba(31, 136, 229, 0.12) !important;
+    box-shadow: inset 0 -2px 4px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.05),
+        0 0 8px -2px rgba(31, 136, 229, 0.6) !important;
 }
 
 .fp-intents {
