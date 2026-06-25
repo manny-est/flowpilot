@@ -5186,7 +5186,51 @@
         });
     }
 
+    // The Summary/JSON tab toggle (addGeneratedReview, addModifyReview,
+    // and anything else using the same .fp-tabs/.fp-tab-panel pattern) is
+    // purely local DOM show/hide — unlike Apply, it needs no parent
+    // access at all, so this works for EVERY relayed review panel,
+    // Modify's included, even though Modify's Apply button itself still
+    // doesn't. Lost the same way Apply's original handler did (relayed
+    // HTML has no event listeners) — this just rebinds the toggle.
+    function bindTabSwitching($scope) {
+        $scope.filter(".fp-tabs").add($scope.find(".fp-tabs")).each(function () {
+            var $tabs = $(this);
+            if ($tabs.data("fp-tabs-bound")) { return; }
+            $tabs.data("fp-tabs-bound", true);
+            var $tabButtons = $tabs.find(".fp-tab");
+            var $panels = $tabs.siblings(".fp-tab-panel");
+            $tabButtons.each(function (i) {
+                $(this).on("click", function () {
+                    $tabButtons.removeClass("fp-tab-active");
+                    $(this).addClass("fp-tab-active");
+                    $panels.addClass("fp-hidden");
+                    $panels.eq(i).removeClass("fp-hidden");
+                });
+            });
+        });
+    }
+
+    // Matches Node-RED 5's own debug pop-out (debug.js) exactly: the dark/
+    // light preference lives in localStorage under "view-dark-theme"
+    // ("dark" / "auto" / anything else = light), shared with the main
+    // window since both are same-origin. red/style.min.css's dark-mode
+    // variable overrides are scoped under the SAME nr-theme-dark class the
+    // main editor toggles on <html> — without this, the pop-out always
+    // rendered light regardless of the editor's actual theme.
+    function applyPopoutTheme() {
+        var themeVariant = localStorage.getItem("view-dark-theme");
+        var isDark = false;
+        if (themeVariant === "dark") {
+            isDark = true;
+        } else if (themeVariant === "auto") {
+            isDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+        }
+        document.documentElement.classList.toggle("nr-theme-dark", isDark);
+    }
+
     function initPopout() {
+        applyPopoutTheme();
         var content = $(
             '<div id="fp-root">' +
             '  <div class="fp-header">' +
@@ -5229,10 +5273,12 @@
             if (data.event === "initialSync") {
                 el("#fp-messages").html(data.html);
                 bindApplyButtons(el("#fp-messages"));
+                bindTabSwitching(el("#fp-messages"));
                 scrollMessagesToBottom(true);
             } else if (data.event === "appendMessage") {
                 el("#fp-messages").append(data.html);
                 bindApplyButtons(el("#fp-messages").children().last());
+                bindTabSwitching(el("#fp-messages").children().last());
                 scrollMessagesToBottom();
             } else if (data.event === "removeMessage") {
                 el("#" + data.id).remove();

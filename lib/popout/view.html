@@ -20,11 +20,13 @@
 <script src="/red/red.min.js"></script>
 <script src="/flowpilot/core.js"></script>
 <script type="text/javascript">
-    // v1 review-only: this window never connects to the runtime or loads a
-    // live flow (RED.nodes/RED.view here are inert, disconnected shells,
-    // exactly like Node-RED's own debug pop-out) — it only renders a relayed
-    // mirror of the main window's chat thread. See flowpilot-core.js's
-    // initPopout() for the actual logic.
+    // This window never connects to the runtime or loads a live flow
+    // (RED.nodes/RED.view here are inert, disconnected shells, exactly like
+    // Node-RED's own debug pop-out) — every canvas-touching action is
+    // proxied back to the main window via postMessage. See
+    // flowpilot-core.js's initPopout() for the actual logic (including
+    // applying the user's dark/light theme preference, the same way
+    // Node-RED's own debug pop-out's debug.js does).
     FlowPilotCore.initPopout();
 </script>
 </body>
