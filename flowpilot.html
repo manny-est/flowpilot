@@ -710,7 +710,8 @@
         el("#fp-messages").empty();
         conversationHistory = [];
         attachedDebugMessages = [];
-        pinnedSelectionIds = null;
+        activeBuildLoop = null;
+        disarmExecuteAction(); // also clears pinnedSelectionIds
         conversationId = newConversationId();
         fpChatSnappedToBottom = true;
         updateSelectionStatus();
