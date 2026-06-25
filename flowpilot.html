@@ -237,15 +237,15 @@
         // /build loop: the first debug message to arrive once deployed is
         // auto-attached (reusing the same attachedDebugMessages array/UI
         // the manual "Attach" button uses, so the status strip's "🐛 N
-        // attached" indicator just works) and advances the waypoint to
-        // "review". Sending the actual review request from there is a
-        // later step — for now this just gets the output captured and
-        // visible without an extra manual click.
+        // attached" indicator just works), advances the waypoint to
+        // "review", and immediately fires the auto-review request — see
+        // runBuildReview.
         if (activeBuildLoop && activeBuildLoop.waypoint === "attach") {
             attachedDebugMessages.push(entry);
             updateDebugStatus();
             activeBuildLoop.waypoint = "review";
             renderLoopStepper(activeBuildLoop);
+            runBuildReview(activeBuildLoop);
         }
     }
 
@@ -3218,7 +3218,7 @@
         var flow = Array.isArray(data.flow) ? layoutGeneratedFlow(data.flow) : data.flow;
         addMessage("assistant", data.explanation || "(no explanation returned)");
         pushHistory("assistant", data.explanation || "(no explanation returned)");
-        addGeneratedReview(flow, function () { startBuildLoop(goalPrompt); });
+        addGeneratedReview(flow, function (importResult) { startBuildLoop(goalPrompt, flow, importResult); });
         renderActionChip(data.suggestedAction);
         setBusy(false);
         updateSelectionStatus();
@@ -4622,7 +4622,7 @@
         } else if (loop.waypoint === "attach") {
             hint = "Trigger the flow, then check the Debug sidebar — I'll attach the next debug message automatically.";
         } else if (loop.waypoint === "review") {
-            hint = "Debug output attached. Reviewing against the goal isn't wired up yet — more soon.";
+            hint = "Debug output attached — reviewing against the goal…";
         }
         if (hint) { $("<div>").addClass("fp-loop-hint").text(hint).appendTo($msg); }
 
@@ -4638,18 +4638,165 @@
 
     // Called once the first build proposal is actually imported (not on a
     // clarifying question or prose-only reply — see handleBuildResult). goal
-    // is the original prompt text, kept verbatim so the eventual review step
-    // can compare debug output against what the user actually asked for
-    // rather than re-deriving it from the model's own "explanation".
-    function startBuildLoop(goal) {
+    // is the original prompt text, kept verbatim so the review step can
+    // compare debug output against what the user actually asked for rather
+    // than re-deriving it from the model's own "explanation".
+    //
+    // proposedNodes/importResult let us recover the REAL node ids Node-RED
+    // just generated: importGeneratedFlow calls RED.view.importNodes with
+    // generateIds:true, so the model's own placeholder ids (e.g. "n1") never
+    // end up on the canvas — importResult.nodeMap maps each placeholder id
+    // to the real live node object, which is the only way later review/fix
+    // requests can target the right nodes via collectSelectionContext.
+    function startBuildLoop(goal, proposedNodes, importResult) {
+        var nodeMap = importResult && importResult.nodeMap;
+        var nodeIds = [];
+        if (nodeMap && Array.isArray(proposedNodes)) {
+            proposedNodes.forEach(function (n) {
+                var real = n && n.id && nodeMap[n.id];
+                if (real && real.id) { nodeIds.push(real.id); }
+            });
+        }
         activeBuildLoop = {
             goal: goal,
+            nodeIds: nodeIds,
             iteration: 1,
             maxIterations: getAgentLoopMaxIterations(),
             waypoint: "apply",
             conversationId: conversationId
         };
         renderLoopStepper(activeBuildLoop);
+    }
+
+    // Auto-fires once the loop reaches the "review" waypoint (see
+    // onDebugMessage's auto-attach). Reuses the EXISTING /flowpilot/modify
+    // route and its "Diagnostic / review instructions" handling verbatim —
+    // the same path that already answers "Review this"/"What's wrong here?"
+    // requests by either replying in plain text (nothing to fix) or
+    // proposing a changes/newNodes/etc envelope. No new backend route or
+    // prompt needed; only the instruction text and context (the loop's own
+    // node ids instead of the live/pinned canvas selection) are synthetic.
+    function runBuildReview(loop) {
+        var context = collectSelectionContext(loop.nodeIds);
+        context = attachDebugContext(context);
+        var instruction = "Review the attached debug output against this build goal: \"" +
+            loop.goal + "\". If it fully satisfies the goal, say so in plain text " +
+            "— no changes needed. If something's wrong, propose the fix directly " +
+            "as a patch in this same response, exactly as you would for any other " +
+            "review request.";
+
+        var historyPayload = buildHistoryPayload();
+        var label = "Build review (iteration " + loop.iteration + "/" + loop.maxIterations + ")";
+        addMessage("user", label);
+        pushHistory("user", label);
+
+        var ap = activeProvider();
+        var isAgentLoop = ap && ap.supportsTools;
+        setBusy(true);
+        showPending(isAgentLoop);
+
+        var payload = {
+            prompt: instruction, context: context,
+            history: historyPayload.messages, historyTruncated: historyPayload.truncated,
+            conversationId: loop.conversationId
+        };
+
+        function onReviewError(msg, xhr) {
+            hidePending();
+            var raw = xhr && xhr.responseJSON && xhr.responseJSON.raw;
+            handleExecuteError(msg, raw);
+            // Loop stays at "review" — the next debug message (or Stop) is
+            // still available; nothing to roll back since nothing changed.
+        }
+
+        if (isAgentLoop) {
+            runAgentLoop("flowpilot/modify", payload,
+                { mode: "modify", context: context, prompt: instruction },
+                handleBuildReviewResult, onReviewError);
+            return;
+        }
+        if (currentSettings.streamingEnabled) {
+            payload.stream = true;
+            sendExecuteStream("modify", payload, handleBuildReviewResult);
+            return;
+        }
+        ajaxJson("POST", "flowpilot/modify", payload, handleBuildReviewResult, onReviewError);
+    }
+
+    // Result handler for runBuildReview — three possible shapes, same as any
+    // /flowpilot/modify response: a clarifying question, a prose-only reply
+    // (nothing to fix — the loop is done), or a changes/newNodes/etc fix
+    // envelope (routed through the same addModifyReview/applyModifications
+    // diff-then-Apply pipeline as a manual Modify, then the loop advances
+    // back to "apply" for the next deploy/test cycle, or stops if the
+    // iteration cap is reached).
+    function handleBuildReviewResult(data) {
+        hidePending();
+        var loop = activeBuildLoop;
+        if (!loop) {
+            // Stopped while this request was in flight — nothing loop-
+            // specific left to do, just render the response normally.
+            handleModifyResult(data);
+            return;
+        }
+
+        if (data.question) {
+            var qText = (data.explanation ? data.explanation + "\n\n" : "") + data.question;
+            addMessage("assistant", qText);
+            pushHistory("assistant", qText);
+            renderClarifyingQuestion(data.questionOptions);
+            stopBuildLoop("Build loop paused — the review needs your input above. " +
+                "Answer it, then continue manually with Modify, or start a fresh /build.");
+            setBusy(false);
+            updateSelectionStatus();
+            return;
+        }
+
+        if (data.prose) {
+            addMessage("assistant", data.explanation || "(no content returned)");
+            pushHistory("assistant", data.explanation || "");
+            renderActionChip(data.suggestedAction);
+            stopBuildLoop("Touchdown — the debug output matches the goal.");
+            setBusy(false);
+            updateSelectionStatus();
+            return;
+        }
+
+        var capReached = loop.iteration >= loop.maxIterations;
+        addMessage("assistant", data.explanation || "(no explanation returned)");
+        pushHistory("assistant", data.explanation || "(no explanation returned)");
+        addModifyReview(data.flow, data.newNodes || [], data.newWires || [], data.removeNodes || [],
+            function (nodeDiffs, removeNodesArg, $applyBtn, idMap) {
+                applyModifications(nodeDiffs, removeNodesArg, $applyBtn, idMap);
+                if (!activeBuildLoop) { return; }
+                // Keep the loop's tracked node ids in sync with whatever this
+                // fix just inserted/removed, so the NEXT review can see them.
+                if (idMap) {
+                    Object.keys(idMap).forEach(function (placeholderId) {
+                        var realId = idMap[placeholderId];
+                        if (realId && loop.nodeIds.indexOf(realId) === -1) { loop.nodeIds.push(realId); }
+                    });
+                }
+                if (Array.isArray(removeNodesArg) && removeNodesArg.length) {
+                    loop.nodeIds = loop.nodeIds.filter(function (id) { return removeNodesArg.indexOf(id) === -1; });
+                }
+                // Each iteration should review its OWN fresh debug output,
+                // not a stale message from a prior failed attempt.
+                attachedDebugMessages = [];
+                updateDebugStatus();
+                if (capReached) {
+                    stopBuildLoop("Couldn't fully verify after " + loop.maxIterations +
+                        " attempt(s) — applied this last fix, but stopping the auto-loop " +
+                        "here. Keep iterating manually with Modify if needed.");
+                } else {
+                    loop.iteration++;
+                    loop.waypoint = "apply";
+                    renderLoopStepper(loop);
+                }
+            });
+        renderActionChip(data.suggestedAction);
+        setBusy(false);
+        updateSelectionStatus();
     }
 
     // ---- Tabbed review + import --------------------------------------------
@@ -4664,7 +4811,11 @@
     // actually lands. Plain Generate passes nothing, so it's a no-op there.
     function importGeneratedFlow(nodes, onImported) {
         try {
-            RED.view.importNodes(nodes, { generateIds: true });
+            // importNodes returns { nodeMap }, mapping each input node's own
+            // id to the real live node object Node-RED just created (ids are
+            // regenerated since generateIds:true) — onImported (the /build
+            // loop) needs this to know what it actually has on the canvas.
+            var importResult = RED.view.importNodes(nodes, { generateIds: true });
             // Ground follow-up turns in what was just
             // imported (placement itself happens on the next canvas click).
             var n = Array.isArray(nodes) ? nodes.length : 0;
@@ -4672,7 +4823,7 @@
             addMessage("assistant", importedNote);
             pushHistory("assistant", importedNote);
             updateSelectionStatus();
-            if (typeof onImported === "function") { onImported(); }
+            if (typeof onImported === "function") { onImported(importResult); }
         } catch (e) {
             addMessage("error", "Import failed: " + (e && e.message ? e.message : String(e)));
         }
