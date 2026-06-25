@@ -4593,9 +4593,16 @@
         { id: "done", label: "Done" }
     ];
 
+    // The single exit point for every way a build loop ends — Touchdown,
+    // the cap being reached, pausing on a clarifying question, or the user
+    // clicking Stop. Releases Build mode and its pinned selection too: once
+    // the loop is over, there's no reason to keep the original arm-time
+    // selection pinned — the user can just select fresh nodes for whatever
+    // comes next.
     function stopBuildLoop(note) {
         activeBuildLoop = null;
         el("#fp-loop-stepper").remove();
+        disarmExecuteAction();
         if (note) { addMessage("assistant", note); }
     }
 
