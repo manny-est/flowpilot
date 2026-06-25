@@ -5104,6 +5104,35 @@
     // relays any user-initiated close/reopen back via window.opener so the
     // main window's "the pop-out is closed" state (popoutWindow.closed)
     // stays accurate without polling.
+    // Slice 2: sending from the pop-out. Rather than running its own
+    // send()/collectSelectionContext()/settings — which would mean keeping
+    // conversationHistory, conversationId, and currentSettings in sync
+    // across two independent window globals — the pop-out's Send just
+    // relays the typed text back to the parent, which runs the EXISTING
+    // send("chat", promptOverride) completely unmodified. The parent
+    // already has live canvas access, so a selection on the main canvas
+    // still gets attached as context exactly as if the user had typed in
+    // the sidebar — no separate "context proxy" needed for chat at all.
+    // The reply (and the user's own echoed bubble, and the pending
+    // indicator) all reach the pop-out via the SAME MutationObserver relay
+    // slice 1 already built — addMessage()/showPending()/hidePending() are
+    // all just #fp-messages child add/remove, so nothing new was needed
+    // there. Known gap, same family as slice 1's: the agent loop's
+    // narration text ("Cruising… (step N/8)") updates an EXISTING pending
+    // element's text rather than adding/removing a child, so the pop-out's
+    // copy won't visibly update step-by-step — it'll just show the
+    // dots until the final reply lands.
+    function sendChatFromPopout() {
+        var $promptBox = el("#fp-prompt");
+        var prompt = $promptBox.length ? $promptBox.val().trim() : "";
+        if (!prompt) { return; }
+        if (!window.opener || window.opener.closed) { return; }
+        try {
+            window.opener.postMessage({ event: "sendChat", prompt: prompt }, location.origin);
+        } catch (e) { /* opener navigated/closed — nothing to recover here */ }
+        $promptBox.val("");
+    }
+
     function initPopout() {
         var content = $(
             '<div id="fp-root">' +
@@ -5112,17 +5141,34 @@
             '      <div class="fp-logo">FP</div>' +
             '      <div class="fp-heading">' +
             '        <div class="fp-title">FlowPilot</div>' +
-            '        <div class="fp-subtitle">Mirror — read-only</div>' +
+            '        <div class="fp-subtitle">Chat mirror</div>' +
             '      </div>' +
             '    </div>' +
             '  </div>' +
             '  <div id="fp-chat-panel" class="fp-panel">' +
             '    <div id="fp-messages" class="fp-messages"></div>' +
+            '    <div class="fp-compose">' +
+            '      <div class="fp-prompt-wrap">' +
+            '        <textarea id="fp-prompt" placeholder="Chat — Generate/Document/Modify/Build stay in the main window for now…"></textarea>' +
+            '      </div>' +
+            '      <div class="fp-status-strip">' +
+            '        <span class="fp-status-spacer"></span>' +
+            '        <button id="fp-send" class="red-ui-button red-ui-button-primary" type="button">Send</button>' +
+            '      </div>' +
+            '    </div>' +
             '  </div>' +
             '</div>'
         );
         $("#fp-popout-root").append(content);
         $root = content;
+
+        el("#fp-send").on("click", sendChatFromPopout);
+        el("#fp-prompt").on("keydown", function (e) {
+            if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                sendChatFromPopout();
+            }
+        });
 
         window.addEventListener("message", function (evt) {
             if (evt.origin !== location.origin) { return; }
@@ -5542,6 +5588,22 @@
             $(window).on("beforeunload", function () {
                 if (popoutWindow) {
                     try { popoutWindow.close(); } catch (e) { /* ignore */ }
+                }
+            });
+
+            // Pop-out slice 2: the ONLY child->parent intent so far is
+            // "send this chat message" — the pop-out itself never calls
+            // send()/collectSelectionContext() directly (see
+            // sendChatFromPopout's comment), it just asks the main window
+            // to run the exact same send("chat", ...) a sidebar Send click
+            // would. The reply reaches the pop-out via the existing
+            // #fp-messages relay, same as any other new message.
+            window.addEventListener("message", function (evt) {
+                if (evt.origin !== location.origin) { return; }
+                if (evt.source !== popoutWindow) { return; }
+                var data = evt.data || {};
+                if (data.event === "sendChat" && data.prompt) {
+                    send("chat", data.prompt);
                 }
             });
 
