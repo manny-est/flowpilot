@@ -234,13 +234,17 @@
             debugMessageBuffer = debugMessageBuffer.slice(-DEBUG_BUFFER_MAX);
         }
 
-        // /build loop: the first debug message to arrive once deployed is
-        // auto-attached (reusing the same attachedDebugMessages array/UI
-        // the manual "Attach" button uses, so the status strip's "🐛 N
-        // attached" indicator just works), advances the waypoint to
-        // "review", and immediately fires the auto-review request — see
-        // runBuildReview.
-        if (activeBuildLoop && activeBuildLoop.waypoint === "attach") {
+        // /build loop: auto-attach is gated to debug messages from a debug
+        // NODE THE LOOP ITSELF BUILT (msg.id is the emitting debug node's
+        // own id — see core 21-debug.js's sendDebug({id: node.id, ...})),
+        // not just whatever debug message happens to arrive next. Without
+        // this, an unrelated debug node firing elsewhere in the workspace
+        // (a different flow tab, a startup error, etc.) could win the race
+        // and get reviewed instead of the flow this loop actually built —
+        // confirmed live: a Home Assistant node's unrelated error got
+        // auto-attached and "reviewed" instead of the real output.
+        if (activeBuildLoop && activeBuildLoop.waypoint === "attach" &&
+            activeBuildLoop.nodeIds.indexOf(msg.id) !== -1) {
             attachedDebugMessages.push(entry);
             updateDebugStatus();
             activeBuildLoop.waypoint = "review";
@@ -4582,7 +4586,7 @@
     var activeBuildLoop = null;
 
     var BUILD_LOOP_WAYPOINTS = [
-        { id: "apply", label: "Apply" },
+        { id: "apply", label: "Deploy" },
         { id: "attach", label: "Attach debug" },
         { id: "review", label: "Review" },
         { id: "done", label: "Done" }
