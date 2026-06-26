@@ -1702,6 +1702,18 @@
             // (e.g. a "data" field holding a JWT).
             out[k] = redactDebugValue(v, k);
         });
+        // "g" itself (the bare group id) is skipped above like x/y/w/h —
+        // meaningless to the model on its own. But WHICH group a node
+        // belongs to, and that group's name, is real semantic information
+        // (Phase 8.5 C2) — resolve it via RED.nodes.group(), one level
+        // deep only (a node's immediate group, not its ancestor chain if
+        // nested groups are in play). Distinct from buildConnections()'s
+        // "subFlow" numbering below, which is connectivity-based ("are
+        // these wired together"), not an actual visual group.
+        if (n.g && RED.nodes.group) {
+            var grp = RED.nodes.group(n.g);
+            if (grp) { out.group = { id: grp.id, name: grp.name || "" }; }
+        }
         return out;
     }
 
@@ -3784,12 +3796,15 @@
         return idMap;
     }
 
-    // Look up a live node by id, falling back to the per-tab junction registry.
-    // Junction nodes (wire-splice points) are NOT in RED.nodes.node()'s normal
-    // registry — they live in RED.nodes.junctions(z) only. Without this fallback,
-    // any modNode/removeNodes id that refers to a junction reads as "not found",
-    // which (in addModifyReview) renders "⚠ Node not found in editor" and blocks
-    // Apply entirely, even when the junction itself is unchanged.
+    // Look up a live node by id, falling back to the per-tab junction
+    // registry, then the group registry. Junction nodes (wire-splice
+    // points) and groups are NOT in RED.nodes.node()'s normal registry —
+    // confirmed via core source (red.js's getNode() only checks
+    // configNodes/allNodes) — junctions live in RED.nodes.junctions(z),
+    // groups in RED.nodes.group(id). Without these fallbacks, a
+    // modNode/removeNodes id referring to either reads as "not found",
+    // which (in addModifyReview) renders "⚠ Node not found in editor" and
+    // blocks Apply entirely.
     function findLiveNode(id) {
         var node = (RED.nodes && RED.nodes.node) ? RED.nodes.node(id) : null;
         if (node) { return node; }
@@ -3799,6 +3814,10 @@
             for (var i = 0; i < junctionsOnTab.length; i++) {
                 if (junctionsOnTab[i].id === id) { return junctionsOnTab[i]; }
             }
+        }
+        if (RED.nodes.group) {
+            var grp = RED.nodes.group(id);
+            if (grp) { return grp; }
         }
         return null;
     }
@@ -4305,6 +4324,23 @@
             } catch (e) {
                 addMessage("error", "Failed to remove node " + id + ": " + (e.message || e));
                 return;
+            }
+
+            // RED.nodes.remove()/removeJunction() do NOT clean up group
+            // membership at all (confirmed via core source — getNode()'s
+            // removal path never touches .g or group.nodes). Node-RED's
+            // own UI delete action does this extra bookkeeping itself
+            // (red.js's deleteSelection(), ~line 27151) rather than baking
+            // it into the data-model removal call — replicate it here so a
+            // removed grouped node doesn't leave a dangling reference in
+            // group.nodes with a stale bounding box.
+            if (liveNode.g && RED.nodes.group) {
+                var ownerGroup = RED.nodes.group(liveNode.g);
+                if (ownerGroup) {
+                    var memberIdx = ownerGroup.nodes.indexOf(liveNode);
+                    if (memberIdx !== -1) { ownerGroup.nodes.splice(memberIdx, 1); }
+                    RED.group.markDirty(ownerGroup);
+                }
             }
 
             RED.history.push({
