@@ -4467,7 +4467,7 @@
     var CORE_NODE_TYPES = {
         "inject": true, "debug": true, "complete": true, "catch": true, "status": true,
         "link in": true, "link out": true, "link call": true, "comment": true,
-        "junction": true, "unknown": true,
+        "junction": true, "unknown": true, "group": true,
         "function": true, "switch": true, "change": true, "range": true, "template": true,
         "mqtt in": true, "mqtt out": true, "mqtt-broker": true,
         "http in": true, "http response": true, "http request": true,
