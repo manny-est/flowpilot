@@ -405,9 +405,43 @@
     // follow-up turns need no reselection). Cleared on disarm/Clear Chat.
     var pinnedSelectionIds = null;
 
+    // Clicking a group's border/background in the editor selects the GROUP
+    // itself — one object, type:"group" — not its members; RED.view.selection()
+    // returns exactly that one entry, same as selecting a single regular
+    // node. For context/counting purposes the user means "everything
+    // inside it," so expand any group entries into their real member
+    // nodes via RED.group.getNodes(group, recursive, excludeGroup) — the
+    // editor's own public API for this (recursive: descend into nested
+    // sub-groups too; excludeGroup: only real nodes in the result, not
+    // the nested group containers themselves — nesting still isn't
+    // authored by FlowPilot, but a member node of one shouldn't vanish
+    // from context just because it's nested one level deeper).
+    // Returns { nodes: [...real nodes, deduped], groupCount } so callers
+    // needing just ids and callers needing the group count (the status
+    // strip) share one expansion instead of two slightly different ones.
+    function expandGroupSelection(rawNodes) {
+        var expanded = [];
+        var seen = {};
+        var groupCount = 0;
+        (rawNodes || []).forEach(function (n) {
+            if (!n) { return; }
+            if (n.type === "group") {
+                groupCount++;
+                var members = (RED.group && RED.group.getNodes) ? RED.group.getNodes(n, true, true) : [];
+                members.forEach(function (m) {
+                    if (m && !seen[m.id]) { seen[m.id] = true; expanded.push(m); }
+                });
+            } else if (!seen[n.id]) {
+                seen[n.id] = true; expanded.push(n);
+            }
+        });
+        return { nodes: expanded, groupCount: groupCount };
+    }
+
     function pinCurrentSelection() {
         var sel = (RED.view && RED.view.selection) ? RED.view.selection() : null;
-        var ids = (sel && sel.nodes) ? sel.nodes.map(function (n) { return n.id; }) : [];
+        var ids = expandGroupSelection((sel && sel.nodes) ? sel.nodes : []).nodes
+            .map(function (n) { return n.id; });
         if (ids.length) { pinnedSelectionIds = ids; }
     }
 
@@ -417,8 +451,9 @@
     function activeSelectionIds() {
         var sel = (RED.view && RED.view.selection) ? RED.view.selection() : null;
         var liveIds = (sel && sel.nodes && sel.nodes.length)
-            ? sel.nodes.map(function (n) { return n.id; }) : null;
-        return liveIds || pinnedSelectionIds;
+            ? expandGroupSelection(sel.nodes).nodes.map(function (n) { return n.id; })
+            : null;
+        return (liveIds && liveIds.length ? liveIds : null) || pinnedSelectionIds;
     }
 
     function disarmExecuteAction() {
@@ -1808,28 +1843,47 @@
     // are gathered from the workspace's full link list, same shape as
     // RED.view.selection().links (sourceInSelection/targetInSelection in
     // buildConnections still works against this nodeIds set).
+    // Gathers every link touching any node in the given list, scanning the
+    // workspace's full link set directly rather than trusting
+    // RED.view.selection().links — needed whenever the node list didn't
+    // come from a literal click-drag selection (an explicit nodeIds array,
+    // or a group's expanded membership, whose internal wiring was never
+    // part of any selection.links to begin with).
+    function linksTouchingNodes(nodes) {
+        var idSet = nodes.map(function (n) { return n.id; });
+        var links = [];
+        if (RED.nodes.eachLink) {
+            RED.nodes.eachLink(function (l) {
+                var srcId = l.source && l.source.id;
+                var tgtId = l.target && l.target.id;
+                if (idSet.indexOf(srcId) !== -1 || idSet.indexOf(tgtId) !== -1) {
+                    links.push(l);
+                }
+            });
+        }
+        return links;
+    }
+
     function collectSelectionContext(nodeIds) {
         var rawNodes, rawLinks;
         if (Array.isArray(nodeIds)) {
             rawNodes = nodeIds.map(function (id) { return RED.nodes.node(id); })
                               .filter(function (n) { return !!n; });
             if (!rawNodes.length) { return null; }
-            var idSet = rawNodes.map(function (n) { return n.id; });
-            rawLinks = [];
-            if (RED.nodes.eachLink) {
-                RED.nodes.eachLink(function (l) {
-                    var srcId = l.source && l.source.id;
-                    var tgtId = l.target && l.target.id;
-                    if (idSet.indexOf(srcId) !== -1 || idSet.indexOf(tgtId) !== -1) {
-                        rawLinks.push(l);
-                    }
-                });
-            }
+            rawLinks = linksTouchingNodes(rawNodes);
         } else {
             var sel = (RED.view && RED.view.selection) ? RED.view.selection() : null;
-            rawNodes = (sel && sel.nodes) ? sel.nodes : [];
-            rawLinks = (sel && sel.links) ? sel.links : [];
+            var expandedSel = expandGroupSelection((sel && sel.nodes) ? sel.nodes : []);
+            rawNodes = expandedSel.nodes;
             if (!rawNodes.length) { return null; }
+            // A literal click-drag selection's sel.links already has the
+            // right shape — but it never reflects a SELECTED GROUP's
+            // internal wiring (those nodes were never individually
+            // selected), so gather links directly whenever a group was
+            // part of the selection instead of trusting sel.links.
+            rawLinks = expandedSel.groupCount > 0
+                ? linksTouchingNodes(rawNodes)
+                : ((sel && sel.links) ? sel.links : []);
         }
         return {
             nodes: rawNodes.map(sanitizeNode),
@@ -2075,7 +2129,9 @@
         if (!$status.length) { return; }
 
         var sel = (RED.view && RED.view.selection) ? RED.view.selection() : null;
-        var liveCount = (sel && sel.nodes) ? sel.nodes.length : 0;
+        var expandedSel = expandGroupSelection((sel && sel.nodes) ? sel.nodes : []);
+        var liveCount = expandedSel.nodes.length;
+        var liveGroupCount = expandedSel.groupCount;
 
         var $size = el("#fp-size-status");
         var $secrets = el("#fp-secrets-status");
@@ -2088,6 +2144,14 @@
         var pinnedCount = pinnedContext ? pinnedContext.nodes.length : 0;
         var count = liveCount || pinnedCount;
 
+        // pinnedSelectionIds is already flattened to real node ids (see
+        // pinCurrentSelection/expandGroupSelection) — group membership
+        // isn't tracked once pinned, so the group count only ever applies
+        // to a CURRENTLY live selection, not a pinned fallback one.
+        var groupNote = liveCount > 0 && liveGroupCount > 0
+            ? (", " + liveGroupCount + " group" + (liveGroupCount === 1 ? "" : "s"))
+            : "";
+
         if (count === 0) {
             $status.text("No nodes selected").removeClass("fp-has-selection");
         } else if (liveCount === 0 && pinnedCount > 0) {
@@ -2099,7 +2163,7 @@
                          " for " + actionLabel + " — will be sent as context")
                    .addClass("fp-has-selection");
         } else {
-            $status.text(count + (count === 1 ? " node" : " nodes") +
+            $status.text(count + (count === 1 ? " node" : " nodes") + groupNote +
                          " selected — will be sent as context")
                    .addClass("fp-has-selection");
         }
