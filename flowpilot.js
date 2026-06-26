@@ -1574,18 +1574,34 @@ module.exports = function flowPilotRuntime(RED) {
 
     const finalRemoveNodes = Array.from(removeSet);
 
-    // "group" entries in newNodes describe MEMBERSHIP, not a regular
-    // node to insert — pull them into their own "newGroups" field rather
-    // than letting applyInsertions try to RED.nodes.add() them (that API
-    // doesn't know what a group is at all). Each entry's "nodes" is the
-    // FULL desired membership for that group id: if the id matches an
-    // EXISTING live group, the frontend reconciles membership to match
-    // exactly (add/remove as needed); if not, it creates a new group with
-    // exactly that membership. See applyGroupChanges() in flowpilot-core.js.
+    // Groups describe MEMBERSHIP, not a regular node to insert — the
+    // model is taught (modify-system-prompt.js) to put them in their OWN
+    // top-level "newGroups" field, never inside "newNodes" (that API
+    // doesn't know what a group is at all — applyInsertions would try to
+    // RED.nodes.add() it). Bug found live: this used to ONLY look for a
+    // stray type:"group" entry INSIDE newNodes and never read
+    // result.newGroups at all — a model correctly following the prompt's
+    // own instructions had its groups silently dropped ("No changes
+    // detected"). Read the real field now; still tolerate a stray
+    // type:"group" entry left inside newNodes as a fallback, merging
+    // both rather than requiring exactly one style. Each entry's "nodes"
+    // is the FULL desired membership for that group id: if the id
+    // matches an EXISTING live group, the frontend reconciles membership
+    // to match exactly (add/remove as needed, down to zero — ungrouping
+    // everyone); if not, it creates a new group with exactly that
+    // membership. See applyGroupChanges() in flowpilot-core.js.
     const allNewNodes = result.newNodes || [];
-    const newGroups = allNewNodes.filter(function (n) { return n && n.type === "group"; });
+    const strayGroupNodes = allNewNodes.filter(function (n) { return n && n.type === "group"; });
     const newNodes = allNewNodes.filter(function (n) { return !(n && n.type === "group"); });
     const newNodeIdSet = new Set(newNodes.map(function (n) { return n && n.id; }).filter(Boolean));
+
+    const declaredGroups = Array.isArray(result.newGroups) ? result.newGroups : [];
+    const seenGroupIds = {};
+    const newGroups = declaredGroups.concat(strayGroupNodes).filter(function (g) {
+      if (!g || !g.id || seenGroupIds[g.id]) { return false; }
+      seenGroupIds[g.id] = true;
+      return true;
+    });
 
     // Validate newWires references: each from/to must be either an existing
     // context node id or a placeholder id present in newNodes. A group id
@@ -1602,12 +1618,15 @@ module.exports = function flowPilotRuntime(RED) {
     // existing context node id or a new-node placeholder id — explicitly
     // NOT another group's id, so nested groups-within-groups (out of scope
     // for v1) are naturally rejected rather than silently mis-imported.
+    // An EMPTY "nodes" is allowed through here — meaningless for creating
+    // a brand new group (the frontend already no-ops that case), but a
+    // legitimate "ungroup everyone in this EXISTING group" when "id"
+    // matches a live one, which only the frontend can tell apart.
     if (newGroups.length > 0) {
       const groupProblems = [];
       newGroups.forEach(function (g, i) {
         if (!g || !g.id) { groupProblems.push("group " + i + " missing id"); return; }
         const members = Array.isArray(g.nodes) ? g.nodes : [];
-        if (!members.length) { groupProblems.push("group " + i + " (" + g.id + ") has no member nodes"); return; }
         members.forEach(function (ref) {
           if (!originalIds.has(String(ref)) && !newNodeIdSet.has(String(ref))) {
             groupProblems.push("group " + i + " member '" + ref + "' not in existing or new nodes");

@@ -3470,7 +3470,18 @@
         x: 1, y: 1, z: 1, _def: 1, _: 1, changed: 1, dirty: 1, selected: 1,
         valid: 1, validationErrors: 1, _index: 1, resize: 1, moved: 1,
         w: 1, h: 1, l: 1, __outputs: 1, inputs: 1, g: 1,
-        _config: 1, _orig: 1, credentials: 1
+        _config: 1, _orig: 1, credentials: 1,
+        // "group" is a SYNTHETIC field sanitizeNode adds to context (the
+        // real live property is "g", already skipped above) — informational
+        // only. Live-confirmed gap: the model tried to "ungroup" by setting
+        // group:null on member nodes via a "changes" patch; without this
+        // skip, computeNodeDiff happily diffed a property that doesn't
+        // exist on the real node object, and Tier 1 "applied" it by writing
+        // a meaningless liveNode.group = null — reporting false success
+        // while actually doing nothing to real membership (RED.nodes.node()
+        // doesn't even read a key named "group"). Real ungrouping goes
+        // through applyGroupChanges()/"newGroups" instead.
+        group: 1
     };
 
     // Sentinel strings written by sanitizeNode (and redactDebugValue) for
@@ -4496,9 +4507,15 @@
             var memberNodes = memberIds.map(function (ref) {
                 return findLiveNode(idMap[ref] || ref);
             }).filter(function (n) { return !!n; });
-            if (!memberNodes.length) { return; }
 
+            // An EXISTING group reconciling down to ZERO members is a
+            // legitimate, meaningful request — "ungroup everyone in this
+            // group" — so the empty-members case is only a no-op for the
+            // CREATE branch below (RED.group.createGroup on nothing makes
+            // no sense; an existing group going empty does).
             var liveGroup = findLiveNode(g.id);
+            if (!memberNodes.length && !(liveGroup && liveGroup.type === "group")) { return; }
+
             if (liveGroup && liveGroup.type === "group") {
                 var desiredIds = {};
                 memberNodes.forEach(function (n) { desiredIds[n.id] = true; });
