@@ -24,6 +24,14 @@
     var popoutWindow = null;
     var popoutObserver = null;
 
+    // True only inside the pop-out window's OWN execution context (set at
+    // the top of initPopout — never true in the main window). Checked in
+    // the few places that would otherwise touch dead RED.* state: the
+    // final dispatch in dispatchSend() and the /compact+/expand case in
+    // handleSlashCommand(). Everything else (arming, slash-command text,
+    // settings) is pure local state and needs no flag at all.
+    var isPopoutContext = false;
+
     // Holds the most recently loaded settings so warning logic can read the
     // user's thresholds and suppression preference without refetching.
     var currentSettings = {};
@@ -285,6 +293,7 @@
         if (!$status.length) { return; }
         if (!attachedDebugMessages.length) {
             $status.addClass("fp-hidden").empty();
+            relayStatusStripToPopout();
             return;
         }
         $status.removeClass("fp-hidden").empty();
@@ -303,6 +312,7 @@
             updateDebugStatus();
         });
         $status.append($clear);
+        relayStatusStripToPopout();
     }
 
     // Diagnostic tool: dumps `data` as a fenced JSON code block into the chat
@@ -715,6 +725,7 @@
     // sees — "start a fresh conversation".
     function clearChat() {
         el("#fp-messages").empty();
+        relayClearMessagesToPopout();
         conversationHistory = [];
         attachedDebugMessages = [];
         activeBuildLoop = null;
@@ -2106,6 +2117,8 @@
                 ? "Redaction is OFF — secret-shaped values are sent as-is, unredacted. Don't send credentials or proprietary data unless you trust this AI provider."
                 : "Context may include node config and code. Don't send credentials or proprietary data. Local/private AI recommended.");
         }
+
+        relayStatusStripToPopout();
     }
 
     // First-run welcome + cockpit tour. Shows in the chat until the user
@@ -2304,6 +2317,18 @@
             // already handled correctly — nothing to reimplement.
             case "/compact":
             case "/expand":
+                // These two need a live RED.view selection + RED.actions.invoke
+                // — dead in the pop-out's disconnected window. Relay the raw
+                // command to the parent and let it run this exact same case
+                // for real, instead of duplicating the selection-check/invoke
+                // logic here.
+                if (isPopoutContext) {
+                    if (window.opener && !window.opener.closed) {
+                        try { window.opener.postMessage({ event: "runSlashCommand", command: command }, location.origin); } catch (e) { /* ignore */ }
+                    }
+                    if ($promptBox.length) { $promptBox.val(""); }
+                    break;
+                }
                 var sel = (RED.view && RED.view.selection) ? RED.view.selection() : null;
                 var selCount = (sel && sel.nodes) ? sel.nodes.length : 0;
                 if (selCount === 0) {
@@ -2333,7 +2358,13 @@
 
     // Single dispatch point for "Send" (button click and Enter key): slash
     // commands are handled locally first; otherwise route to the armed
-    // Execute action, or a normal chat message.
+    // Execute action, or a normal chat message. Bound identically in both
+    // the main window and the pop-out (see initPopout) — arming/disarming/
+    // slash commands are pure local state either way, but the FINAL
+    // generate/document/modify/build/chat dispatch needs live RED.*
+    // context that only the main window has, so the pop-out relays
+    // instead of calling those functions locally (see isPopoutContext
+    // below and the "dispatchSend" handler in initMainWindow).
     function dispatchSend() {
         el("#fp-send").removeClass("fp-send-breathe");
         var $promptBox = el("#fp-prompt");
@@ -2345,6 +2376,20 @@
         // mode (mutual exclusion already guarantees armedExecuteAction is
         // null whenever a Query intent is armed).
         disarmQueryIntent();
+
+        if (isPopoutContext) {
+            var mode = armedExecuteAction || "chat";
+            var prompt = $promptBox.length ? $promptBox.val().trim() : "";
+            if (!prompt) {
+                addMessage("error", mode === "chat" ? "Enter a prompt first." : "Describe what you'd like to " + mode + " first.");
+                return;
+            }
+            if (window.opener && !window.opener.closed) {
+                try { window.opener.postMessage({ event: "dispatchSend", mode: mode, prompt: prompt }, location.origin); } catch (e) { /* ignore */ }
+            }
+            $promptBox.val("");
+            return;
+        }
 
         if (armedExecuteAction === "generate") {
             generate();
@@ -5093,12 +5138,13 @@
     // pins targetOrigin to location.origin.
     //
     // Slice 1: read-only chat mirror. Slice 2: sending chat from the
-    // pop-out (relays a "sendChat" intent; the parent's own send() does the
-    // rest, reply included, via this same relay). Slice 3 (below): a plain
-    // Generate/Document review panel's "Add to workspace" button becomes
-    // functional in the pop-out too — Modify and the /build loop are NOT
-    // covered yet (Modify's diff is computed against LIVE RED.nodes state,
-    // which the pop-out doesn't have; the build loop's import has loop-
+    // pop-out (now generalized into the "dispatchSend" intent — see
+    // dispatchSend() — covering every mode, not just chat). Slice 3
+    // (below): a plain Generate/Document review panel's "Add to
+    // workspace" button becomes functional in the pop-out too — Modify
+    // and the /build loop are NOT covered by THIS mechanism (Modify's diff
+    // is computed against LIVE RED.nodes state, which the pop-out doesn't
+    // have; the build loop's import has loop-
     // state follow-up that can't be safely re-triggered from a relayed
     // click) — both stay inert-HTML-only for now, known gaps.
 
@@ -5122,6 +5168,54 @@
         try {
             popoutWindow.postMessage({ event: "removeMessage", id: id }, location.origin);
         } catch (e) { /* ignore, same as above */ }
+    }
+
+    // clearChat()'s el("#fp-messages").empty() removes every bubble at
+    // once, but the generic MutationObserver relay only relays a removal
+    // when the removed node has an `id` (ordinary chat bubbles don't) —
+    // so a bulk clear would silently NOT mirror. Explicit, dedicated event
+    // instead of trying to make the generic observer handle bulk removal.
+    function relayClearMessagesToPopout() {
+        if (!popoutWindow || popoutWindow.closed) { return; }
+        try {
+            popoutWindow.postMessage({ event: "clearMessages" }, location.origin);
+        } catch (e) { /* ignore */ }
+    }
+
+    // Mirrors the status-strip's live-selection-dependent pieces into the
+    // pop-out — sent as plain text/class values, NOT outerHTML, since
+    // those elements sit in the SAME .fp-status-strip as the pop-out's own
+    // bound Send/Clear buttons (a blind HTML swap would clobber them).
+    // Called from the end of updateSelectionStatus()/updateDebugStatus()
+    // (both parent-only in practice — only the main window has a live
+    // RED.view.selection() to report on). The debug line is rebuilt from
+    // attachedDebugMessages directly rather than read from the DOM, since
+    // the live element also contains a "preview" link whose text would
+    // otherwise bleed into the relayed string (that link's click-through
+    // needs live context data and isn't relayed at all — known v1 gap,
+    // same as the Preview JSON link below).
+    function relayStatusStripToPopout() {
+        if (!popoutWindow || popoutWindow.closed) { return; }
+        var debugCount = attachedDebugMessages.length;
+        var payload = {
+            selectionText: el("#fp-selection-status").text(),
+            hasSelection: el("#fp-selection-status").hasClass("fp-has-selection"),
+            previewVisible: !el("#fp-preview-nodes").hasClass("fp-hidden"),
+            sizeText: el("#fp-size-status").text(),
+            sizeHidden: el("#fp-size-status").hasClass("fp-hidden"),
+            sizeWarn: el("#fp-size-status").hasClass("fp-size-warn"),
+            sizeHigh: el("#fp-size-status").hasClass("fp-size-high"),
+            secretsHidden: el("#fp-secrets-status").hasClass("fp-hidden"),
+            secretsOff: el("#fp-secrets-status").hasClass("fp-secrets-status-off"),
+            secretsTitle: el("#fp-secrets-status").attr("title") || "",
+            debugHidden: debugCount === 0,
+            debugText: debugCount
+                ? ("🐛 " + debugCount + " debug message" + (debugCount === 1 ? "" : "s") + " attached")
+                : ""
+        };
+        try {
+            popoutWindow.postMessage({ event: "statusStripSync", data: payload }, location.origin);
+        } catch (e) { /* ignore */ }
     }
 
     // Started once the pop-out is open. Only watches direct children of
@@ -5176,39 +5270,31 @@
     }
 
     // Entry point for the pop-out's own page (lib/popout/view.html, loaded
-    // via this SAME script). Builds a minimal DOM — just enough for
-    // addMessage()/el() to work exactly as they do in the main window — and
-    // relays any user-initiated close/reopen back via window.opener so the
-    // main window's "the pop-out is closed" state (popoutWindow.closed)
-    // stays accurate without polling.
-    // Slice 2: sending from the pop-out. Rather than running its own
-    // send()/collectSelectionContext()/settings — which would mean keeping
-    // conversationHistory, conversationId, and currentSettings in sync
-    // across two independent window globals — the pop-out's Send just
-    // relays the typed text back to the parent, which runs the EXISTING
-    // send("chat", promptOverride) completely unmodified. The parent
-    // already has live canvas access, so a selection on the main canvas
-    // still gets attached as context exactly as if the user had typed in
-    // the sidebar — no separate "context proxy" needed for chat at all.
-    // The reply (and the user's own echoed bubble, and the pending
-    // indicator) all reach the pop-out via the SAME MutationObserver relay
-    // slice 1 already built — addMessage()/showPending()/hidePending() are
-    // all just #fp-messages child add/remove, so nothing new was needed
-    // there. Known gap, same family as slice 1's: the agent loop's
-    // narration text ("Cruising… (step N/8)") updates an EXISTING pending
-    // element's text rather than adding/removing a child, so the pop-out's
-    // copy won't visibly update step-by-step — it'll just show the
-    // dots until the final reply lands.
-    function sendChatFromPopout() {
-        var $promptBox = el("#fp-prompt");
-        var prompt = $promptBox.length ? $promptBox.val().trim() : "";
-        if (!prompt) { return; }
-        if (!window.opener || window.opener.closed) { return; }
-        try {
-            window.opener.postMessage({ event: "sendChat", prompt: prompt }, location.origin);
-        } catch (e) { /* opener navigated/closed — nothing to recover here */ }
-        $promptBox.val("");
-    }
+    // via this SAME script). Builds the SAME cockpit shell as the main
+    // window's action-bar/compose/status-strip (same ids/classes, so the
+    // existing CSS and functions below apply unmodified) and relays any
+    // user-initiated close/reopen back via window.opener so the main
+    // window's "the pop-out is closed" state (popoutWindow.closed) stays
+    // accurate without polling.
+    //
+    // Full cockpit parity (2026-06-26): arming/disarming Generate/Document/
+    // Modify, Query intents, and every slash command except /compact+
+    // /expand are pure local state (setArmedExecuteAction/
+    // handleSlashCommand/armQueryIntent have zero RED.* calls) and work
+    // completely unmodified here — only dispatchSend()'s FINAL dispatch and
+    // /compact+/expand need to relay instead of touching dead RED.* state
+    // (see isPopoutContext, checked inside those two functions). Settings
+    // are loaded independently via the pop-out's OWN loadSettings() call
+    // (plain ajaxJson, zero RED.* coupling) — gives a correct Provider-
+    // status line and working custom Query intents for free via the
+    // existing fillSettings(), which jQuery no-ops harmlessly on the
+    // Settings-panel field ids this pop-out doesn't render this slice.
+    //
+    // conversationId/conversationHistory/attachedDebugMessages/
+    // activeBuildLoop stay PARENT-OWNED — this window never keeps its own
+    // copies. Sending (any mode) and Clear Chat are relayed asks; the
+    // selection-status strip is a relayed MIRROR (relayStatusStripToPopout,
+    // called from the parent's updateSelectionStatus/updateDebugStatus).
 
     // Slice 3: relayed HTML for a plain Generate/Document review panel
     // (addGeneratedReview tags these with data-fp-apply-flow — see there
@@ -5377,6 +5463,7 @@
     }
 
     function initPopout() {
+        isPopoutContext = true;
         applyPopoutTheme();
         var content = $(
             '<div id="fp-root">' +
@@ -5385,18 +5472,41 @@
             '      <div class="fp-logo">FP</div>' +
             '      <div class="fp-heading">' +
             '        <div class="fp-title">FlowPilot</div>' +
-            '        <div class="fp-subtitle">Chat mirror</div>' +
+            '        <div class="fp-subtitle">AI flow assistant</div>' +
+            '      </div>' +
+            '      <div class="fp-view-buttons">' +
+            '        <button id="fp-clear-chat" class="red-ui-button red-ui-button-small" type="button" title="Clear chat and start a fresh conversation (resets memory)"><i class="fa fa-eraser"></i></button>' +
             '      </div>' +
             '    </div>' +
             '  </div>' +
             '  <div id="fp-chat-panel" class="fp-panel">' +
             '    <div id="fp-messages" class="fp-messages"></div>' +
             '    <div class="fp-compose">' +
+            '      <div class="fp-action-bar">' +
+            '        <div class="fp-action-group">' +
+            '          <div id="fp-intents" class="fp-intents fp-intents-query"></div>' +
+            '        </div>' +
+            '        <div class="fp-action-divider"></div>' +
+            '        <div class="fp-action-group">' +
+            '          <div class="fp-intents fp-intents-execute">' +
+            '            <button id="fp-document" class="red-ui-button red-ui-button-small fp-icon-btn fp-icon-btn-execute" type="button" title="Document — select nodes, optionally add notes, then hit Send to generate a comment-node explanation"><i class="fa fa-file-text-o"></i></button>' +
+            '            <button id="fp-generate" class="red-ui-button red-ui-button-small fp-icon-btn fp-icon-btn-execute" type="button" title="Generate — describe a flow, then hit Send to draft it"><i class="fa fa-magic"></i></button>' +
+            '            <button id="fp-modify" class="red-ui-button red-ui-button-small fp-icon-btn fp-icon-btn-execute" type="button" title="Modify — select node(s) in the MAIN window, describe the change, then hit Send"><i class="fa fa-pencil"></i></button>' +
+            '          </div>' +
+            '        </div>' +
+            '      </div>' +
             '      <div class="fp-prompt-wrap">' +
-            '        <textarea id="fp-prompt" placeholder="Chat — Generate/Document/Modify/Build stay in the main window for now…"></textarea>' +
+            '        <textarea id="fp-prompt" placeholder="Select nodes in the main window for context, or just type a question…"></textarea>' +
             '      </div>' +
             '      <div class="fp-status-strip">' +
+            '        <span id="fp-selection-status" class="fp-selection-status">No nodes selected</span>' +
+            '        <a href="#" id="fp-preview-nodes" class="fp-preview-link fp-hidden" title="Open this from the main window to see the exact sanitized node JSON">Preview JSON</a>' +
+            '        <span id="fp-size-status" class="fp-size-status fp-hidden"></span>' +
+            '        <span id="fp-secrets-status" class="fp-secrets-status fp-hidden" title="Context may include node config and code. Don\'t send credentials or proprietary data. Local/private AI recommended.">⚠</span>' +
+            '        <span id="fp-debug-status" class="fp-debug-status fp-hidden"></span>' +
             '        <span class="fp-status-spacer"></span>' +
+            '        <div id="fp-provider-status">Provider: not loaded</div>' +
+            '        <button id="fp-clear-prompt" class="red-ui-button" type="button" title="Clear prompt box">Clear</button>' +
             '        <button id="fp-send" class="red-ui-button red-ui-button-primary" type="button">Send</button>' +
             '      </div>' +
             '    </div>' +
@@ -5406,13 +5516,41 @@
         $("#fp-popout-root").append(content);
         $root = content;
 
-        el("#fp-send").on("click", sendChatFromPopout);
+        // Arming/disarming/Send dispatch reuse the EXISTING functions
+        // verbatim — see the comment above this function for why that's
+        // safe (pure local state except dispatchSend's final step, which
+        // checks isPopoutContext itself).
+        el("#fp-generate").on("click", function () { setArmedExecuteAction("generate"); });
+        el("#fp-document").on("click", function () { setArmedExecuteAction("document"); });
+        el("#fp-modify").on("click", function () { setArmedExecuteAction("modify"); });
+        el("#fp-send").on("click", function () { dispatchSend(); });
         el("#fp-prompt").on("keydown", function (e) {
             if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                sendChatFromPopout();
+                dispatchSend();
             }
         });
+        el("#fp-clear-prompt").on("click", function () {
+            el("#fp-prompt").val("").focus();
+        });
+        // Clear Chat resets PARENT-owned conversationId/conversationHistory/
+        // activeBuildLoop — always relayed, never run locally (this window
+        // keeps no conversation state of its own to reset).
+        el("#fp-clear-chat").on("click", function () {
+            if (window.opener && !window.opener.closed) {
+                try { window.opener.postMessage({ event: "clearChat" }, location.origin); } catch (e) { /* ignore */ }
+            }
+        });
+        el("#fp-preview-nodes").on("click", function (ev) {
+            ev.preventDefault();
+            addMessage("error", "Preview JSON isn't available in the pop-out yet — open it from the main window.");
+        });
+
+        // Built-ins show immediately; loadSettings()'s fillSettings() call
+        // re-renders once custom intents (if any) are loaded, same
+        // two-step sequence initMainWindow uses.
+        renderIntents(el("#fp-intents"));
+        loadSettings();
 
         window.addEventListener("message", function (evt) {
             if (evt.origin !== location.origin) { return; }
@@ -5437,6 +5575,20 @@
                 scrollMessagesToBottom();
             } else if (data.event === "removeMessage") {
                 el("#" + data.id).remove();
+            } else if (data.event === "clearMessages") {
+                el("#fp-messages").empty();
+            } else if (data.event === "statusStripSync") {
+                var s = data.data || {};
+                el("#fp-selection-status").text(s.selectionText || "").toggleClass("fp-has-selection", !!s.hasSelection);
+                el("#fp-preview-nodes").toggleClass("fp-hidden", !s.previewVisible);
+                el("#fp-size-status").text(s.sizeText || "")
+                    .toggleClass("fp-hidden", !!s.sizeHidden)
+                    .toggleClass("fp-size-warn", !!s.sizeWarn)
+                    .toggleClass("fp-size-high", !!s.sizeHigh);
+                el("#fp-secrets-status").toggleClass("fp-hidden", !!s.secretsHidden)
+                    .toggleClass("fp-secrets-status-off", !!s.secretsOff)
+                    .attr("title", s.secretsTitle || "");
+                el("#fp-debug-status").text(s.debugText || "").toggleClass("fp-hidden", !!s.debugHidden);
             }
         });
     }
@@ -5847,21 +5999,33 @@
                 }
             });
 
-            // Pop-out child->parent intents: "send this chat message"
-            // (slice 2), "import this already-reviewed Generate/Document
-            // flow" (slice 3), "apply this already-reviewed Modify diff"
-            // (Modify's slice), and the /build loop's own apply/fix/stop
-            // intents. None of these run anything in the pop-out's own
-            // window — all just ask the main window to do exactly what the
-            // equivalent sidebar click would. Replies/confirmations reach
-            // the pop-out via the existing #fp-messages relay, same as any
+            // Pop-out child->parent intents: full Send dispatch
+            // ("dispatchSend" — mode + prompt text, the pop-out's own
+            // dispatchSend() relays here instead of calling
+            // generate/document/modify/build/chat locally, since only the
+            // main window has live RED.* context), "/compact"+"/expand"
+            // ("runSlashCommand" — same reason), "import this already-
+            // reviewed Generate/Document flow", "apply this already-
+            // reviewed Modify diff", the /build loop's own apply/fix/stop
+            // intents, and "clear the real conversation" (Clear Chat).
+            // None of these run anything in the pop-out's own window — all
+            // just ask the main window to do exactly what the equivalent
+            // sidebar action would. Replies/confirmations reach the
+            // pop-out via the existing #fp-messages relay, same as any
             // other new message.
             window.addEventListener("message", function (evt) {
                 if (evt.origin !== location.origin) { return; }
                 if (evt.source !== popoutWindow) { return; }
                 var data = evt.data || {};
-                if (data.event === "sendChat" && data.prompt) {
-                    send("chat", data.prompt);
+                if (data.event === "dispatchSend" && data.prompt) {
+                    el("#fp-prompt").val(data.prompt);
+                    if (data.mode === "generate") { generate(); }
+                    else if (data.mode === "build") { buildFlow(); }
+                    else if (data.mode === "document") { documentFlow(); }
+                    else if (data.mode === "modify") { modifyFlow(); }
+                    else { send("chat"); }
+                } else if (data.event === "runSlashCommand" && data.command) {
+                    handleSlashCommand(data.command);
                 } else if (data.event === "applyGenerated" && Array.isArray(data.flow)) {
                     importGeneratedFlow(data.flow);
                 } else if (data.event === "applyModify" && data.data) {
@@ -5889,6 +6053,8 @@
                     }
                 } else if (data.event === "stopBuildLoop") {
                     stopBuildLoop("Build loop stopped. Whatever's already applied stays as-is.");
+                } else if (data.event === "clearChat") {
+                    clearChat();
                 }
             });
 
