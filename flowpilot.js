@@ -1026,23 +1026,48 @@ module.exports = function flowPilotRuntime(RED) {
     // garbage). Try each candidate "{" in order with string-aware brace
     // matching (findMatchingBrace, which ignores braces inside quoted
     // strings) rather than just slicing from the first "{" to the last
-    // "}". The first candidate that both balances and parses wins —
-    // incidental braces in prose essentially never parse as standalone
-    // JSON, so this naturally skips past them to the real envelope.
+    // "}".
+    //
+    // A candidate must not just PARSE, it must also look like one of the
+    // known envelope shapes (have at least one recognized top-level key) —
+    // seen live: a pure-prose advice response that mentioned structured
+    // logging included the illustrative example
+    // `{"level":"info","event":"trivia_answer","user":"alex","correct":true}`,
+    // which IS valid standalone JSON, so the old "first candidate that
+    // parses wins" rule accepted it as "the envelope" and the caller threw
+    // "no recognizable modify fields" — when the right answer was to treat
+    // the whole reply as prose, since there was no real envelope at all.
+    const ENVELOPE_KEYS = ["explanation", "flow", "question", "changes", "newNodes", "newWires", "removeNodes", "prose"];
+    function looksLikeEnvelope(obj) {
+      if (!obj || typeof obj !== "object" || Array.isArray(obj)) { return false; }
+      return ENVELOPE_KEYS.some(function (k) { return k in obj; });
+    }
+
     let lastError = null;
     let searchFrom = firstObjIdx;
     while (searchFrom !== -1 && searchFrom < s.length) {
       const end = findMatchingBrace(s, searchFrom);
       if (end !== -1) {
         try {
-          return JSON.parse(s.slice(searchFrom, end + 1));
+          const candidate = JSON.parse(s.slice(searchFrom, end + 1));
+          if (looksLikeEnvelope(candidate)) { return candidate; }
+          // Valid JSON, but not envelope-shaped (e.g. an illustrative
+          // example embedded in prose) — keep searching rather than
+          // accepting it.
         } catch (e) {
           lastError = e;
         }
       }
       searchFrom = s.indexOf("{", searchFrom + 1);
     }
-    throw lastError || new Error("Provider's JSON object could not be parsed.");
+    // No candidate both parsed AND looked like a real envelope — equivalent
+    // to "the model just answered in prose," not "the envelope is broken."
+    // Let callers fall back to rendering this as a normal message instead
+    // of surfacing a parse error (same noJsonFound flag the "no { at all"
+    // branch above uses).
+    const err = lastError || new Error("Provider's JSON object could not be parsed.");
+    err.noJsonFound = true;
+    throw err;
   }
 
   // ---------------------------------------------------------------------

@@ -1239,9 +1239,23 @@
         return headers;
     }
 
+    // Every FlowPilot route is registered at an ABSOLUTE path under the
+    // admin root (e.g. RED.httpAdmin.get("/flowpilot/settings", ...)). A
+    // bare relative string like "flowpilot/settings" only resolves
+    // correctly when the CURRENT PAGE happens to sit at the admin root
+    // itself — true for the main editor, but NOT for the pop-out (served
+    // from the nested /flowpilot/popout/view.html route), where the same
+    // relative string resolves one level too deep
+    // (/flowpilot/popout/flowpilot/settings) and 404s. Confirmed live:
+    // loadSettings() failing in the pop-out with exactly that 404. Always
+    // anchor to root instead, regardless of which page is calling.
+    function flowpilotUrl(path) {
+        return path.charAt(0) === "/" ? path : ("/" + path);
+    }
+
     function ajaxJson(method, url, payload, onSuccess, onError) {
         $.ajax({
-            url: url,
+            url: flowpilotUrl(url),
             method: method,
             contentType: "application/json",
             data: payload ? JSON.stringify(payload) : undefined,
@@ -2734,7 +2748,7 @@
             });
         }
 
-        fetch("flowpilot/chat", {
+        fetch(flowpilotUrl("flowpilot/chat"), {
             method: "POST",
             headers: fetchHeaders(),
             body: JSON.stringify(payload)
@@ -3123,7 +3137,7 @@
             });
         }
 
-        fetch("flowpilot/" + endpoint, {
+        fetch(flowpilotUrl("flowpilot/" + endpoint), {
             method: "POST",
             headers: fetchHeaders(),
             body: JSON.stringify(payload)
