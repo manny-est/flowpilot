@@ -258,13 +258,27 @@
         // and get reviewed instead of the flow this loop actually built —
         // confirmed live: a Home Assistant node's unrelated error got
         // auto-attached and "reviewed" instead of the real output.
+        //
+        // Debounced rather than reviewing on the FIRST matching message —
+        // confirmed live: a generated flow whose wiring forked/split before
+        // the debug node fired it more than once per trigger, and the
+        // review judged success against only the first (incomplete)
+        // message, missing the goal entirely. A short window lets EVERY
+        // message from one trigger accumulate into attachedDebugMessages
+        // before review actually runs, so the model sees the full picture
+        // instead of whichever message happened to arrive first.
         if (activeBuildLoop && activeBuildLoop.waypoint === "attach" &&
             activeBuildLoop.nodeIds.indexOf(msg.id) !== -1) {
             attachedDebugMessages.push(entry);
             updateDebugStatus();
-            activeBuildLoop.waypoint = "review";
-            renderLoopStepper(activeBuildLoop);
-            runBuildReview(activeBuildLoop);
+            if (buildLoopAttachTimer) { clearTimeout(buildLoopAttachTimer); }
+            buildLoopAttachTimer = setTimeout(function () {
+                buildLoopAttachTimer = null;
+                if (!activeBuildLoop || activeBuildLoop.waypoint !== "attach") { return; }
+                activeBuildLoop.waypoint = "review";
+                renderLoopStepper(activeBuildLoop);
+                runBuildReview(activeBuildLoop);
+            }, BUILD_LOOP_ATTACH_DEBOUNCE_MS);
         }
     }
 
@@ -4703,6 +4717,13 @@
     //              held in these states.
     var activeBuildLoop = null;
 
+    // How long onDebugMessage's auto-attach waits, after each matching
+    // message, for another one to arrive before locking in and running
+    // the review — see onDebugMessage for why (a forked/split flow can
+    // fire its debug node more than once per trigger).
+    var BUILD_LOOP_ATTACH_DEBOUNCE_MS = 1200;
+    var buildLoopAttachTimer = null;
+
     var BUILD_LOOP_WAYPOINTS = [
         { id: "apply", label: "Deploy" },
         { id: "attach", label: "Attach debug" },
@@ -4718,6 +4739,7 @@
     // comes next.
     function stopBuildLoop(note) {
         activeBuildLoop = null;
+        if (buildLoopAttachTimer) { clearTimeout(buildLoopAttachTimer); buildLoopAttachTimer = null; }
         el("#fp-loop-stepper").remove();
         disarmExecuteAction();
         if (note) { addMessage("assistant", note); }
@@ -4843,10 +4865,19 @@
         var context = collectSelectionContext(loop.nodeIds);
         context = attachDebugContext(context);
         var instruction = "Review the attached debug output against this build goal: \"" +
-            loop.goal + "\". If it fully satisfies the goal, say so in plain text " +
-            "— no changes needed. If something's wrong, propose the fix directly " +
-            "as a patch in this same response, exactly as you would for any other " +
-            "review request — respond with ONLY the {\"explanation\", \"changes\", " +
+            loop.goal + "\". Before concluding anything, list out every distinct " +
+            "piece of data or behavior the goal actually requires, then check the " +
+            "attached debug payload(s) contain EACH one — a payload that's merely " +
+            "plausible-looking, or that satisfies only PART of the goal (e.g. the " +
+            "goal asked to combine two things but the payload only shows one), " +
+            "does NOT fully satisfy it. If more than one debug message is " +
+            "attached, treat them together as the full picture from one trigger, " +
+            "not as separate independent attempts. If it fully satisfies the goal, " +
+            "say so in plain text — no changes needed. If something's wrong " +
+            "(including a node that never fired, or a value that's missing/empty " +
+            "when the goal needed it), propose the fix directly as a patch in " +
+            "this same response, exactly as you would for any other review " +
+            "request — respond with ONLY the {\"explanation\", \"changes\", " +
             "...} JSON object, no sentence of analysis before it. Put your " +
             "diagnosis of what's wrong INSIDE \"explanation\" — never write it as " +
             "prose first and the JSON second; that produces no diff for the user " +
