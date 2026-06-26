@@ -4021,6 +4021,37 @@
             var btnLabel = (hasMutations && hasNewNodes) ? "Apply & Insert"
                 : hasMutations ? "Apply Changes"
                 : "Insert Nodes";
+
+            // Pop-out: tag this panel with everything applyInsertions/
+            // applyModifications need, but ONLY for a plain Modify call —
+            // applyCallback is the bare function reference here, whereas
+            // the /build loop's review (handleBuildReviewResult) passes a
+            // wrapping closure that also advances loop state, which isn't
+            // safe to re-trigger from a relayed click (same reasoning as
+            // addGeneratedReview's onImported exclusion). nodeDiffs is
+            // re-serialized without liveNode (a live RED node object, not
+            // JSON-safe) — applyModifications re-fetches the live node
+            // itself via findLiveNode anyway, so nothing is lost.
+            if (applyCallback === applyModifications) {
+                $msg.attr("data-fp-apply-modify", JSON.stringify({
+                    nodeDiffs: nodeDiffs.map(function (d) {
+                        return {
+                            modNode: d.modNode,
+                            propertyChanges: d.propertyChanges,
+                            wiresChanged: d.wiresChanged,
+                            wiresDiff: d.wiresDiff,
+                            name: d.name,
+                            type: d.type
+                        };
+                    }),
+                    removeNodes: removeNodes,
+                    newNodes: newNodes,
+                    newWires: newWires,
+                    existingNodeIds: nodes.map(function (n) { return n.id; }),
+                    hasMutations: hasMutations
+                }));
+            }
+
             var $applyBtn = $("<button>")
                 .addClass("red-ui-button red-ui-button-primary")
                 .attr("type", "button")
@@ -5186,6 +5217,31 @@
         });
     }
 
+    // Same idea as bindApplyButtons, but for a relayed Modify review panel
+    // (addModifyReview tags these with data-fp-apply-modify — see there for
+    // why the /build loop's panels are excluded). nodeDiffs/removeNodes/
+    // newNodes/newWires already reflect the diff the parent computed
+    // against live RED.nodes state at review time; the pop-out doesn't
+    // recompute anything, it just asks the parent to run applyInsertions/
+    // applyModifications with this exact data, same as a sidebar click would.
+    function bindModifyApplyButtons($scope) {
+        $scope.filter("[data-fp-apply-modify]").add($scope.find("[data-fp-apply-modify]")).each(function () {
+            var $panel = $(this);
+            if ($panel.data("fp-apply-modify-bound")) { return; }
+            $panel.data("fp-apply-modify-bound", true);
+            var applyData;
+            try { applyData = JSON.parse($panel.attr("data-fp-apply-modify")); } catch (e) { return; }
+            $panel.find(".fp-review-actions button.red-ui-button-primary").on("click", function () {
+                var $btn = $(this);
+                $btn.prop("disabled", true).text("Applying…");
+                if (!window.opener || window.opener.closed) { return; }
+                try {
+                    window.opener.postMessage({ event: "applyModify", data: applyData }, location.origin);
+                } catch (e) { /* ignore */ }
+            });
+        });
+    }
+
     // The Summary/JSON tab toggle (addGeneratedReview, addModifyReview,
     // and anything else using the same .fp-tabs/.fp-tab-panel pattern) is
     // purely local DOM show/hide — unlike Apply, it needs no parent
@@ -5273,11 +5329,13 @@
             if (data.event === "initialSync") {
                 el("#fp-messages").html(data.html);
                 bindApplyButtons(el("#fp-messages"));
+                bindModifyApplyButtons(el("#fp-messages"));
                 bindTabSwitching(el("#fp-messages"));
                 scrollMessagesToBottom(true);
             } else if (data.event === "appendMessage") {
                 el("#fp-messages").append(data.html);
                 bindApplyButtons(el("#fp-messages").children().last());
+                bindModifyApplyButtons(el("#fp-messages").children().last());
                 bindTabSwitching(el("#fp-messages").children().last());
                 scrollMessagesToBottom();
             } else if (data.event === "removeMessage") {
@@ -5693,11 +5751,13 @@
             });
 
             // Pop-out child->parent intents: "send this chat message"
-            // (slice 2) and "import this already-reviewed flow" (slice 3).
-            // Neither runs anything in the pop-out's own window — both just
-            // ask the main window to do exactly what the equivalent sidebar
-            // click would. Replies/confirmations reach the pop-out via the
-            // existing #fp-messages relay, same as any other new message.
+            // (slice 2), "import this already-reviewed Generate/Document
+            // flow" (slice 3), and "apply this already-reviewed Modify
+            // diff" (Modify's slice). None of these run anything in the
+            // pop-out's own window — all just ask the main window to do
+            // exactly what the equivalent sidebar click would. Replies/
+            // confirmations reach the pop-out via the existing #fp-messages
+            // relay, same as any other new message.
             window.addEventListener("message", function (evt) {
                 if (evt.origin !== location.origin) { return; }
                 if (evt.source !== popoutWindow) { return; }
@@ -5706,6 +5766,15 @@
                     send("chat", data.prompt);
                 } else if (data.event === "applyGenerated" && Array.isArray(data.flow)) {
                     importGeneratedFlow(data.flow);
+                } else if (data.event === "applyModify" && data.data) {
+                    var ad = data.data;
+                    var idMap = {};
+                    if (Array.isArray(ad.newNodes) && ad.newNodes.length) {
+                        idMap = applyInsertions(ad.newNodes, ad.newWires || [], ad.existingNodeIds || []) || {};
+                    }
+                    if (ad.hasMutations) {
+                        applyModifications(ad.nodeDiffs || [], ad.removeNodes || [], null, idMap);
+                    }
                 }
             });
 
