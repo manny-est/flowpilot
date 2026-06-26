@@ -3081,7 +3081,7 @@
 
         addMessage("assistant", data.explanation || "(no explanation returned)");
         pushHistory("assistant", data.explanation || "(no explanation returned)");
-        addModifyReview(data.flow, data.newNodes || [], data.newWires || [], data.removeNodes || [], applyModifications);
+        addModifyReview(data.flow, data.newNodes || [], data.newWires || [], data.removeNodes || [], applyModifications, null, data.newGroups || []);
         renderActionChip(data.suggestedAction);
         setBusy(false);
         updateSelectionStatus();
@@ -3915,7 +3915,8 @@
     // (handleBuildReviewResult) — `{ capReached }`, carried in the pop-out's
     // relay tag since applying there also needs the loop bookkeeping
     // applyBuildLoopFix does, not just applyModifications.
-    function addModifyReview(modifiedFlow, newNodes, newWires, removeNodes, applyCallback, buildFixInfo) {
+    // newGroups: Phase 8.5 C2 slice 3 — see applyGroupChanges.
+    function addModifyReview(modifiedFlow, newNodes, newWires, removeNodes, applyCallback, buildFixInfo, newGroups) {
         var $box = el("#fp-messages");
         if (!$box.length) { return; }
 
@@ -3923,6 +3924,7 @@
         newNodes = Array.isArray(newNodes) ? newNodes : [];
         newWires = Array.isArray(newWires) ? newWires : [];
         removeNodes = Array.isArray(removeNodes) ? removeNodes : [];
+        newGroups = Array.isArray(newGroups) ? newGroups : [];
 
         // Ids the model actually had in context (the returned "flow"). Used by
         // computeWireDiff to avoid flagging connections to out-of-context nodes
@@ -3963,7 +3965,8 @@
         });
         var hasNewNodes = newNodes.length > 0;
         var hasRemoveNodes = removeNodes.length > 0;
-        var hasAnyChanges = hasPropChanges || hasWireChanges || hasNewNodes || hasRemoveNodes;
+        var hasNewGroups = newGroups.length > 0;
+        var hasAnyChanges = hasPropChanges || hasWireChanges || hasNewNodes || hasRemoveNodes || hasNewGroups;
 
         var $msg = $("<div>").addClass("fp-message fp-review");
         $("<div>").addClass("fp-label").text("MODIFY FLOW — REVIEW CHANGES").appendTo($msg);
@@ -4080,9 +4083,23 @@
             }
         }
 
+        // ---- Summary tab: groups to create/update ----
+        if (hasNewGroups) {
+            var grpTop = (hasPropChanges || hasWireChanges || hasRemoveNodes || hasNewNodes) ? "12px" : "0";
+            $("<div>").addClass("fp-review-count").css("margin-top", grpTop)
+                .text(newGroups.length + " group(s) to create/update:")
+                .appendTo($summaryPanel);
+            var $grpList = $("<ul>").addClass("fp-review-list").appendTo($summaryPanel);
+            newGroups.forEach(function (g) {
+                var label = (g.name ? "\"" + g.name + "\"" : "(unnamed group)") +
+                    " — " + (Array.isArray(g.nodes) ? g.nodes.length : 0) + " node(s)";
+                $("<li>").text(label).appendTo($grpList);
+            });
+        }
+
         // ---- JSON tab ----
-        var jsonPayload = (hasNewNodes || hasRemoveNodes)
-            ? { modifiedNodes: nodes, newNodes: newNodes, newWires: newWires, removeNodes: removeNodes }
+        var jsonPayload = (hasNewNodes || hasRemoveNodes || hasNewGroups)
+            ? { modifiedNodes: nodes, newNodes: newNodes, newWires: newWires, removeNodes: removeNodes, newGroups: newGroups }
             : nodes;
         var jsonText = JSON.stringify(jsonPayload, null, 2);
         var $copyBtn = $("<button>")
@@ -4116,18 +4133,19 @@
             var hasMutations = hasPropChanges || hasWireChanges || hasRemoveNodes;
             var btnLabel = (hasMutations && hasNewNodes) ? "Apply & Insert"
                 : hasMutations ? "Apply Changes"
-                : "Insert Nodes";
+                : hasNewNodes ? "Insert Nodes"
+                : "Apply Changes"; // covers a request that ONLY creates/updates a group
 
             // Pop-out: tag this panel with everything applyInsertions/
-            // applyModifications need to re-run from a relayed click —
-            // nodeDiffs re-serialized without liveNode (a live RED node
-            // object, not JSON-safe; applyModifications re-fetches it
-            // itself via findLiveNode anyway, so nothing is lost). A plain
-            // Modify call (applyCallback is the bare applyModifications
-            // reference) gets "data-fp-apply-modify"; a /build loop fix
-            // (buildFixInfo set — see applyBuildLoopFix) gets
-            // "data-fp-apply-build-fix" instead, carrying capReached too
-            // since the relayed click needs to run the SAME loop
+            // applyModifications/applyGroupChanges need to re-run from a
+            // relayed click — nodeDiffs re-serialized without liveNode (a
+            // live RED node object, not JSON-safe; applyModifications
+            // re-fetches it itself via findLiveNode anyway, so nothing is
+            // lost). A plain Modify call (applyCallback is the bare
+            // applyModifications reference) gets "data-fp-apply-modify"; a
+            // /build loop fix (buildFixInfo set — see applyBuildLoopFix)
+            // gets "data-fp-apply-build-fix" instead, carrying capReached
+            // too since the relayed click needs to run the SAME loop
             // bookkeeping a local click would, not just applyModifications.
             var sharedApplyData = {
                 nodeDiffs: nodeDiffs.map(function (d) {
@@ -4143,6 +4161,7 @@
                 removeNodes: removeNodes,
                 newNodes: newNodes,
                 newWires: newWires,
+                newGroups: newGroups,
                 existingNodeIds: nodes.map(function (n) { return n.id; }),
                 hasMutations: hasMutations
             };
@@ -4160,20 +4179,23 @@
                 .on("click", function () {
                     $applyBtn.prop("disabled", true).text("Applying…");
                     // Insertions run FIRST so their placeholder→real-id map is
-                    // available to applyModifications — an existing node's
-                    // rewired "wires" (Tier 3) may point at a node being
-                    // inserted in this same response.
+                    // available to applyModifications/applyGroupChanges — an
+                    // existing node's rewired "wires" (Tier 3) or a new
+                    // group's membership may point at a node being inserted
+                    // in this same response.
                     var idMap = {};
                     if (hasNewNodes) {
                         idMap = applyInsertions(newNodes, newWires, nodes.map(function (n) { return n.id; })) || {};
                     }
                     if (hasMutations && applyCallback) { applyCallback(nodeDiffs, removeNodes, null, idMap); }
+                    if (hasNewGroups) { applyGroupChanges(newGroups, idMap); }
                     $applyBtn.text("Done ✓");
                 });
             $actions.append($applyBtn);
             var hintParts = [];
             if (hasPropChanges || hasWireChanges) { hintParts.push("changes mutate live nodes"); }
             if (hasRemoveNodes) { hintParts.push("removals delete nodes"); }
+            if (hasNewGroups) { hintParts.push("groups are created/updated"); }
             if (hasNewNodes) { hintParts.push("insertions add new nodes"); }
             var hintText = "Review above — " + hintParts.join(", ") + ". Ctrl+Z to undo.";
             $("<span>").addClass("fp-review-hint").text(hintText).appendTo($actions);
@@ -4379,6 +4401,85 @@
             pushHistory("assistant", appliedNote);
             updateSelectionStatus();
         }
+    }
+
+    // Reconciles a Modify response's "newGroups" entries (Phase 8.5 C2
+    // slice 3) against live state. Each entry's "nodes" is the FULL
+    // desired membership for that group id — declarative, like "changes"
+    // — not a one-shot "add these" instruction:
+    //   - If a LIVE group already exists with this id (the model learned
+    //     about it via sanitizeNode's context "group" field), membership
+    //     is diffed against what's actually there now and reconciled via
+    //     RED.group.addToGroup/removeFromGroup (both confirmed via core
+    //     source to handle bounding-box math + dirty-marking themselves —
+    //     nothing to reimplement), and a changed "name" is applied as a
+    //     direct property edit, same shape as Tier 1.
+    //   - If no live group matches, RED.group.createGroup(memberNodes)
+    //     makes a brand new one — it always assigns its OWN fresh id
+    //     (RED.nodes.id()), unlike applyInsertions' regular nodes, so
+    //     there's no idMap entry to register for it (nothing in v1 wires
+    //     to a group afterward anyway).
+    // One RED.history.push per discrete operation (matching how Node-RED's
+    // own group UI actions push them separately too), not one giant batch.
+    function applyGroupChanges(newGroups, idMap) {
+        idMap = idMap || {};
+        newGroups = Array.isArray(newGroups) ? newGroups : [];
+        var groupsApplied = 0;
+
+        newGroups.forEach(function (g) {
+            if (!g || !g.id) { return; }
+            var memberIds = Array.isArray(g.nodes) ? g.nodes : [];
+            var memberNodes = memberIds.map(function (ref) {
+                return findLiveNode(idMap[ref] || ref);
+            }).filter(function (n) { return !!n; });
+            if (!memberNodes.length) { return; }
+
+            var liveGroup = findLiveNode(g.id);
+            if (liveGroup && liveGroup.type === "group") {
+                var desiredIds = {};
+                memberNodes.forEach(function (n) { desiredIds[n.id] = true; });
+                var currentIds = {};
+                liveGroup.nodes.forEach(function (n) { currentIds[n.id] = true; });
+                var toRemove = liveGroup.nodes.filter(function (n) { return !desiredIds[n.id]; });
+                var toAdd = memberNodes.filter(function (n) { return !currentIds[n.id]; });
+
+                if (toRemove.length) {
+                    RED.group.removeFromGroup(liveGroup, toRemove, false);
+                    RED.history.push({ t: "removeFromGroup", group: liveGroup, nodes: toRemove, dirty: RED.nodes.dirty() });
+                }
+                if (toAdd.length) {
+                    RED.group.addToGroup(liveGroup, toAdd);
+                    RED.history.push({ t: "addToGroup", group: liveGroup, nodes: toAdd, dirty: RED.nodes.dirty() });
+                }
+                if (g.name !== undefined && g.name !== liveGroup.name) {
+                    var oldName = liveGroup.name;
+                    liveGroup.name = g.name;
+                    liveGroup.changed = true;
+                    RED.history.push({ t: "edit", node: liveGroup, changes: { name: oldName }, dirty: RED.nodes.dirty() });
+                }
+                groupsApplied++;
+            } else {
+                try {
+                    var newGroup = RED.group.createGroup(memberNodes);
+                    if (g.name) { newGroup.name = g.name; }
+                    RED.group.markDirty(newGroup);
+                    RED.history.push({ t: "createGroup", groups: [newGroup], dirty: RED.nodes.dirty() });
+                    groupsApplied++;
+                } catch (e) {
+                    addMessage("error", "Failed to create group: " + (e.message || e));
+                }
+            }
+        });
+
+        if (groupsApplied) {
+            RED.nodes.dirty(true);
+            RED.view.redraw(true);
+            var groupNote = "Touchdown — created/updated " + groupsApplied +
+                " group(s). Ctrl+Z to undo.";
+            addMessage("assistant", groupNote);
+            pushHistory("assistant", groupNote);
+        }
+        return groupsApplied;
     }
 
     function modifyFlow() {
@@ -5003,7 +5104,7 @@
             function (nodeDiffs, removeNodesArg, $applyBtn, idMap) {
                 applyBuildLoopFix(nodeDiffs, removeNodesArg, idMap, capReached);
             },
-            { capReached: capReached });
+            { capReached: capReached }, data.newGroups || []);
         renderActionChip(data.suggestedAction);
         setBusy(false);
         updateSelectionStatus();
@@ -6118,6 +6219,9 @@
                     if (ad.hasMutations) {
                         applyModifications(ad.nodeDiffs || [], ad.removeNodes || [], null, idMap);
                     }
+                    if (Array.isArray(ad.newGroups) && ad.newGroups.length) {
+                        applyGroupChanges(ad.newGroups, idMap);
+                    }
                 } else if (data.event === "applyBuild" && data.data && Array.isArray(data.data.flow)) {
                     var bd = data.data;
                     importGeneratedFlow(bd.flow, function (importResult) {
@@ -6131,6 +6235,9 @@
                     }
                     if (bf.hasMutations) {
                         applyBuildLoopFix(bf.nodeDiffs || [], bf.removeNodes || [], fixIdMap, !!bf.capReached);
+                    }
+                    if (Array.isArray(bf.newGroups) && bf.newGroups.length) {
+                        applyGroupChanges(bf.newGroups, fixIdMap);
                     }
                 } else if (data.event === "stopBuildLoop") {
                     stopBuildLoop("Build loop stopped. Whatever's already applied stays as-is.");

@@ -1477,6 +1477,16 @@ module.exports = function flowPilotRuntime(RED) {
 
     const originalIds = new Set(originalNodes.map(function (n) { return n.id; }));
 
+    // Group ids the selection is actually inside (sanitizeNode resolves
+    // each context node's group membership into a `group: {id, name}`
+    // field — Phase 8.5 C2). A "changes" patch may target one of THESE
+    // group ids too (e.g. to rename it) even though the group itself
+    // isn't a member of originalIds — the user selected something
+    // relevant to it, same spirit as selecting a node lets you patch it.
+    const contextGroupIds = new Set(
+      originalNodes.map(function (n) { return n.group && n.group.id; }).filter(Boolean)
+    );
+
     // Validate removeNodes: all ids must be in the original selection.
     const removeNodes = Array.isArray(result.removeNodes) ? result.removeNodes : [];
     if (removeNodes.length > 0) {
@@ -1504,8 +1514,9 @@ module.exports = function flowPilotRuntime(RED) {
       .filter(function (id) { return id !== undefined && id !== null; });
 
     // Validate that changes contains no hallucinated ids, and that no id is
-    // both patched and marked for removal.
-    const extraIds = changeIds.filter(function (id) { return !originalIds.has(String(id)); });
+    // both patched and marked for removal. A group id from contextGroupIds
+    // is allowed here too (see above) even though it's not in originalIds.
+    const extraIds = changeIds.filter(function (id) { return !originalIds.has(String(id)) && !contextGroupIds.has(String(id)); });
     const wronglyRemovedIds = changeIds.filter(function (id) { return removeSet.has(String(id)); });
 
     const idProblems = [];
@@ -1544,26 +1555,75 @@ module.exports = function flowPilotRuntime(RED) {
         return patch ? Object.assign({}, n, patch) : n;
       });
 
+    // A "changes" patch targeting a group id (contextGroupIds, not
+    // originalIds — see above) has nowhere to merge onto above, since
+    // originalNodes never includes the group itself, only nodes inside
+    // it. Synthesize a minimal {id, type:"group", ...patch} entry for
+    // each one instead, so it rides through the SAME flow array the
+    // frontend's existing Tier-1 diff/apply pipeline already handles —
+    // computeNodeDiff()/applyModifications() don't care what TYPE a node
+    // is, and findLiveNode() already resolves a group id to the live
+    // group object (Phase 8.5 C2 slice 1). This is how a group gets
+    // renamed/restyled — pure property edit, no new apply-side code.
+    const groupPatchIds = changeIds.filter(function (id) {
+      return contextGroupIds.has(String(id)) && !originalIds.has(String(id));
+    });
+    groupPatchIds.forEach(function (id) {
+      flow.push(Object.assign({ id: id, type: "group" }, patchById[String(id)]));
+    });
+
     const finalRemoveNodes = Array.from(removeSet);
 
-    // "group" nodes aren't supported yet (the editor's group API needs
-    // bounding-box computation + group-aware undo that applyInsertions
-    // doesn't implement). The system prompt tells the model not to propose
-    // them, but strip any that slip through anyway, and drop any newWires
-    // that reference a stripped group's placeholder id.
+    // "group" entries in newNodes describe MEMBERSHIP, not a regular
+    // node to insert — pull them into their own "newGroups" field rather
+    // than letting applyInsertions try to RED.nodes.add() them (that API
+    // doesn't know what a group is at all). Each entry's "nodes" is the
+    // FULL desired membership for that group id: if the id matches an
+    // EXISTING live group, the frontend reconciles membership to match
+    // exactly (add/remove as needed); if not, it creates a new group with
+    // exactly that membership. See applyGroupChanges() in flowpilot-core.js.
     const allNewNodes = result.newNodes || [];
-    const groupNodes = allNewNodes.filter(function (n) { return n && n.type === "group"; });
+    const newGroups = allNewNodes.filter(function (n) { return n && n.type === "group"; });
     const newNodes = allNewNodes.filter(function (n) { return !(n && n.type === "group"); });
     const newNodeIdSet = new Set(newNodes.map(function (n) { return n && n.id; }).filter(Boolean));
 
     // Validate newWires references: each from/to must be either an existing
-    // context node id or a placeholder id present in newNodes.
+    // context node id or a placeholder id present in newNodes. A group id
+    // is never a valid wire endpoint (groups don't pass messages) — filter
+    // those out the same as before, just without discarding the group itself.
     let newWires = result.newWires || [];
-    if (groupNodes.length > 0) {
-      const groupIdSet = new Set(groupNodes.map(function (n) { return n && n.id; }).filter(Boolean));
+    if (newGroups.length > 0) {
+      const groupIdSet = new Set(newGroups.map(function (n) { return n && n.id; }).filter(Boolean));
       newWires = newWires.filter(function (wire) {
         return !groupIdSet.has(String(wire.from)) && !groupIdSet.has(String(wire.to));
       });
+    }
+    // Validate newGroups' own "nodes" member references: each must be an
+    // existing context node id or a new-node placeholder id — explicitly
+    // NOT another group's id, so nested groups-within-groups (out of scope
+    // for v1) are naturally rejected rather than silently mis-imported.
+    if (newGroups.length > 0) {
+      const groupProblems = [];
+      newGroups.forEach(function (g, i) {
+        if (!g || !g.id) { groupProblems.push("group " + i + " missing id"); return; }
+        const members = Array.isArray(g.nodes) ? g.nodes : [];
+        if (!members.length) { groupProblems.push("group " + i + " (" + g.id + ") has no member nodes"); return; }
+        members.forEach(function (ref) {
+          if (!originalIds.has(String(ref)) && !newNodeIdSet.has(String(ref))) {
+            groupProblems.push("group " + i + " member '" + ref + "' not in existing or new nodes");
+          }
+        });
+      });
+      if (groupProblems.length > 0) {
+        storage.appendAudit({ action: "modify_group_ref_error", problems: groupProblems });
+        return {
+          status: 422,
+          body: {
+            error: "Invalid group references in newGroups: " + groupProblems.join("; "),
+            raw: JSON.stringify(result)
+          }
+        };
+      }
     }
     if (newWires.length > 0) {
       const wireProblems = [];
@@ -1587,19 +1647,15 @@ module.exports = function flowPilotRuntime(RED) {
       }
     }
 
-    let explanation = result.explanation;
-    if (groupNodes.length > 0) {
-      storage.appendAudit({ action: "modify_group_stripped", count: groupNodes.length });
-      explanation = (explanation ? explanation + "\n\n" : "") +
-        "Note: grouping nodes into a visual group isn't supported yet, so that part of the request was skipped.";
-    }
+    if (newGroups.length > 0) { storage.appendAudit({ action: "modify_groups", count: newGroups.length }); }
 
     const body = {
-      explanation: explanation,
+      explanation: result.explanation,
       flow: flow,
       newNodes: newNodes,
       newWires: newWires,
-      removeNodes: finalRemoveNodes
+      removeNodes: finalRemoveNodes,
+      newGroups: newGroups
     };
     if (result.suggestedAction) { body.suggestedAction = result.suggestedAction; }
 
