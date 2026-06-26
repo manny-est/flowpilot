@@ -3241,7 +3241,7 @@
         var flow = Array.isArray(data.flow) ? layoutGeneratedFlow(data.flow) : data.flow;
         addMessage("assistant", data.explanation || "(no explanation returned)");
         pushHistory("assistant", data.explanation || "(no explanation returned)");
-        addGeneratedReview(flow, function (importResult) { startBuildLoop(goalPrompt, flow, importResult); });
+        addGeneratedReview(flow, function (importResult) { startBuildLoop(goalPrompt, flow, importResult); }, goalPrompt);
         renderActionChip(data.suggestedAction);
         setBusy(false);
         updateSelectionStatus();
@@ -3819,7 +3819,11 @@
     // existing nodes and, when the model also returned new nodes to insert,
     // a list of those plus the wire connections to be made. The Apply button
     // label adapts: "Apply Changes" / "Insert Nodes" / "Apply & Insert".
-    function addModifyReview(modifiedFlow, newNodes, newWires, removeNodes, applyCallback) {
+    // buildFixInfo: present only for a /build loop review's fix envelope
+    // (handleBuildReviewResult) — `{ capReached }`, carried in the pop-out's
+    // relay tag since applying there also needs the loop bookkeeping
+    // applyBuildLoopFix does, not just applyModifications.
+    function addModifyReview(modifiedFlow, newNodes, newWires, removeNodes, applyCallback, buildFixInfo) {
         var $box = el("#fp-messages");
         if (!$box.length) { return; }
 
@@ -4023,33 +4027,38 @@
                 : "Insert Nodes";
 
             // Pop-out: tag this panel with everything applyInsertions/
-            // applyModifications need, but ONLY for a plain Modify call —
-            // applyCallback is the bare function reference here, whereas
-            // the /build loop's review (handleBuildReviewResult) passes a
-            // wrapping closure that also advances loop state, which isn't
-            // safe to re-trigger from a relayed click (same reasoning as
-            // addGeneratedReview's onImported exclusion). nodeDiffs is
-            // re-serialized without liveNode (a live RED node object, not
-            // JSON-safe) — applyModifications re-fetches the live node
-            // itself via findLiveNode anyway, so nothing is lost.
+            // applyModifications need to re-run from a relayed click —
+            // nodeDiffs re-serialized without liveNode (a live RED node
+            // object, not JSON-safe; applyModifications re-fetches it
+            // itself via findLiveNode anyway, so nothing is lost). A plain
+            // Modify call (applyCallback is the bare applyModifications
+            // reference) gets "data-fp-apply-modify"; a /build loop fix
+            // (buildFixInfo set — see applyBuildLoopFix) gets
+            // "data-fp-apply-build-fix" instead, carrying capReached too
+            // since the relayed click needs to run the SAME loop
+            // bookkeeping a local click would, not just applyModifications.
+            var sharedApplyData = {
+                nodeDiffs: nodeDiffs.map(function (d) {
+                    return {
+                        modNode: d.modNode,
+                        propertyChanges: d.propertyChanges,
+                        wiresChanged: d.wiresChanged,
+                        wiresDiff: d.wiresDiff,
+                        name: d.name,
+                        type: d.type
+                    };
+                }),
+                removeNodes: removeNodes,
+                newNodes: newNodes,
+                newWires: newWires,
+                existingNodeIds: nodes.map(function (n) { return n.id; }),
+                hasMutations: hasMutations
+            };
             if (applyCallback === applyModifications) {
-                $msg.attr("data-fp-apply-modify", JSON.stringify({
-                    nodeDiffs: nodeDiffs.map(function (d) {
-                        return {
-                            modNode: d.modNode,
-                            propertyChanges: d.propertyChanges,
-                            wiresChanged: d.wiresChanged,
-                            wiresDiff: d.wiresDiff,
-                            name: d.name,
-                            type: d.type
-                        };
-                    }),
-                    removeNodes: removeNodes,
-                    newNodes: newNodes,
-                    newWires: newWires,
-                    existingNodeIds: nodes.map(function (n) { return n.id; }),
-                    hasMutations: hasMutations
-                }));
+                $msg.attr("data-fp-apply-modify", JSON.stringify(sharedApplyData));
+            } else if (buildFixInfo) {
+                sharedApplyData.capReached = !!buildFixInfo.capReached;
+                $msg.attr("data-fp-apply-build-fix", JSON.stringify(sharedApplyData));
             }
 
             var $applyBtn = $("<button>")
@@ -4655,6 +4664,40 @@
         if (note) { addMessage("assistant", note); }
     }
 
+    // Applies a build-loop review's fix envelope, then keeps the loop's
+    // tracked node ids in sync and advances/stops it. Factored out of
+    // handleBuildReviewResult's addModifyReview callback (rather than left
+    // as an inline closure) so the EXACT same logic can run whether the
+    // Apply click happened in the main window or was relayed from the
+    // pop-out — see the "applyBuildFix" handler in initMainWindow.
+    function applyBuildLoopFix(nodeDiffs, removeNodesArg, idMap, capReached) {
+        applyModifications(nodeDiffs, removeNodesArg, null, idMap);
+        if (!activeBuildLoop) { return; }
+        var loop = activeBuildLoop;
+        if (idMap) {
+            Object.keys(idMap).forEach(function (placeholderId) {
+                var realId = idMap[placeholderId];
+                if (realId && loop.nodeIds.indexOf(realId) === -1) { loop.nodeIds.push(realId); }
+            });
+        }
+        if (Array.isArray(removeNodesArg) && removeNodesArg.length) {
+            loop.nodeIds = loop.nodeIds.filter(function (id) { return removeNodesArg.indexOf(id) === -1; });
+        }
+        // Each iteration should review its OWN fresh debug output, not a
+        // stale message from a prior failed attempt.
+        attachedDebugMessages = [];
+        updateDebugStatus();
+        if (capReached) {
+            stopBuildLoop("Couldn't fully verify after " + loop.maxIterations +
+                " attempt(s) — applied this last fix, but stopping the auto-loop " +
+                "here. Keep iterating manually with Modify if needed.");
+        } else {
+            loop.iteration++;
+            loop.waypoint = "apply";
+            renderLoopStepper(loop);
+        }
+    }
+
     // Re-rendered (replacing any previous one, not stacked) every time the
     // loop advances a waypoint — the chat log above it already shows the
     // turn-by-turn history, so only the CURRENT state needs to be visible
@@ -4832,33 +4875,9 @@
         pushHistory("assistant", data.explanation || "(no explanation returned)");
         addModifyReview(data.flow, data.newNodes || [], data.newWires || [], data.removeNodes || [],
             function (nodeDiffs, removeNodesArg, $applyBtn, idMap) {
-                applyModifications(nodeDiffs, removeNodesArg, $applyBtn, idMap);
-                if (!activeBuildLoop) { return; }
-                // Keep the loop's tracked node ids in sync with whatever this
-                // fix just inserted/removed, so the NEXT review can see them.
-                if (idMap) {
-                    Object.keys(idMap).forEach(function (placeholderId) {
-                        var realId = idMap[placeholderId];
-                        if (realId && loop.nodeIds.indexOf(realId) === -1) { loop.nodeIds.push(realId); }
-                    });
-                }
-                if (Array.isArray(removeNodesArg) && removeNodesArg.length) {
-                    loop.nodeIds = loop.nodeIds.filter(function (id) { return removeNodesArg.indexOf(id) === -1; });
-                }
-                // Each iteration should review its OWN fresh debug output,
-                // not a stale message from a prior failed attempt.
-                attachedDebugMessages = [];
-                updateDebugStatus();
-                if (capReached) {
-                    stopBuildLoop("Couldn't fully verify after " + loop.maxIterations +
-                        " attempt(s) — applied this last fix, but stopping the auto-loop " +
-                        "here. Keep iterating manually with Modify if needed.");
-                } else {
-                    loop.iteration++;
-                    loop.waypoint = "apply";
-                    renderLoopStepper(loop);
-                }
-            });
+                applyBuildLoopFix(nodeDiffs, removeNodesArg, idMap, capReached);
+            },
+            { capReached: capReached });
         renderActionChip(data.suggestedAction);
         setBusy(false);
         updateSelectionStatus();
@@ -4942,7 +4961,11 @@
     // block the "Add to workspace" action (the JSON itself is malformed, not
     // a normal "node not installed" situation); type warnings do not — the
     // user is informed and decides whether to proceed or regenerate.
-    function addGeneratedReview(flow, onImported) {
+    // buildGoal: present only for the /build loop's first-step proposal
+    // (handleBuildResult) — lets the pop-out's Apply tag carry what
+    // startBuildLoop needs (the original goal text) alongside the flow,
+    // since plain Generate/Document have no goal/loop to start.
+    function addGeneratedReview(flow, onImported, buildGoal) {
         var $box = el("#fp-messages");
         if (!$box.length) { return; }
 
@@ -4950,16 +4973,17 @@
         var v = validateGeneratedFlow(nodes);
 
         var $msg = $("<div>").addClass("fp-message fp-review");
-        // Pop-out slice 3: tag plain Generate/Document panels (no
-        // onImported — the /build loop always passes one, since it needs
-        // to start the loop after import) with the raw flow data so the
-        // relay can wire up a WORKING "Add to workspace" button in the
-        // pop-out, instead of the inert HTML it'd otherwise be. The build
-        // loop's import has loop-state semantics (startBuildLoop) that
-        // can't be safely re-triggered from a relayed click, so its panels
-        // intentionally keep relaying as plain inert HTML for now.
+        // Pop-out slice 3 (plain Generate/Document, no onImported): tag
+        // with the raw flow data so the relay can wire up a WORKING "Add
+        // to workspace" button in the pop-out. /build's first proposal
+        // (onImported set, buildGoal present) gets its own tag instead —
+        // importing it also needs to start the loop (startBuildLoop),
+        // which the parent does itself once it gets the relayed intent;
+        // see the "applyBuild" handler in initMainWindow.
         if (!onImported) {
             $msg.attr("data-fp-apply-flow", JSON.stringify(nodes));
+        } else if (buildGoal) {
+            $msg.attr("data-fp-apply-build", JSON.stringify({ flow: nodes, goal: buildGoal }));
         }
         $("<div>").addClass("fp-label").text("GENERATED FLOW — REVIEW").appendTo($msg);
 
@@ -5217,13 +5241,14 @@
         });
     }
 
-    // Same idea as bindApplyButtons, but for a relayed Modify review panel
-    // (addModifyReview tags these with data-fp-apply-modify — see there for
-    // why the /build loop's panels are excluded). nodeDiffs/removeNodes/
-    // newNodes/newWires already reflect the diff the parent computed
-    // against live RED.nodes state at review time; the pop-out doesn't
-    // recompute anything, it just asks the parent to run applyInsertions/
-    // applyModifications with this exact data, same as a sidebar click would.
+    // Same idea as bindApplyButtons, but for a relayed PLAIN Modify review
+    // panel (addModifyReview tags these with data-fp-apply-modify; a
+    // /build loop fix gets a separate tag — see bindBuildFixApplyButtons).
+    // nodeDiffs/removeNodes/newNodes/newWires already reflect the diff the
+    // parent computed against live RED.nodes state at review time; the
+    // pop-out doesn't recompute anything, it just asks the parent to run
+    // applyInsertions/applyModifications with this exact data, same as a
+    // sidebar click would.
     function bindModifyApplyButtons($scope) {
         $scope.filter("[data-fp-apply-modify]").add($scope.find("[data-fp-apply-modify]")).each(function () {
             var $panel = $(this);
@@ -5242,13 +5267,79 @@
         });
     }
 
+    // /build loop, first proposal: addGeneratedReview tags this panel
+    // (onImported set AND a buildGoal — plain Generate/Document panels get
+    // data-fp-apply-flow instead, bound above) with the flow plus the
+    // original goal text. The parent's "applyBuild" handler runs
+    // importGeneratedFlow then startBuildLoop with it, exactly like
+    // handleBuildResult's own onImported closure would.
+    function bindBuildApplyButtons($scope) {
+        $scope.filter("[data-fp-apply-build]").add($scope.find("[data-fp-apply-build]")).each(function () {
+            var $panel = $(this);
+            if ($panel.data("fp-apply-build-bound")) { return; }
+            $panel.data("fp-apply-build-bound", true);
+            var applyData;
+            try { applyData = JSON.parse($panel.attr("data-fp-apply-build")); } catch (e) { return; }
+            $panel.find(".fp-review-actions button.red-ui-button-primary").on("click", function () {
+                var $btn = $(this);
+                $btn.prop("disabled", true).text("Click the canvas to place…");
+                if (!window.opener || window.opener.closed) { return; }
+                try {
+                    window.opener.postMessage({ event: "applyBuild", data: applyData }, location.origin);
+                } catch (e) { /* ignore */ }
+            });
+        });
+    }
+
+    // /build loop, fix iterations: addModifyReview tags this panel with
+    // data-fp-apply-build-fix (instead of data-fp-apply-modify) when
+    // buildFixInfo was passed — see applyBuildLoopFix. The parent's
+    // "applyBuildFix" handler runs applyInsertions/applyBuildLoopFix
+    // with the relayed data, same loop bookkeeping a local click would do.
+    function bindBuildFixApplyButtons($scope) {
+        $scope.filter("[data-fp-apply-build-fix]").add($scope.find("[data-fp-apply-build-fix]")).each(function () {
+            var $panel = $(this);
+            if ($panel.data("fp-apply-build-fix-bound")) { return; }
+            $panel.data("fp-apply-build-fix-bound", true);
+            var applyData;
+            try { applyData = JSON.parse($panel.attr("data-fp-apply-build-fix")); } catch (e) { return; }
+            $panel.find(".fp-review-actions button.red-ui-button-primary").on("click", function () {
+                var $btn = $(this);
+                $btn.prop("disabled", true).text("Applying…");
+                if (!window.opener || window.opener.closed) { return; }
+                try {
+                    window.opener.postMessage({ event: "applyBuildFix", data: applyData }, location.origin);
+                } catch (e) { /* ignore */ }
+            });
+        });
+    }
+
+    // The loop stepper's "Stop build loop" button is relayed the same
+    // generic way as any other chat message (renderLoopStepper appends/
+    // replaces a #fp-loop-stepper element, which the MutationObserver
+    // relay already mirrors via plain add/remove) — but like every other
+    // relayed button, it loses its click handler on the way over. Rebind
+    // it to ask the parent to do exactly what a local click would.
+    function bindStopLoopButton($scope) {
+        $scope.filter("#fp-loop-stepper").add($scope.find("#fp-loop-stepper")).each(function () {
+            var $stepper = $(this);
+            if ($stepper.data("fp-stop-loop-bound")) { return; }
+            $stepper.data("fp-stop-loop-bound", true);
+            $stepper.find(".fp-loop-actions button").on("click", function () {
+                if (!window.opener || window.opener.closed) { return; }
+                try {
+                    window.opener.postMessage({ event: "stopBuildLoop" }, location.origin);
+                } catch (e) { /* ignore */ }
+            });
+        });
+    }
+
     // The Summary/JSON tab toggle (addGeneratedReview, addModifyReview,
     // and anything else using the same .fp-tabs/.fp-tab-panel pattern) is
     // purely local DOM show/hide — unlike Apply, it needs no parent
-    // access at all, so this works for EVERY relayed review panel,
-    // Modify's included, even though Modify's Apply button itself still
-    // doesn't. Lost the same way Apply's original handler did (relayed
-    // HTML has no event listeners) — this just rebinds the toggle.
+    // access at all, so this works for EVERY relayed review panel. Lost
+    // the same way Apply's original handler did (relayed HTML has no
+    // event listeners) — this just rebinds the toggle.
     function bindTabSwitching($scope) {
         $scope.filter(".fp-tabs").add($scope.find(".fp-tabs")).each(function () {
             var $tabs = $(this);
@@ -5330,12 +5421,18 @@
                 el("#fp-messages").html(data.html);
                 bindApplyButtons(el("#fp-messages"));
                 bindModifyApplyButtons(el("#fp-messages"));
+                bindBuildApplyButtons(el("#fp-messages"));
+                bindBuildFixApplyButtons(el("#fp-messages"));
+                bindStopLoopButton(el("#fp-messages"));
                 bindTabSwitching(el("#fp-messages"));
                 scrollMessagesToBottom(true);
             } else if (data.event === "appendMessage") {
                 el("#fp-messages").append(data.html);
                 bindApplyButtons(el("#fp-messages").children().last());
                 bindModifyApplyButtons(el("#fp-messages").children().last());
+                bindBuildApplyButtons(el("#fp-messages").children().last());
+                bindBuildFixApplyButtons(el("#fp-messages").children().last());
+                bindStopLoopButton(el("#fp-messages").children().last());
                 bindTabSwitching(el("#fp-messages").children().last());
                 scrollMessagesToBottom();
             } else if (data.event === "removeMessage") {
@@ -5752,12 +5849,13 @@
 
             // Pop-out child->parent intents: "send this chat message"
             // (slice 2), "import this already-reviewed Generate/Document
-            // flow" (slice 3), and "apply this already-reviewed Modify
-            // diff" (Modify's slice). None of these run anything in the
-            // pop-out's own window — all just ask the main window to do
-            // exactly what the equivalent sidebar click would. Replies/
-            // confirmations reach the pop-out via the existing #fp-messages
-            // relay, same as any other new message.
+            // flow" (slice 3), "apply this already-reviewed Modify diff"
+            // (Modify's slice), and the /build loop's own apply/fix/stop
+            // intents. None of these run anything in the pop-out's own
+            // window — all just ask the main window to do exactly what the
+            // equivalent sidebar click would. Replies/confirmations reach
+            // the pop-out via the existing #fp-messages relay, same as any
+            // other new message.
             window.addEventListener("message", function (evt) {
                 if (evt.origin !== location.origin) { return; }
                 if (evt.source !== popoutWindow) { return; }
@@ -5775,6 +5873,22 @@
                     if (ad.hasMutations) {
                         applyModifications(ad.nodeDiffs || [], ad.removeNodes || [], null, idMap);
                     }
+                } else if (data.event === "applyBuild" && data.data && Array.isArray(data.data.flow)) {
+                    var bd = data.data;
+                    importGeneratedFlow(bd.flow, function (importResult) {
+                        startBuildLoop(bd.goal, bd.flow, importResult);
+                    });
+                } else if (data.event === "applyBuildFix" && data.data) {
+                    var bf = data.data;
+                    var fixIdMap = {};
+                    if (Array.isArray(bf.newNodes) && bf.newNodes.length) {
+                        fixIdMap = applyInsertions(bf.newNodes, bf.newWires || [], bf.existingNodeIds || []) || {};
+                    }
+                    if (bf.hasMutations) {
+                        applyBuildLoopFix(bf.nodeDiffs || [], bf.removeNodes || [], fixIdMap, !!bf.capReached);
+                    }
+                } else if (data.event === "stopBuildLoop") {
+                    stopBuildLoop("Build loop stopped. Whatever's already applied stays as-is.");
                 }
             });
 
