@@ -4517,28 +4517,42 @@
             if (!memberNodes.length && !(liveGroup && liveGroup.type === "group")) { return; }
 
             if (liveGroup && liveGroup.type === "group") {
-                var desiredIds = {};
-                memberNodes.forEach(function (n) { desiredIds[n.id] = true; });
-                var currentIds = {};
-                liveGroup.nodes.forEach(function (n) { currentIds[n.id] = true; });
-                var toRemove = liveGroup.nodes.filter(function (n) { return !desiredIds[n.id]; });
-                var toAdd = memberNodes.filter(function (n) { return !currentIds[n.id]; });
+                if (!memberNodes.length) {
+                    // Full disband. RED.group.removeFromGroup only empties
+                    // .nodes - it never removes the group object itself, so
+                    // looping it down to zero members leaves a tiny, dangling
+                    // empty group on the canvas (confirmed live). The
+                    // editor's own "Ungroup Selection" action uses a
+                    // different API for this exact case - RED.group.ungroup
+                    // reparents members (or clears their .g) AND calls
+                    // RED.nodes.removeGroup to actually remove the group.
+                    RED.group.ungroup(liveGroup);
+                    RED.history.push({ t: "ungroup", groups: [liveGroup], dirty: RED.nodes.dirty() });
+                    groupsApplied++;
+                } else {
+                    var desiredIds = {};
+                    memberNodes.forEach(function (n) { desiredIds[n.id] = true; });
+                    var currentIds = {};
+                    liveGroup.nodes.forEach(function (n) { currentIds[n.id] = true; });
+                    var toRemove = liveGroup.nodes.filter(function (n) { return !desiredIds[n.id]; });
+                    var toAdd = memberNodes.filter(function (n) { return !currentIds[n.id]; });
 
-                if (toRemove.length) {
-                    RED.group.removeFromGroup(liveGroup, toRemove, false);
-                    RED.history.push({ t: "removeFromGroup", group: liveGroup, nodes: toRemove, dirty: RED.nodes.dirty() });
+                    if (toRemove.length) {
+                        RED.group.removeFromGroup(liveGroup, toRemove, false);
+                        RED.history.push({ t: "removeFromGroup", group: liveGroup, nodes: toRemove, dirty: RED.nodes.dirty() });
+                    }
+                    if (toAdd.length) {
+                        RED.group.addToGroup(liveGroup, toAdd);
+                        RED.history.push({ t: "addToGroup", group: liveGroup, nodes: toAdd, dirty: RED.nodes.dirty() });
+                    }
+                    if (g.name !== undefined && g.name !== liveGroup.name) {
+                        var oldName = liveGroup.name;
+                        liveGroup.name = g.name;
+                        liveGroup.changed = true;
+                        RED.history.push({ t: "edit", node: liveGroup, changes: { name: oldName }, dirty: RED.nodes.dirty() });
+                    }
+                    groupsApplied++;
                 }
-                if (toAdd.length) {
-                    RED.group.addToGroup(liveGroup, toAdd);
-                    RED.history.push({ t: "addToGroup", group: liveGroup, nodes: toAdd, dirty: RED.nodes.dirty() });
-                }
-                if (g.name !== undefined && g.name !== liveGroup.name) {
-                    var oldName = liveGroup.name;
-                    liveGroup.name = g.name;
-                    liveGroup.changed = true;
-                    RED.history.push({ t: "edit", node: liveGroup, changes: { name: oldName }, dirty: RED.nodes.dirty() });
-                }
-                groupsApplied++;
             } else {
                 try {
                     var newGroup = RED.group.createGroup(memberNodes);
