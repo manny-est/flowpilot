@@ -45,10 +45,27 @@ top of a stable foundation, with a working, reviewable build at every step:
   information *before* answering or proposing a change — an
   "explore-then-propose" loop, bounded by a step count and token ceiling,
   with a visible cost summary and a Stop button.
+- **Phase 8 — Issue fixes and NR5 support.** Closed early user-reported
+  issues (a stuck "streaming" indicator, missing wiring on some generated
+  flows, an unconfigurable request timeout, an unexplained temperature
+  setting), declared and verified Node-RED 5.x support, added "Preview
+  JSON/debug" links so users can see exactly what a request will send, and
+  an opt-out redaction toggle for local/private AI setups.
+- **Phase 8.5 — Personality, an agentic build loop, a pop-out window, and
+  group handling.** A captain-personality slider (separate from technical
+  accuracy, which never changes), deterministic `/compact`/`/expand` label
+  commands, and a `/build` command that closes FlowPilot's biggest
+  remaining gap: a *visible, user-gated* build → deploy → attach debug
+  output → review → fix loop, instead of generating a flow and never
+  finding out if it works. A detached pop-out window mirrors the full
+  cockpit in its own browser window for multi-monitor setups. FlowPilot can
+  now also see and manage visual groups (create, extend, rename, ungroup),
+  not just individual nodes.
 
 Throughout, every phase preserved the same core guarantees: nothing is sent
 without the user's selection or request, every proposed change is a
-reviewable diff, and every applied change is a normal Node-RED undo step.
+reviewable diff, and every applied change is a normal Node-RED undo step —
+including every step of the `/build` loop and every group mutation.
 
 ## Current feature set
 
@@ -81,18 +98,36 @@ reviewable diff, and every applied change is a normal Node-RED undo step.
   typing a model name blind.
 - **`/demo`** — a guided first request that walks through Generate end to
   end.
+- **`/compact` / `/expand`** — instantly hide/restore the selected node(s)'
+  labels, no AI round-trip.
+- **`/build`** — a visible, user-gated build → deploy → attach debug output
+  → review → fix loop for "make this actually work," bounded by a
+  configurable iteration cap.
+- **Group handling** — context includes a selected node's group membership;
+  Generate/Build/Modify can create, extend, rename, and ungroup visual
+  groups.
+- **Personality slider** — adjustable captain-voice intensity (1-10) for
+  conversational framing; technical content always stays plain.
+- **Pop-out window** — the full cockpit (chat, action bar, status strip,
+  slash commands) in a separate browser window.
 
 ## Architecture at a glance
 
-- **`flowpilot.html`** — the editor-side plugin: sidebar UI, settings,
-  selection/context handling, and all the chat/generate/modify/document
-  client logic.
+- **`flowpilot.html`** — the editor-side plugin entry point: registers the
+  sidebar panel and loads the shared client module below.
+- **`flowpilot-core.js`** — the shared client logic (chat/generate/modify/
+  document/build, selection/context handling, settings UI, diff review and
+  apply, group mutations) — used by both the sidebar and the pop-out window,
+  so they stay in sync by construction rather than by copy-pasted code.
+  Served via a dedicated static route alongside the pop-out's own minimal
+  page (`lib/popout/view.html`), which loads this same module and relays
+  state to/from the main editor window over `postMessage`.
 - **`flowpilot.js`** — the Node-RED runtime plugin: HTTP routes
   (`/flowpilot/*`), provider calls, response parsing/validation, and audit
   logging.
-- **`lib/`** — system prompts (default/generation/document/modify), the
-  OpenAI-compatible provider adapter, and on-disk storage (settings,
-  transcripts, audit log).
+- **`lib/`** — system prompts (default/generation/document/modify/build/
+  persona), the OpenAI-compatible provider adapter, and on-disk storage
+  (settings, transcripts, audit log).
 - **Storage** — FlowPilot keeps its own settings, audit log, and
   per-conversation transcripts under `<node-red-userDir>/flowpilot/`,
   separate from the plugin code itself.
