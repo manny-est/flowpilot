@@ -1037,7 +1037,7 @@ module.exports = function flowPilotRuntime(RED) {
     // parses wins" rule accepted it as "the envelope" and the caller threw
     // "no recognizable modify fields" — when the right answer was to treat
     // the whole reply as prose, since there was no real envelope at all.
-    const ENVELOPE_KEYS = ["explanation", "flow", "question", "changes", "newNodes", "newWires", "removeNodes", "prose"];
+    const ENVELOPE_KEYS = ["explanation", "flow", "question", "changes", "newNodes", "newWires", "removeNodes", "newGroups", "prose"];
     function looksLikeEnvelope(obj) {
       if (!obj || typeof obj !== "object" || Array.isArray(obj)) { return false; }
       return ENVELOPE_KEYS.some(function (k) { return k in obj; });
@@ -1310,7 +1310,7 @@ module.exports = function flowPilotRuntime(RED) {
     // otherwise it's not recognizable as a modify response at all.
     if (auditAction === "modify") {
       const hasModifyShape = ("changes" in parsed) || ("newNodes" in parsed) ||
-        ("newWires" in parsed) || ("removeNodes" in parsed) ||
+        ("newWires" in parsed) || ("removeNodes" in parsed) || ("newGroups" in parsed) ||
         (typeof parsed.explanation === "string" && parsed.explanation.trim());
       if (!hasModifyShape) {
         const err = new Error("The response did not contain any recognizable modify fields.");
@@ -1323,6 +1323,14 @@ module.exports = function flowPilotRuntime(RED) {
       const newNodes = Array.isArray(parsed.newNodes) ? parsed.newNodes : [];
       const newWires = Array.isArray(parsed.newWires) ? parsed.newWires : [];
       const removeNodes = Array.isArray(parsed.removeNodes) ? parsed.removeNodes : [];
+      // Bug found live: this object is what finalizeModifyResult later reads
+      // as "result" — but it never copied parsed.newGroups onto itself, so
+      // even a model correctly using the top-level "newGroups" field (per
+      // the prompt) had it silently dropped right here, before
+      // finalizeModifyResult's own newGroups handling (fixed earlier) ever
+      // saw it. Only a stray type:"group" entry inside newNodes survived,
+      // since newNodes itself is copied through.
+      const newGroups = Array.isArray(parsed.newGroups) ? parsed.newGroups : [];
 
       storage.appendAudit(Object.assign({
         action: auditAction,
@@ -1333,6 +1341,7 @@ module.exports = function flowPilotRuntime(RED) {
         newNodeCount: newNodes.length,
         newWireCount: newWires.length,
         removeNodeCount: removeNodes.length,
+        newGroupCount: newGroups.length,
         contextNodeCount: described ? described.nodeCount : 0,
         contextConnectionCount: described ? described.connectionCount : 0
       }, perf));
@@ -1342,7 +1351,8 @@ module.exports = function flowPilotRuntime(RED) {
         changes: changes,
         newNodes: newNodes,
         newWires: newWires,
-        removeNodes: removeNodes
+        removeNodes: removeNodes,
+        newGroups: newGroups
       };
       const modifyAction = extractSuggestedAction(parsed);
       if (modifyAction) { modifyResult.suggestedAction = modifyAction; }
