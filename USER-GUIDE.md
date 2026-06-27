@@ -144,6 +144,15 @@ canvas, FlowPilot sees their configuration and wiring (sanitized — see
 Chat remembers recent exchanges (configurable under **Behavior → Remember
 last N exchanges**) so you can have a back-and-forth conversation.
 
+### Personality
+
+**Settings → Behavior → Personality** is a 1-10 slider controlling how much
+of a subtle airline-captain voice FlowPilot's conversational replies carry —
+1 is a plain Node-RED engineer, 10 leans all the way into the bit. It only
+affects framing language (greetings, transitions, "what can you do?").
+Explanations, diffs, troubleshooting, and errors always stay plain and
+accurate regardless of the setting.
+
 ### Query intents: Explain, Troubleshoot, Review, Suggest
 
 One-click buttons that pre-fill the prompt box with a ready-to-edit
@@ -191,6 +200,27 @@ change is a single native Node-RED undo step (Ctrl+Z).
 
 ![The same change applied to the flow](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/modify-diff-applied.png)
 
+### Group handling
+
+FlowPilot can see which visual group a selected node belongs to, and
+Generate/Build/Modify can create, extend, rename, and ungroup visual groups
+(the same bordered containers as the editor's own "Group selection") — not
+just individual nodes. Select grouped nodes and describe the grouping you
+want, or mention an existing group by name in a Modify instruction; review
+and apply like any other change.
+
+### Build (the agentic loop)
+
+Describe a goal (e.g. "fetch the weather every hour and log it to a file")
+and arm **Build**, or type `/build <goal>` directly. FlowPilot plans the
+work, proposes a first flow, and once you apply and deploy it, walks an
+interactive loop with you: attach the resulting Debug output, FlowPilot
+reviews it against the goal, and either confirms it's working or proposes a
+fix — repeating until it works or a configurable attempt limit is reached
+(**Settings → Behavior → Build loop iteration cap**). Every proposal and fix
+still goes through the same review-then-apply flow as Modify — FlowPilot
+never deploys for you.
+
 ### Document
 
 Select node(s), arm **Document**, and (optionally) add notes about what you
@@ -210,6 +240,16 @@ summarizing the selection, which you review and place like any other change.
   directly, or delete saved transcripts.
 
 ![The Flight log panel listing past conversations](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/flight-log.png)
+
+### Pop-out window
+
+Click the pop-out icon in the sidebar header to open FlowPilot's full
+cockpit — chat, action bar, status strip, slash commands — in its own
+browser window. Handy for multi-monitor setups: keep the conversation and
+diffs visible on one screen while the canvas fills another. Sending, Clear
+Chat, mode switching, and Apply for Generate/Document/Modify/Build review
+panels all work from the pop-out; it closes automatically if the main editor
+window does.
 
 ### Debug context attachment
 
@@ -266,12 +306,16 @@ Behavior → Stream chat replies**.
 Type these directly into the prompt box:
 
 - `/help` — show the full command/feature briefing
-- `/generate`, `/document`, `/modify` — arm that Execute mode
+- `/generate`, `/document`, `/modify`, `/build` — arm that Execute mode
 - `/query` (or `/chat`) — back to Query mode
 - `/clear` — start a fresh conversation (clears chat and memory)
 - `/history` — open the Flight log
 - `/settings` — open Settings
 - `/demo` — load a sample Generate request into the prompt box
+- `/compact` / `/expand` — hide/restore labels on the selected node(s),
+  instant and deterministic, no AI round-trip
+- `/disable` / `/enable` — disable/re-enable the selected node(s) (skipped on
+  Deploy without removing them), instant and deterministic, no AI round-trip
 
 ![`/help`'s full command/feature briefing](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/slash-help.png)
 

@@ -1,6 +1,6 @@
 {
   "name": "@manny-est/node-red-flowpilot",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "FlowPilot for Node-RED - an AI-powered development assistant sidebar",
   "main": "flowpilot.js",
   "keywords": [
@@ -38,6 +38,8 @@
   "files": [
     "flowpilot.js",
     "flowpilot.html",
+    "flowpilot-core.js",
+    "flowpilot-core.css",
     "lib",
     "icons",
     "examples",

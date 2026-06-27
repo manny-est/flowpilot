@@ -73,6 +73,21 @@ See the [User Guide](USER-GUIDE.md#privacy-and-safety) for the full details.
 - **Clarifying questions** — if an instruction is too vague to act on
   safely, FlowPilot asks ONE question instead of guessing.
 - **Streaming replies** — optional SSE streaming for chat responses.
+- **`/build`** — describe a goal and FlowPilot plans it, proposes a first
+  flow, then walks an interactive build → deploy → debug → review → fix loop
+  with you, bounded by a configurable iteration cap. Every step still goes
+  through the same diff-review-then-apply flow as Modify.
+- **Group handling** — FlowPilot sees which group a selected node belongs to,
+  and Generate/Build/Modify can create, extend, rename, and ungroup visual
+  groups, not just individual nodes.
+- **Pop-out window** — the full chat/action-bar/status-strip cockpit in a
+  separate browser window, handy for multi-monitor setups.
+- **Personality slider** — an adjustable captain-voice intensity (1-10) for
+  conversational framing; technical content (explanations, diffs, errors)
+  always stays plain regardless of setting.
+- **`/compact` / `/expand` / `/disable` / `/enable`** — instant, deterministic
+  slash commands for label visibility and enabling/disabling the selected
+  node(s); no AI round-trip.
 
 ## Requirements
 

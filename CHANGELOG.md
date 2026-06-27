@@ -2,7 +2,7 @@
 
 All notable changes to FlowPilot are documented here.
 
-## [Unreleased]
+## [0.4.0] - 2026-06-27
 
 ### Added
 - Personality slider in Settings → Behavior (1-10): 1 is a plain Node-RED engineer, 10 is a comically over-the-top airline captain who happens to be a Node-RED expert. Default (3) matches the original "subtle co-pilot" voice. Applies to Chat replies AND the natural-language "explanation" field of Generate/Document/Modify (e.g. announcing a flow it just built) — never to node names, ids, or any structural JSON. Explanations, troubleshooting, diffs, and errors always stay plain and accurate regardless of intensity. Generated fresh per request from the slider value via `lib/persona-prompt.js`, rather than being baked into the persisted system prompt.
