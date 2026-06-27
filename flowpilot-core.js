@@ -2295,7 +2295,9 @@
         "Typing a shortcut with extra text, e.g. `/modify add a debug node`, switches mode and leaves the rest in the box so you can review before sending.\n\n" +
         "- `/demo` — load a sample Generate request (a dad joke flow) into the compose box\n" +
         "- `/feedback` — bug report / feature request info\n" +
-        "- `/compact` — hide labels on the selected node(s) (icon-only); `/expand` restores them. Instant, no AI involved — one Ctrl+Z undoes it.\n\n" +
+        "- `/build` — describe a goal; I'll plan, propose, and walk an iterative build → deploy → debug → review → fix loop with you\n" +
+        "- `/compact` — hide labels on the selected node(s) (icon-only); `/expand` restores them. Instant, no AI involved — one Ctrl+Z undoes it.\n" +
+        "- `/disable` — disable the selected node(s) (skipped on Deploy); `/enable` re-enables them. Instant, no AI involved — one Ctrl+Z undoes it.\n\n" +
         "### Also worth knowing\n\n" +
         "- Action chips (paper-plane buttons) offer a one-click follow-up — review and send, nothing fires automatically.\n" +
         "- When I ask a clarifying question, I'll often offer quick-reply buttons (plus \"Other\" for your own answer) — clicking one sends it right away.\n" +
@@ -2448,6 +2450,40 @@
                     RED.actions.invoke("core:hide-selected-node-labels");
                     addMessage("assistant", "Touchdown — compacted " + selCount +
                         " node label" + (selCount === 1 ? "" : "s") + ". Ctrl+Z to undo.");
+                }
+                if ($promptBox.length) { $promptBox.val(""); }
+                break;
+            // Same deterministic pattern as /compact+/expand above, just
+            // toggling the "d" (disabled) flag instead of label visibility —
+            // Node-RED's own native "core:enable-selected-nodes"/
+            // "core:disable-selected-nodes" actions (confirmed present in
+            // both NR4 and NR5, the same actions the right-click context menu
+            // uses) already batch every affected node into one compound undo
+            // step and skip no-ops, so there's nothing to reimplement here.
+            case "/disable":
+            case "/enable":
+                if (isPopoutContext) {
+                    if (window.opener && !window.opener.closed) {
+                        try { window.opener.postMessage({ event: "runSlashCommand", command: command }, location.origin); } catch (e) { /* ignore */ }
+                    }
+                    if ($promptBox.length) { $promptBox.val(""); }
+                    break;
+                }
+                var dSel = (RED.view && RED.view.selection) ? RED.view.selection() : null;
+                var dSelCount = (dSel && dSel.nodes) ? dSel.nodes.length : 0;
+                if (dSelCount === 0) {
+                    addMessage("error", "Select one or more nodes first.");
+                    if ($promptBox.length) { $promptBox.val(""); }
+                    break;
+                }
+                if (command === "/enable") {
+                    RED.actions.invoke("core:enable-selected-nodes");
+                    addMessage("assistant", "Touchdown — enabled " + dSelCount +
+                        " node" + (dSelCount === 1 ? "" : "s") + ". Ctrl+Z to undo.");
+                } else {
+                    RED.actions.invoke("core:disable-selected-nodes");
+                    addMessage("assistant", "Touchdown — disabled " + dSelCount +
+                        " node" + (dSelCount === 1 ? "" : "s") + ". Ctrl+Z to undo.");
                 }
                 if ($promptBox.length) { $promptBox.val(""); }
                 break;
@@ -3774,7 +3810,16 @@
                 insertFailed = true;
             }
         });
-        if (insertFailed || (!addedNodes.length && !addedJunctions.length)) { return; }
+        // Bug found via code-review archaeology (Phase 6 item #11, left open
+        // and never revisited): bailing out entirely on ANY failure used to
+        // discard whatever DID succeed before the failing node — those nodes
+        // stayed on the live canvas (RED.nodes.add already ran) but with no
+        // RED.history entry, so Ctrl+Z couldn't remove them, and no message
+        // told the user anything had landed at all. Now only bail when
+        // NOTHING succeeded; the history push and wiring below already only
+        // reference addedNodes/addedJunctions/addedLinks (whatever's actually
+        // there), so a partial success gets undo coverage same as a full one.
+        if (!addedNodes.length && !addedJunctions.length) { return; }
 
         // Re-link config-node "users" now that all new nodes (including any
         // new config nodes, e.g. mqtt-broker) exist. addNode() ran this
@@ -3857,10 +3902,17 @@
         RED.nodes.dirty(true);
         RED.view.redraw(true);
 
-        // Ground follow-up turns in what was just inserted.
-        var insertedNote = "Touchdown — inserted " + (addedNodes.length + addedJunctions.length) + " node(s)" +
-            (addedLinks.length ? " and added " + addedLinks.length + " wire connection(s)" : "") +
-            ". Ctrl+Z to undo.";
+        // Ground follow-up turns in what was just inserted. Report partial
+        // failure honestly instead of staying silent about it — the per-node
+        // "Failed to add..." errors above already explain what didn't make
+        // it, but without this the user has no summary tying it together.
+        var insertedCount = addedNodes.length + addedJunctions.length;
+        var insertedNote = insertFailed
+            ? "Inserted " + insertedCount + " of " + laid.length + " node(s) — some failed " +
+              "(see errors above). Ctrl+Z undoes what was added."
+            : "Touchdown — inserted " + insertedCount + " node(s)" +
+              (addedLinks.length ? " and added " + addedLinks.length + " wire connection(s)" : "") +
+              ". Ctrl+Z to undo.";
         addMessage("assistant", insertedNote);
         pushHistory("assistant", insertedNote);
         updateSelectionStatus();
