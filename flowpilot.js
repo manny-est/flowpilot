@@ -7,6 +7,7 @@ const documentSystemPrompt = require("./lib/document-system-prompt");
 const modifySystemPrompt = require("./lib/modify-system-prompt");
 const buildSystemPrompt = require("./lib/build-system-prompt");
 const personaPrompt = require("./lib/persona-prompt");
+const { buildCoreScript } = require("./lib/build-core-script");
 
 module.exports = function flowPilotRuntime(RED) {
   const storage = createStorage(RED.settings.userDir);
@@ -625,9 +626,13 @@ module.exports = function flowPilotRuntime(RED) {
   // static lib/debug/view.html that loads the SAME debug-utils.js the
   // sidebar uses). Gated the same as every other FlowPilot route, unlike
   // NR5's own debug view route, which has no permission check at all.
-
+  //
+  // Phase 9 refactor: the SOURCE is now split into lib/core/*.js fragments
+  // (see lib/build-core-script.js for why and how), but this route's
+  // behavior is unchanged — it still serves one complete script at this
+  // same URL, just assembled instead of read off disk verbatim.
   RED.httpAdmin.get("/flowpilot/core.js", RED.auth.needsPermission("settings.read"), function (req, res) {
-    res.sendFile(path.join(__dirname, "flowpilot-core.js"));
+    res.type("application/javascript").send(buildCoreScript());
   });
 
   RED.httpAdmin.get("/flowpilot/core.css", RED.auth.needsPermission("settings.read"), function (req, res) {

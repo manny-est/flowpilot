@@ -38,7 +38,6 @@
   "files": [
     "flowpilot.js",
     "flowpilot.html",
-    "flowpilot-core.js",
     "flowpilot-core.css",
     "lib",
     "icons",
