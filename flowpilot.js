@@ -623,18 +623,30 @@ module.exports = function flowPilotRuntime(RED) {
   // pop-out's own minimal page — mirroring core Node-RED's debug-node
   // pattern (RED.httpAdmin.get("/debug/view/view.html", ...) serving a
   // static lib/debug/view.html that loads the SAME debug-utils.js the
-  // sidebar uses). Gated the same as every other FlowPilot route, unlike
-  // NR5's own debug view route, which has no permission check at all.
+  // sidebar uses).
+  //
+  // INTENTIONALLY UNGATED (fixed in 0.4.1 — was needsPermission("settings.
+  // read") in 0.4.0, which broke the editor on every adminAuth-enabled
+  // instance): these are static client assets, fetched via plain <script
+  // src>/<link>/window.open — none of which can carry the admin auth
+  // bearer token (that only gets attached to FlowPilot's own ajax/fetch
+  // calls, via Node-RED's editor-side request wrapper). needsPermission's
+  // bearer/tokens/anon strategies have no fallback for a request with no
+  // Authorization header, so the gate 401's unconditionally for this kind
+  // of request — confirmed against @node-red/editor-api's auth middleware.
+  // This is the same reason NR5's own debug-view route has no permission
+  // check either. No secrets live in these files; the real data/action
+  // routes (settings, chat, generate, modify, etc. below) stay gated.
 
-  RED.httpAdmin.get("/flowpilot/core.js", RED.auth.needsPermission("settings.read"), function (req, res) {
+  RED.httpAdmin.get("/flowpilot/core.js", function (req, res) {
     res.sendFile(path.join(__dirname, "flowpilot-core.js"));
   });
 
-  RED.httpAdmin.get("/flowpilot/core.css", RED.auth.needsPermission("settings.read"), function (req, res) {
+  RED.httpAdmin.get("/flowpilot/core.css", function (req, res) {
     res.sendFile(path.join(__dirname, "flowpilot-core.css"));
   });
 
-  RED.httpAdmin.get("/flowpilot/popout/view.html", RED.auth.needsPermission("settings.read"), function (req, res) {
+  RED.httpAdmin.get("/flowpilot/popout/view.html", function (req, res) {
     res.sendFile(path.join(__dirname, "lib", "popout", "view.html"));
   });
 
