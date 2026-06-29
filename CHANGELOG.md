@@ -2,6 +2,12 @@
 
 All notable changes to FlowPilot are documented here.
 
+## [0.4.1] - 2026-06-29
+
+### Fixed
+- **Critical**: the editor hung at "Loading plugins" on any Node-RED instance with `adminAuth` enabled, due to a 401 on `/flowpilot/core.js`. 0.4.0's pop-out refactor moved FlowPilot's frontend into a separately-served script, but the route serving it (along with `core.css` and the pop-out's `view.html`) was gated behind `RED.auth.needsPermission(...)` — a check that requires an `Authorization` header, which a plain `<script src>`/`<link>`/`window.open` request can never carry. These three static client-asset routes are no longer gated (they contain no secrets); every data/action route is unaffected and still requires authentication exactly as before.
+- **Critical**, found while verifying the fix above: every settings/chat/generate/document/modify/build request (anything going through the shared `ajaxJson` helper) also failed with "Unauthorized" on `adminAuth` instances, for the same root cause — these requests use an absolute URL (needed for the pop-out to resolve correctly), and Node-RED's editor only auto-attaches the admin auth token to relative URLs. The SSE-streaming `fetch()` calls already worked around this (`fetchHeaders()`); `ajaxJson` now attaches the same bearer token itself.
+
 ## [0.4.0] - 2026-06-27
 
 ### Added
