@@ -1426,29 +1426,42 @@ module.exports = function flowPilotRuntime(RED) {
     // Validate that changes contains no hallucinated ids, and that no id is
     // both patched and marked for removal. A group id from contextGroupIds
     // is allowed here too (see above) even though it's not in originalIds.
+    // Instead of rejecting the whole response when some ids are bad, drop
+    // only the offending patches and apply the rest — same philosophy as the
+    // applyInsertions partial-failure fix (Phase 8.5 #11). A skippedNote in
+    // the response body tells the user what was dropped and why.
     const extraIds = changeIds.filter(function (id) { return !originalIds.has(String(id)) && !contextGroupIds.has(String(id)); });
     const wronglyRemovedIds = changeIds.filter(function (id) { return removeSet.has(String(id)); });
 
-    const idProblems = [];
-    if (extraIds.length) { idProblems.push("unexpected id(s) in changes: " + extraIds.join(", ")); }
-    if (wronglyRemovedIds.length) { idProblems.push("id(s) in both changes and removeNodes: " + wronglyRemovedIds.join(", ")); }
-
-    if (idProblems.length > 0) {
-      storage.appendAudit({ action: "modify_id_mismatch", problems: idProblems });
-      return {
-        status: 422,
-        body: {
-          error: "The model returned inconsistent node ids (" + idProblems.join("; ") + "). Try again.",
-          raw: JSON.stringify(changes)
-        }
-      };
+    const skippedDescriptions = [];
+    if (extraIds.length) {
+      skippedDescriptions.push(
+        extraIds.length === 1
+          ? "Skipped 1 change — that node wasn't in your current selection; reselect it to include it"
+          : "Skipped " + extraIds.length + " changes — those nodes weren't in your current selection; reselect them to include them"
+      );
     }
+    if (wronglyRemovedIds.length) {
+      skippedDescriptions.push(
+        wronglyRemovedIds.length === 1
+          ? "Skipped 1 change — that node was also marked for removal"
+          : "Skipped " + wronglyRemovedIds.length + " changes — those nodes were also marked for removal"
+      );
+    }
+    if (skippedDescriptions.length > 0) {
+      storage.appendAudit({ action: "modify_id_mismatch_partial", skipped_extra: extraIds, skipped_conflict: wronglyRemovedIds });
+    }
+
+    const badIdSet = new Set(extraIds.map(String).concat(wronglyRemovedIds.map(String)));
+    const validChanges = changes.filter(function (c) {
+      return c && c.id !== undefined && c.id !== null && !badIdSet.has(String(c.id));
+    });
 
     // Each patch's "set" is shallow-merged onto a copy of the original node.
     // "id", "x", "y", "z" can never move via a patch — strip them
     // defensively even though the prompt already forbids them.
     const patchById = {};
-    changes.forEach(function (c) {
+    validChanges.forEach(function (c) {
       const set = (c.set && typeof c.set === "object") ? c.set : {};
       const clean = Object.assign({}, set);
       delete clean.id;
@@ -1475,7 +1488,8 @@ module.exports = function flowPilotRuntime(RED) {
     // is, and findLiveNode() already resolves a group id to the live
     // group object (Phase 8.5 C2 slice 1). This is how a group gets
     // renamed/restyled — pure property edit, no new apply-side code.
-    const groupPatchIds = changeIds.filter(function (id) {
+    const validChangeIds = validChanges.map(function (c) { return c.id; });
+    const groupPatchIds = validChangeIds.filter(function (id) {
       return contextGroupIds.has(String(id)) && !originalIds.has(String(id));
     });
     groupPatchIds.forEach(function (id) {
@@ -1586,6 +1600,7 @@ module.exports = function flowPilotRuntime(RED) {
       removeNodes: finalRemoveNodes,
       newGroups: newGroups
     };
+    if (skippedDescriptions.length > 0) { body.skippedNote = skippedDescriptions.join(". ") + "."; }
     if (result.suggestedAction) { body.suggestedAction = result.suggestedAction; }
 
     return { status: 200, body: body };
