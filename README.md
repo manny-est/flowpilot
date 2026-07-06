@@ -93,26 +93,32 @@ See the [User Guide](USER-GUIDE.md#privacy-and-safety) for the full details.
 
 Node-RED 4.x and 5.x, tested. Node.js 16+.
 
-## Install in a local Node-RED user directory
+## Install
 
-From your Node-RED user directory:
+In the Node-RED editor: **Menu → Manage palette → Install**, search for
+`@manny-est/node-red-flowpilot`, and click **Install**.
+
+Or, from your Node-RED user directory:
 
 ```bash
 cd ~/.node-red
-npm install /path/to/node-red-flowpilot
+npm install @manny-est/node-red-flowpilot
 node-red
 ```
 
-For a Docker/container setup, place or install the package inside the
-mounted Node-RED user directory. If your user directory is
-`/data` (or `/workspaces/nodered`, etc.), this folder should exist:
+Restart Node-RED (or the container) after installing or updating — FlowPilot's
+editor UI is cached server-side, so a browser refresh alone is not enough.
+
+For a Docker/container setup, install into the mounted Node-RED user directory.
+If your user directory is `/data` (or `/workspaces/nodered`, etc.), this folder
+should exist:
 
 ```text
 <node-red-userDir>/node_modules/@manny-est/node-red-flowpilot
 ```
 
-Restart the Node-RED container/process after installing or updating —
-plugin HTML is cached server-side, so a browser refresh alone is not enough.
+Restart the Node-RED container/process after updating the package files
+directly — the plugin server caches assembled scripts in memory.
 
 FlowPilot stores its own settings and logs separately from the plugin code,
 under `<node-red-userDir>/flowpilot/`:

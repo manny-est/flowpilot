@@ -212,14 +212,23 @@ and apply like any other change.
 ### Build (the agentic loop)
 
 Describe a goal (e.g. "fetch the weather every hour and log it to a file")
-and arm **Build**, or type `/build <goal>` directly. FlowPilot plans the
-work, proposes a first flow, and once you apply and deploy it, walks an
-interactive loop with you: attach the resulting Debug output, FlowPilot
-reviews it against the goal, and either confirms it's working or proposes a
-fix — repeating until it works or a configurable attempt limit is reached
-(**Settings → Behavior → Build loop iteration cap**). Every proposal and fix
-still goes through the same review-then-apply flow as Modify — FlowPilot
-never deploys for you.
+and arm **Build**, or type `/build <goal>` directly. If you have nodes
+selected, FlowPilot uses them as the starting context (like Modify) — useful
+for targeting an existing sub-flow to extend or fix.
+
+FlowPilot plans the work, proposes a first flow, and once you apply and
+deploy it, walks an interactive loop: attach the resulting Debug output,
+FlowPilot reviews it against the goal, and either confirms it's working
+(with a Done confirmation showing the debug output that proved success) or
+proposes a fix — repeating until it works or a configurable attempt limit is
+reached (**Settings → Behavior → Build loop iteration cap**). At any waypoint
+FlowPilot may ask a focused clarifying question with quick-reply buttons
+before continuing. Every proposal and fix still goes through the same
+review-then-apply flow as Modify — FlowPilot never deploys for you.
+
+**Hold at next step** (**Settings → Behavior**): when enabled, the loop pauses
+at each waypoint for you to review before auto-advancing — useful for
+careful, step-by-step inspection of each iteration.
 
 ### Document
 
@@ -263,12 +272,17 @@ them from there or by clicking **Clear chat**.
 
 ![A debug message attached, shown in the status strip](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/debug-log-attached.png)
 
-### Action chips
+### Action chips and mode suggestions
 
 When FlowPilot's reply describes a change you could make, it may offer an
 action chip — a one-click button that switches to the suggested mode
 (Generate/Modify/Document/Chat) with the request pre-filled. Nothing is sent
 until you review and hit Send yourself.
+
+FlowPilot also watches what you type: if your prompt reads like a Generate,
+Modify, or Build task but a different mode is armed, it surfaces a suggestion
+chip below the reply so you can switch with one click instead of typing the
+slash command manually.
 
 ![A reply with an action chip below it](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/action-chip.png)
 
@@ -303,7 +317,9 @@ Behavior → Stream chat replies**.
 
 ### Slash commands
 
-Type these directly into the prompt box:
+Type `/` in the prompt box to see a floating panel listing all available
+commands with descriptions. Arrow keys or Tab to highlight, Enter or Tab to
+complete, Escape to dismiss.
 
 - `/help` — show the full command/feature briefing
 - `/generate`, `/document`, `/modify`, `/build` — arm that Execute mode
@@ -312,6 +328,7 @@ Type these directly into the prompt box:
 - `/history` — open the Flight log
 - `/settings` — open Settings
 - `/demo` — load a sample Generate request into the prompt box
+- `/feedback` — links to the repo and issue tracker
 - `/compact` / `/expand` — hide/restore labels on the selected node(s),
   instant and deterministic, no AI round-trip
 - `/disable` / `/enable` — disable/re-enable the selected node(s) (skipped on
