@@ -115,13 +115,13 @@ including every step of the `/build` loop and every group mutation.
 
 - **`flowpilot.html`** — the editor-side plugin entry point: registers the
   sidebar panel and loads the shared client module below.
-- **`flowpilot-core.js`** — the shared client logic (chat/generate/modify/
-  document/build, selection/context handling, settings UI, diff review and
-  apply, group mutations) — used by both the sidebar and the pop-out window,
-  so they stay in sync by construction rather than by copy-pasted code.
-  Served via a dedicated static route alongside the pop-out's own minimal
-  page (`lib/popout/view.html`), which loads this same module and relays
-  state to/from the main editor window over `postMessage`.
+- **`lib/core/*.js`** — the shared client logic, split into focused fragments
+  (redaction, history, markdown, selection-context, apply-review, modes, main,
+  init) and assembled at request time by `lib/build-core-script.js` into one
+  complete IIFE served at `/flowpilot/core.js`. Used by both the sidebar and
+  the pop-out window so they stay in sync by construction. The pop-out's
+  minimal page (`lib/popout/view.html`) loads this same assembled module and
+  relays state to/from the main editor window over `postMessage`.
 - **`flowpilot.js`** — the Node-RED runtime plugin: HTTP routes
   (`/flowpilot/*`), provider calls, response parsing/validation, and audit
   logging.
