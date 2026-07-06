@@ -2,6 +2,33 @@
 
 All notable changes to FlowPilot are documented here.
 
+## [0.5.0] - 2026-07-06
+
+### Added
+- **Slash autocomplete**: type `/` in the compose box and a panel shows all available commands with descriptions. Arrow keys, Tab, and Enter navigate; Escape dismisses.
+- **Mode-suggestion chips**: FlowPilot detects when you describe a Generate, Modify, or Build task while in a different mode and offers a one-click chip to switch — no need to type the slash command manually. A chip also surfaces after a Generate response if the flow looks like it needs a follow-up Build loop.
+- **Build loop — hold-at-next-step pacing**: a new Settings → Behavior toggle pauses the loop at each waypoint for review instead of auto-advancing. Useful for carefully inspecting each iteration.
+- **Build loop — checkpoint questions**: the loop can now ask a focused clarifying question at any waypoint (e.g. "the debug output shows X — did you mean to test Y?") with prefilled quick-reply options, the same mechanism Modify uses. The loop only continues once you answer.
+- **Build loop — context-aware start**: `/build` now reads your current selection as the starting context (same as `/modify`), letting you target an existing sub-flow to extend or fix rather than always building from scratch.
+- **Build loop — done confirmation**: a "Done" confirmation step with an explicit success/fail verdict now closes the loop instead of silently stopping.
+- **Pop-out — debug log**: the debug log panel is now fully mirrored in the pop-out window, including the "Clear debug" button and the "Attach N to context" indicator.
+- **Pop-out — Recall and flight log**: the Recall panel and flight-log history are now accessible from the pop-out; opening a past conversation or recalling a message works the same as in the main window.
+- **Pop-out — prompt resize handle**: the compose box in the pop-out can now be resized vertically, matching the main window.
+
+### Fixed
+- **Partial id-validation** (`finalizeModifyResult`): a Modify response containing a mix of valid patches and one bad node id no longer rejects the whole response — valid patches are applied and the bad ones are silently dropped. Previously a single unrecognized id caused every change in the batch to be discarded.
+- **Redaction round-trip poisoning** (issue #7): when a Modify request targets a field that FlowPilot redacted (e.g. an HTTP Authorization header), the model's response — echoing back the `[redacted: ...]` placeholder — previously produced a silent empty diff. Now the diff step recognises placeholder values, skips those fields, and if ALL proposed changes were redacted-field-only, shows an explicit warning explaining the limitation and instructing the user to edit that field directly in the node editor.
+- **Token credential redaction**: `Authorization: Token <value>` headers (used by Django REST Framework and similar APIs) were not caught by the existing bearer-token pattern and could be sent to the model in plain text. The `Token <credential>` form is now recognised as a separate pattern.
+- **Recursive sentinel check**: `isSanitizeSentinel` now walks into nested arrays and objects, so a placeholder buried inside a list property (e.g. `rules[0].v`) is correctly detected and skipped instead of producing a spurious empty diff.
+- **Group data corruption**: a plain `changes` patch could reach the `nodes` membership array of a group container (since context exposes it as a plain field), overwriting the live group membership with a stringified copy. The `nodes` array is now in `DIFF_SKIP` so Modify patches never touch it directly.
+- **Group create/extend on mixed-membership selections**: creating or extending a group when the selection contained nodes from more than one existing group (or some grouped and some ungrouped) could silently fail or corrupt membership. The membership reconciliation step now handles the mixed case correctly.
+- **Invalid port wiring**: FlowPilot now guards against wiring to or from a port index that doesn't exist on a node (e.g. connecting output 3 of a node that only has 2 outputs) — the bad wire is skipped with a warning instead of being applied and then causing a Node-RED canvas error.
+- **Pop-out — settings auth failure**: opening Settings from the pop-out could fail with a 404 or 401 in certain auth configurations because the settings request was issued from the pop-out's nested route rather than through the main window. All settings reads and writes are now relayed through the parent window.
+- **Pop-out — recall and flight-log relay**: recall and flight-log API calls are now relayed through the parent window so they resolve correctly from the pop-out.
+
+### Internal
+- Phase 9 refactor complete: `flowpilot-core.js` is now assembled at runtime from focused fragments under `lib/core/` (redaction, history, markdown, selection-context, apply-review, modes, main, init). The assembled script is functionally identical to the old single file; the split is purely for maintainability.
+
 ## [0.4.1] - 2026-06-29
 
 ### Fixed
