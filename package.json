@@ -1,6 +1,6 @@
 {
   "name": "@manny-est/node-red-flowpilot",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "FlowPilot for Node-RED - an AI-powered development assistant sidebar",
   "main": "flowpilot.js",
   "keywords": [

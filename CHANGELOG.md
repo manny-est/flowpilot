@@ -2,6 +2,17 @@
 
 All notable changes to FlowPilot are documented here.
 
+## [0.5.1] - 2026-07-07
+
+### Added
+- **`/refresh` command**: re-renders the entire message panel from an in-memory record store without clearing conversation history. Restores interactive Apply buttons and review panels that may have become stale after a long session or a pop-out sync. Type `/refresh` at any time.
+- **Shadow record store** (internal): every message, chip, question, and review panel is now backed by a typed record (`messageRecords[]`). Refreshing re-derives the DOM from records rather than the conversation transcript, so interactive elements like Apply buttons are fully re-wired.
+- **Streaming chat record sync** (internal): streaming chat bubbles update their backing record on each delta so a `/refresh` during streaming yields the partial text seen so far rather than a blank bubble.
+
+### Internal
+- Phase 10 Workstream 0A: shadow record store added across `main.js`, `apply-review.js`, `modes.js`, `init.js` — addMessage/addModifyReview/addGeneratedReview/renderActionChip/renderClarifyingQuestion/renderLoopCheckpoint/renderLoopStepper all create typed records; rerenderRecord dispatches each kind on refresh.
+- Phase 10 Workstream 0B: DOM elements now carry `data-fp-record-id` (record id) instead of inline JSON payloads in `data-fp-apply-*` attributes. Four separate pop-out bind functions consolidated into a single `bindReviewApplyButtons`; four separate parent postMessage handlers replaced by a unified `applyByRecordId` handler that dispatches on the record's subkind.
+
 ## [0.5.0] - 2026-07-06
 
 ### Added
