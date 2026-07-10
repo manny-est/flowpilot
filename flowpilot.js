@@ -976,6 +976,7 @@ module.exports = function flowPilotRuntime(RED) {
         capability: {
           supportsTools: probe.supportsTools,
           isReasoningModel: reasoning.isReasoningModel,
+          probedModel: activeProvider.model,
           label: toolLabel + reasoningLabel
         }
       });
