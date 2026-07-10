@@ -958,7 +958,8 @@ module.exports = function flowPilotRuntime(RED) {
               supportsTools: probe.supportsTools,
               toolsProbedAt: new Date().toISOString(),
               isReasoningModel: reasoning.isReasoningModel,
-              reasoningProbedAt: new Date().toISOString()
+              reasoningProbedAt: new Date().toISOString(),
+              probedModel: activeProvider.model
             })
           : p;
       });
@@ -980,6 +981,58 @@ module.exports = function flowPilotRuntime(RED) {
       });
     } catch (err) {
       storage.appendAudit({ action: "chat_test_error", error: err.message });
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ---- Probe: silent capability re-check after model change -----------
+  // Called by the frontend when it detects that the active provider's model
+  // changed since the last full pre-flight — stale supportsTools silently
+  // misroutes chat (agent-loop vs streaming/non-streaming). Runs probeTools
+  // + a minimal chat for reasoning detection, saves all results including
+  // probedModel, and returns { supportsTools, isReasoningModel, probedModel }.
+
+  RED.httpAdmin.post("/flowpilot/probe", RED.auth.needsPermission("settings.write"), async function (req, res) {
+    try {
+      const settings = storage.getSettings();
+      const activeProvider = storage.getActiveProvider(settings);
+
+      const probe = await provider.probeTools(activeProvider);
+      const chatResult = await provider.chat(activeProvider, [
+        { role: "system", content: "You are a helpful assistant." },
+        { role: "user", content: "Say hello." }
+      ]);
+      const reasoning = provider.detectReasoning(chatResult.raw);
+
+      const updatedProviders = (settings.providers || []).map(function (p) {
+        return p.id === activeProvider.id
+          ? Object.assign({}, p, {
+              supportsTools: probe.supportsTools,
+              toolsProbedAt: new Date().toISOString(),
+              isReasoningModel: reasoning.isReasoningModel,
+              reasoningProbedAt: new Date().toISOString(),
+              probedModel: activeProvider.model
+            })
+          : p;
+      });
+      storage.saveSettings(Object.assign({}, settings, { providers: updatedProviders }));
+
+      storage.appendAudit({
+        action: "auto_probe",
+        providerName: activeProvider.providerName,
+        baseUrl: activeProvider.baseUrl,
+        model: activeProvider.model,
+        supportsTools: probe.supportsTools,
+        isReasoningModel: reasoning.isReasoningModel
+      });
+
+      res.json({
+        supportsTools: probe.supportsTools,
+        isReasoningModel: reasoning.isReasoningModel,
+        probedModel: activeProvider.model
+      });
+    } catch (err) {
+      storage.appendAudit({ action: "auto_probe_error", error: err.message });
       res.status(500).json({ error: err.message });
     }
   });
