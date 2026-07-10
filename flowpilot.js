@@ -756,6 +756,10 @@ module.exports = function flowPilotRuntime(RED) {
       if (suggestedAction) { body.suggestedAction = suggestedAction; }
       const questionOptions = extractQuestionOptions(chatData);
       if (questionOptions) { body.questionOptions = questionOptions; }
+      // Pass reasoning_content through so the frontend can render a thinking
+      // block on the non-streaming (agent-loop) path too.
+      const rawMsg = result.raw && result.raw.choices && result.raw.choices[0] && result.raw.choices[0].message;
+      if (rawMsg && rawMsg.reasoning_content) { body.reasoningContent = rawMsg.reasoning_content; }
       res.json(body);
     } catch (err) {
       storage.appendAudit({ action: "chat_error", error: err.message });
