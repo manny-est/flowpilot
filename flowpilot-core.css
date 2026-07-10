@@ -103,6 +103,65 @@
     border-color: rgba(80, 130, 255, 0.35);
 }
 
+/* Reasoning / thinking block — shown for models that emit reasoning_content
+   (e.g. Nemotron, DeepSeek-R1). Sits above the assistant response bubble.
+   Expanded while the model thinks; collapses automatically when content starts. */
+.fp-thinking {
+    margin-bottom: 8px;
+    border-radius: 8px;
+    border: 1px solid rgba(120, 100, 220, 0.25);
+    background: rgba(100, 80, 200, 0.05);
+    overflow: hidden;
+}
+
+.fp-thinking summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--red-ui-secondary-text-color, #888);
+    user-select: none;
+    list-style: none;
+}
+
+.fp-thinking summary::-webkit-details-marker { display: none; }
+
+.fp-thinking summary::before {
+    content: "▶";
+    font-size: 8px;
+    display: inline-block;
+    transition: transform 0.15s ease;
+    color: var(--red-ui-secondary-text-color, #aaa);
+    flex-shrink: 0;
+}
+
+.fp-thinking[open] summary::before {
+    transform: rotate(90deg);
+}
+
+.fp-thinking-tokens {
+    margin-left: auto;
+    font-size: 10px;
+    font-weight: 400;
+    opacity: 0.55;
+}
+
+.fp-thinking-body {
+    padding: 4px 12px 10px 12px;
+    font-family: monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--red-ui-secondary-text-color, #999);
+    opacity: 0.8;
+    white-space: pre-wrap;
+    max-height: 180px;
+    overflow-y: auto;
+}
+
 .fp-error {
     background: rgba(255, 80, 80, 0.12);
     border-color: rgba(255, 80, 80, 0.65);
