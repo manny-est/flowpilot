@@ -1295,7 +1295,6 @@ module.exports = function flowPilotRuntime(RED) {
     if (auditAction === "modify") {
       const hasModifyShape = ("changes" in parsed) || ("newNodes" in parsed) ||
         ("newWires" in parsed) || ("removeNodes" in parsed) || ("newGroups" in parsed) ||
-        ("plan_needed" in parsed) ||
         (typeof parsed.explanation === "string" && parsed.explanation.trim());
       if (!hasModifyShape) {
         const err = new Error("The response did not contain any recognizable modify fields.");
@@ -1339,8 +1338,6 @@ module.exports = function flowPilotRuntime(RED) {
         removeNodes: removeNodes,
         newGroups: newGroups
       };
-      if (parsed.plan_needed) { modifyResult.plan_needed = true; }
-      if (Array.isArray(parsed.plan)) { modifyResult.plan = parsed.plan; }
       const modifyAction = extractSuggestedAction(parsed);
       if (modifyAction) { modifyResult.suggestedAction = modifyAction; }
       return modifyResult;
@@ -1370,8 +1367,6 @@ module.exports = function flowPilotRuntime(RED) {
       newNodes: Array.isArray(parsed.newNodes) ? parsed.newNodes : [],
       newWires: Array.isArray(parsed.newWires) ? parsed.newWires : []
     };
-    if (parsed.plan_needed) { flowResult.plan_needed = true; }
-    if (Array.isArray(parsed.plan)) { flowResult.plan = parsed.plan; }
     const flowAction = extractSuggestedAction(parsed);
     if (flowAction) { flowResult.suggestedAction = flowAction; }
     return flowResult;
