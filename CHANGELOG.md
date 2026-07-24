@@ -2,12 +2,16 @@
 
 All notable changes to FlowPilot are documented here.
 
-## [0.5.1] - 2026-07-07
+## [0.5.1] - 2026-07-24
 
 ### Added
 - **`/refresh` command**: re-renders the entire message panel from an in-memory record store without clearing conversation history. Restores interactive Apply buttons and review panels that may have become stale after a long session or a pop-out sync. Type `/refresh` at any time.
-- **Shadow record store** (internal): every message, chip, question, and review panel is now backed by a typed record (`messageRecords[]`). Refreshing re-derives the DOM from records rather than the conversation transcript, so interactive elements like Apply buttons are fully re-wired.
-- **Streaming chat record sync** (internal): streaming chat bubbles update their backing record on each delta so a `/refresh` during streaming yields the partial text seen so far rather than a blank bubble.
+- **Reasoning model support**: FlowPilot detects reasoning models (Nemotron, DeepSeek, QwQ, and any model returning `reasoning_content` or `<think>` blocks) at pre-flight and handles them correctly throughout. Streaming: a live collapsing "Thinking…" block shows reasoning tokens as they arrive, then auto-collapses when the real response begins. Non-streaming (agent loop): a pre-collapsed thinking block renders alongside the final response. Both the SGLang/Nemotron (`delta.reasoning_content`) and llama.cpp/LocalAI (`<think>…</think>` in `delta.content`) formats are supported. Token count shown on collapse.
+- **Auto-preflight on model change**: changing the model field and sending a message now triggers a silent capability probe before the request goes out — no need to click "Test Provider" after every model switch. A notice appears in the chat thread confirming the probe result (model name, tool support, reasoning flag). Settings are saved automatically as part of the probe so the backend uses the new model. The provider status line also updates live as you type the model name.
+
+### Fixed
+- **Pre-flight `probedModel` not reaching frontend**: after a `/test` run, `probedModel` was saved to disk but never mirrored into the in-memory provider profile, so the auto-probe condition (`probedModel !== currentModel`) could never fire after a page reload. The `/test` response now includes `probedModel` in the `capability` object and `handleSendResult` mirrors it into `currentSettings.providers`.
+- **Reasoning content scrolling**: the live thinking block now scrolls to bottom on each streaming delta so long reasoning chains stay visible as they arrive.
 
 ### Internal
 - Phase 10 Workstream 0A: shadow record store added across `main.js`, `apply-review.js`, `modes.js`, `init.js` — addMessage/addModifyReview/addGeneratedReview/renderActionChip/renderClarifyingQuestion/renderLoopCheckpoint/renderLoopStepper all create typed records; rerenderRecord dispatches each kind on refresh.
