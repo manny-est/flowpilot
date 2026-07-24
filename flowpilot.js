@@ -472,19 +472,16 @@ module.exports = function flowPilotRuntime(RED) {
   }
 
   // B2: sanitized context can contain "[unserializable]" for opaque
-  // node-internal values. Some models echo those fields back as an empty
-  // string/array or null, which is not an intentional edit. Drop only that
-  // exact echo pattern before reconstructing the full flow; do not blanket-
-  // skip the field because values such as debug.complete or function.libs can
-  // be legitimate Modify targets when their original values are visible.
+  // node-internal values. Models can echo those fields back as empty values,
+  // false, zero, objects, or other guessed defaults. No proposed value is
+  // safely diffable against an unknown original, so drop the field before
+  // reconstructing the full flow. Visible originals remain legitimate Modify
+  // targets because they do not carry the sentinel.
   function stripUnserializableEchoes(set, originalNode) {
     const clean = Object.assign({}, (set && typeof set === "object") ? set : {});
     if (!originalNode) { return clean; }
     Object.keys(clean).forEach(function (k) {
-      const proposed = clean[k];
-      const emptyEcho = proposed === "" || proposed === null ||
-        (Array.isArray(proposed) && proposed.length === 0);
-      if (originalNode[k] === "[unserializable]" && emptyEcho) {
+      if (originalNode[k] === "[unserializable]") {
         delete clean[k];
       }
     });
