@@ -470,6 +470,16 @@ module.exports = function flowPilotRuntime(RED) {
       }
     }
 
+    const configNodes = (context && Array.isArray(context.configNodes)) ? context.configNodes : [];
+    if (configNodes.length > 0) {
+      content += (content ? "\n\n" : "") +
+             "Config nodes referenced by the selection (shared configuration " +
+             "objects not shown on the canvas; credentials are redacted). " +
+             "Use a config node's \"id\" to point an existing node at it via " +
+             "a \"changes\" patch, or create a new one via \"newNodes\":\n```json\n" +
+             JSON.stringify(configNodes) + "\n```";
+    }
+
     if (debugMessages.length > 0) {
       content += (content ? "\n\n" : "") +
              "The user attached recent Node-RED Debug sidebar output for " +
