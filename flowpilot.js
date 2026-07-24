@@ -1155,7 +1155,7 @@ module.exports = function flowPilotRuntime(RED) {
   // out from runFlowGeneration so the streaming variant can build the
   // same request and swap provider.chat for provider.chatStream.
   // ---------------------------------------------------------------------
-  function buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated) {
+  function buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction) {
     const settings = storage.getSettings();
     const activeProvider = storage.getActiveProvider(settings);
     const described = describeSelectionContext(context, settings.redactionEnabled);
@@ -1518,7 +1518,7 @@ module.exports = function flowPilotRuntime(RED) {
   // runChat's early return — so the route can hand it to the frontend
   // without running processGenerationContent yet.
   async function runFlowGeneration(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, useTools) {
-    const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated);
+    const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction);
     const chatOptions = useTools ? { tools: AGENT_READ_TOOLS, toolChoice: "auto" } : undefined;
     const result = await provider.chat(activeProvider, messages, chatOptions);
     if (result.toolCalls) {
@@ -1547,7 +1547,7 @@ module.exports = function flowPilotRuntime(RED) {
   // this resolves.
   // ---------------------------------------------------------------------
   async function runFlowGenerationStream(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, onDelta) {
-    const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated);
+    const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction);
     const result = await provider.chatStream(activeProvider, messages, onDelta);
     const content = result.content || "";
     let parseOutcome = "unknown";
