@@ -1,7 +1,11 @@
 const http = require("http");
 const path = require("path");
 const createStorage = require("./lib/storage");
-const provider = require("./lib/provider-openai-compatible");
+const openaiProvider = require("./lib/provider-openai-compatible");
+const anthropicProvider = require("./lib/provider-anthropic");
+function getProvider(ap) {
+  return (ap && ap.type === "anthropic") ? anthropicProvider : openaiProvider;
+}
 const generationSystemPrompt = require("./lib/generation-system-prompt");
 const documentSystemPrompt = require("./lib/document-system-prompt");
 const modifySystemPrompt = require("./lib/modify-system-prompt");
@@ -606,7 +610,7 @@ module.exports = function flowPilotRuntime(RED) {
     warnNumCtxOverflow(messages, activeProvider, "chat");
 
     const chatOptions = useTools ? { tools: AGENT_READ_TOOLS, toolChoice: "auto" } : undefined;
-    const result = await provider.chat(activeProvider, messages, chatOptions);
+    const result = await getProvider(activeProvider).chat(activeProvider, messages, chatOptions);
 
     if (result.toolCalls) {
       const perf = performanceAuditFields(messages, result.content, result);
@@ -661,7 +665,7 @@ module.exports = function flowPilotRuntime(RED) {
 
     let streamResult;
     try {
-      streamResult = await provider.chatStream(activeProvider, messages,
+      streamResult = await getProvider(activeProvider).chatStream(activeProvider, messages,
         function (delta) {
           const visible = splitter.push(delta);
           if (visible) {
@@ -793,7 +797,7 @@ module.exports = function flowPilotRuntime(RED) {
     try {
       const settings = storage.getSettings();
       const activeProvider = storage.getActiveProvider(settings);
-      const result = await provider.listModels(activeProvider);
+      const result = await getProvider(activeProvider).listModels(activeProvider);
       storage.appendAudit({
         action: "list_models",
         providerName: activeProvider.providerName,
@@ -901,7 +905,7 @@ module.exports = function flowPilotRuntime(RED) {
     try {
       const settings = storage.getSettings();
       const activeProvider = storage.getActiveProvider(settings);
-      const result = await provider.chat(activeProvider, messages, { tools: AGENT_READ_TOOLS, toolChoice: "auto" });
+      const result = await getProvider(activeProvider).chat(activeProvider, messages, { tools: AGENT_READ_TOOLS, toolChoice: "auto" });
 
       storage.appendAudit(Object.assign({
         action: "agent_step",
@@ -1046,8 +1050,8 @@ module.exports = function flowPilotRuntime(RED) {
       // Capability probe — connectivity already succeeded above, so a
       // probe failure here just means "no tool support", not a /test failure.
       // Persist the result on the provider profile for the agentic tool-calling path.
-      const probe = await provider.probeTools(activeProvider);
-      const reasoning = provider.detectReasoning(result.raw);
+      const probe = await getProvider(activeProvider).probeTools(activeProvider);
+      const reasoning = getProvider(activeProvider).detectReasoning(result.raw);
       storage.appendAudit({
         action: "capability_probe",
         providerName: activeProvider.providerName,
@@ -1103,12 +1107,12 @@ module.exports = function flowPilotRuntime(RED) {
       const settings = storage.getSettings();
       const activeProvider = storage.getActiveProvider(settings);
 
-      const probe = await provider.probeTools(activeProvider);
-      const chatResult = await provider.chat(activeProvider, [
+      const probe = await getProvider(activeProvider).probeTools(activeProvider);
+      const chatResult = await getProvider(activeProvider).chat(activeProvider, [
         { role: "system", content: "You are a helpful assistant." },
         { role: "user", content: "Say hello." }
       ]);
-      const reasoning = provider.detectReasoning(chatResult.raw);
+      const reasoning = getProvider(activeProvider).detectReasoning(chatResult.raw);
 
       const updatedProviders = (settings.providers || []).map(function (p) {
         return p.id === activeProvider.id
@@ -1520,7 +1524,7 @@ module.exports = function flowPilotRuntime(RED) {
   async function runFlowGeneration(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, useTools) {
     const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction);
     const chatOptions = useTools ? { tools: AGENT_READ_TOOLS, toolChoice: "auto" } : undefined;
-    const result = await provider.chat(activeProvider, messages, chatOptions);
+    const result = await getProvider(activeProvider).chat(activeProvider, messages, chatOptions);
     if (result.toolCalls) {
       return { toolCalls: result.toolCalls, messages: messages, content: result.content || null, usage: result.usage || null };
     }
@@ -1548,7 +1552,7 @@ module.exports = function flowPilotRuntime(RED) {
   // ---------------------------------------------------------------------
   async function runFlowGenerationStream(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, onDelta) {
     const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction);
-    const result = await provider.chatStream(activeProvider, messages, onDelta);
+    const result = await getProvider(activeProvider).chatStream(activeProvider, messages, onDelta);
     const content = result.content || "";
     let parseOutcome = "unknown";
     try {
