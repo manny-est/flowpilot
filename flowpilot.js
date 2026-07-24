@@ -404,15 +404,107 @@ module.exports = function flowPilotRuntime(RED) {
   // entry reports the same shape.
   // ---------------------------------------------------------------------
   function performanceAuditFields(messages, content, providerResult) {
+    const promptChars = (messages || []).reduce(function (sum, m) {
+      return sum + (m && typeof m.content === "string" ? m.content.length : 0);
+    }, 0);
     const fields = {
-      promptChars: (messages || []).reduce(function (sum, m) {
-        return sum + (m && typeof m.content === "string" ? m.content.length : 0);
-      }, 0),
+      promptChars: promptChars,
+      promptTokenEst: Math.round(promptChars / 4),
       completionChars: (content || "").length
     };
     if (providerResult && providerResult.timing) { fields.timing = providerResult.timing; }
     if (providerResult && providerResult.usage) { fields.usage = providerResult.usage; }
     return fields;
+  }
+
+  // W0.2: server-side redaction-placeholder validator. If a model echoes a
+  // [redacted:...] sentinel as a proposed value in changes[].set, drop that
+  // field before it reaches the client. This replaces the client-side
+  // CRITICAL rule that previously tried to prompt the model out of this.
+  // Returns { cleanedChanges, skippedNote } — skippedNote is null when nothing
+  // was dropped.
+  function isRedactionSentinel(v) {
+    if (typeof v === "string") {
+      return v === "[unserializable]" || v === "[redacted]" || v.indexOf("[redacted:") === 0;
+    }
+    if (Array.isArray(v)) { return v.some(isRedactionSentinel); }
+    if (v !== null && typeof v === "object") {
+      return Object.keys(v).some(function (k) { return isRedactionSentinel(v[k]); });
+    }
+    return false;
+  }
+
+  function stripRedactionPlaceholders(changes) {
+    const dropped = [];
+    const cleanedChanges = (Array.isArray(changes) ? changes : []).map(function (entry) {
+      if (!entry || typeof entry !== "object" || !entry.set) { return entry; }
+      const cleanSet = {};
+      const droppedKeys = [];
+      Object.keys(entry.set).forEach(function (k) {
+        if (isRedactionSentinel(entry.set[k])) {
+          droppedKeys.push(k);
+        } else {
+          cleanSet[k] = entry.set[k];
+        }
+      });
+      if (droppedKeys.length) {
+        dropped.push({ id: entry.id, keys: droppedKeys });
+      }
+      return Object.assign({}, entry, { set: cleanSet });
+    });
+
+    let skippedNote = null;
+    if (dropped.length) {
+      const parts = dropped.map(function (d) {
+        return d.keys.join(", ") + (d.id ? " on " + d.id : "");
+      });
+      skippedNote = "Dropped redacted field(s) — these are credentials or secrets " +
+        "that FlowPilot cannot write. They are unchanged on the canvas. " +
+        "Update them directly in the Node-RED node editor if needed. " +
+        "(" + parts.join("; ") + ")";
+    }
+    return { cleanedChanges: cleanedChanges, skippedNote: skippedNote };
+  }
+
+  // W0.4: when logAssembledPrompts is enabled, append one JSON-lines entry to
+  // assembled-prompts.log. Called after each provider round-trip with both
+  // the outgoing messages and the raw response content. Auth keys are never
+  // included — only baseUrl + model from the provider profile.
+  function maybeLogAssembledPrompt(mode, messages, responseContent, parseOutcome, activeProvider) {
+    const settings = storage.getSettings();
+    if (!settings.logAssembledPrompts) { return; }
+    const promptChars = (messages || []).reduce(function (sum, m) {
+      return sum + (m && typeof m.content === "string" ? m.content.length : 0);
+    }, 0);
+    storage.appendAssembledPromptLog({
+      mode: mode,
+      providerBaseUrl: activeProvider && activeProvider.baseUrl,
+      model: activeProvider && activeProvider.model,
+      promptTokenEst: Math.round(promptChars / 4),
+      messageCount: (messages || []).length,
+      messages: messages,
+      responseChars: typeof responseContent === "string" ? responseContent.length : 0,
+      responseContent: responseContent,
+      parseOutcome: parseOutcome
+    });
+  }
+
+  // W0.1: warn when estimated prompt token count approaches the provider's
+  // configured context window (numCtx). Overflow is silent — instructions
+  // vanish with no error, which is exactly the "model ignores my rules"
+  // signature. 32k tokens is the practical floor for prompts this size.
+  // Called after buildMessages; numCtx=0 means unknown/unset, skip check.
+  function warnNumCtxOverflow(messages, activeProvider, mode) {
+    const numCtx = (activeProvider && activeProvider.numCtx) ? activeProvider.numCtx : 0;
+    const promptChars = (messages || []).reduce(function (sum, m) {
+      return sum + (m && typeof m.content === "string" ? m.content.length : 0);
+    }, 0);
+    const promptTokenEst = Math.round(promptChars / 4);
+    if (numCtx > 0 && promptTokenEst > numCtx * 0.9) {
+      console.warn("[FlowPilot] num_ctx overflow risk: mode=%s estimated=%d tokens numCtx=%d (%.0f%% full)",
+        mode, promptTokenEst, numCtx, (promptTokenEst / numCtx) * 100);
+    }
+    return promptTokenEst;
   }
 
   // ---------------------------------------------------------------------
@@ -510,6 +602,7 @@ module.exports = function flowPilotRuntime(RED) {
       buildChatSystemPrompt(settings),
       history, historyTruncated, described, prompt
     );
+    warnNumCtxOverflow(messages, activeProvider, "chat");
 
     const chatOptions = useTools ? { tools: AGENT_READ_TOOLS, toolChoice: "auto" } : undefined;
     const result = await provider.chat(activeProvider, messages, chatOptions);
@@ -547,6 +640,7 @@ module.exports = function flowPilotRuntime(RED) {
       buildChatSystemPrompt(settings),
       history, historyTruncated, described, prompt
     );
+    warnNumCtxOverflow(messages, activeProvider, "chat-stream");
 
     res.writeHead(200, {
       "Content-Type": "text/event-stream; charset=utf-8",
@@ -1070,6 +1164,7 @@ module.exports = function flowPilotRuntime(RED) {
     // mode's own system prompt above already specifies.
     const personaInstruction = personaPrompt.buildPersonaInstruction(settings.personaIntensity, { scope: "explanation" });
     const messages = buildMessages(systemPrompt + "\n\n" + personaInstruction, history, historyTruncated, described, userPrompt);
+    warnNumCtxOverflow(messages, activeProvider, auditAction);
     return { activeProvider, described, messages };
   }
 
@@ -1316,12 +1411,18 @@ module.exports = function flowPilotRuntime(RED) {
       // since newNodes itself is copied through.
       const newGroups = Array.isArray(parsed.newGroups) ? parsed.newGroups : [];
 
+      // W0.2: strip any redaction-placeholder values from changes[].set before
+      // they reach the client. Code owns the user notification now — the CRITICAL
+      // block in the Modify prompt that tried to prevent this via instruction is
+      // deleted. skippedNote is surfaced in modifyResult for the frontend to show.
+      const { cleanedChanges, skippedNote: redactionSkippedNote } = stripRedactionPlaceholders(changes);
+
       storage.appendAudit(Object.assign({
         action: auditAction,
         providerName: activeProvider.providerName,
         baseUrl: activeProvider.baseUrl,
         model: activeProvider.model,
-        changeCount: changes.length,
+        changeCount: cleanedChanges.length,
         newNodeCount: newNodes.length,
         newWireCount: newWires.length,
         removeNodeCount: removeNodes.length,
@@ -1332,12 +1433,13 @@ module.exports = function flowPilotRuntime(RED) {
 
       const modifyResult = {
         explanation: parsed.explanation || "",
-        changes: changes,
+        changes: cleanedChanges,
         newNodes: newNodes,
         newWires: newWires,
         removeNodes: removeNodes,
         newGroups: newGroups
       };
+      if (redactionSkippedNote) { modifyResult.skippedNote = redactionSkippedNote; }
       const modifyAction = extractSuggestedAction(parsed);
       if (modifyAction) { modifyResult.suggestedAction = modifyAction; }
       return modifyResult;
@@ -1392,7 +1494,18 @@ module.exports = function flowPilotRuntime(RED) {
     if (result.toolCalls) {
       return { toolCalls: result.toolCalls, messages: messages, content: result.content || null, usage: result.usage || null };
     }
-    return processGenerationContent(result.content || "", result, messages, auditAction, described, activeProvider);
+    const content = result.content || "";
+    let parseOutcome = "unknown";
+    try {
+      const generated = processGenerationContent(content, result, messages, auditAction, described, activeProvider);
+      parseOutcome = generated.prose ? "prose" : generated.question ? "question" : "success";
+      return generated;
+    } catch (err) {
+      parseOutcome = "parse_error:" + (err.message || "");
+      throw err;
+    } finally {
+      maybeLogAssembledPrompt(auditAction, messages, content, parseOutcome, activeProvider);
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -1406,7 +1519,18 @@ module.exports = function flowPilotRuntime(RED) {
   async function runFlowGenerationStream(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, onDelta) {
     const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated);
     const result = await provider.chatStream(activeProvider, messages, onDelta);
-    return processGenerationContent(result.content || "", result, messages, auditAction, described, activeProvider);
+    const content = result.content || "";
+    let parseOutcome = "unknown";
+    try {
+      const generated = processGenerationContent(content, result, messages, auditAction, described, activeProvider);
+      parseOutcome = generated.prose ? "prose" : generated.question ? "question" : "success";
+      return generated;
+    } catch (err) {
+      parseOutcome = "parse_error:" + (err.message || "");
+      throw err;
+    } finally {
+      maybeLogAssembledPrompt(auditAction, messages, content, parseOutcome, activeProvider);
+    }
   }
 
   // Relays a runFlowGeneration error to the client with the right status,
