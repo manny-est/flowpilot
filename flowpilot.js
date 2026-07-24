@@ -471,6 +471,26 @@ module.exports = function flowPilotRuntime(RED) {
     return { cleanedChanges: cleanedChanges, skippedNote: skippedNote };
   }
 
+  // B2: sanitized context can contain "[unserializable]" for opaque
+  // node-internal values. Some models echo those fields back as an empty
+  // string/array or null, which is not an intentional edit. Drop only that
+  // exact echo pattern before reconstructing the full flow; do not blanket-
+  // skip the field because values such as debug.complete or function.libs can
+  // be legitimate Modify targets when their original values are visible.
+  function stripUnserializableEchoes(set, originalNode) {
+    const clean = Object.assign({}, (set && typeof set === "object") ? set : {});
+    if (!originalNode) { return clean; }
+    Object.keys(clean).forEach(function (k) {
+      const proposed = clean[k];
+      const emptyEcho = proposed === "" || proposed === null ||
+        (Array.isArray(proposed) && proposed.length === 0);
+      if (originalNode[k] === "[unserializable]" && emptyEcho) {
+        delete clean[k];
+      }
+    });
+    return clean;
+  }
+
   // W0.4: when logAssembledPrompts is enabled, append one JSON-lines entry to
   // assembled-prompts.log. Called after each provider round-trip with both
   // the outgoing messages and the raw response content. Auth keys are never
@@ -1702,10 +1722,17 @@ module.exports = function flowPilotRuntime(RED) {
     // Each patch's "set" is shallow-merged onto a copy of the original node.
     // "id", "x", "y", "z" can never move via a patch — strip them
     // defensively even though the prompt already forbids them.
+    const originalById = {};
+    originalNodes.forEach(function (n) {
+      if (n && n.id !== undefined && n.id !== null) {
+        originalById[String(n.id)] = n;
+      }
+    });
+
     const patchById = {};
     validChanges.forEach(function (c) {
       const set = (c.set && typeof c.set === "object") ? c.set : {};
-      const clean = Object.assign({}, set);
+      const clean = stripUnserializableEchoes(set, originalById[String(c.id)]);
       delete clean.id;
       delete clean.x;
       delete clean.y;
