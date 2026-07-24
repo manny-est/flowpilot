@@ -366,6 +366,33 @@
     font-size: 16px;
 }
 
+/* Secondary/escape-hatch variant: transparent background, muted text.
+   Same hover glow as fp-chip-card so it reads as part of the same family
+   without competing visually with the primary action above it. */
+.fp-chip-card.fp-chip-card-alt {
+    background: transparent;
+    border-color: #2a333c;
+    color: #8a96a3;
+}
+.fp-chip-card.fp-chip-card-alt .fp-chip-title {
+    color: #8a96a3;
+    font-weight: 500;
+}
+.fp-chip-card.fp-chip-card-alt:hover {
+    border-color: #46d39a;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 0 1px #46d39a, 0 0 14px -2px #46d39a;
+    color: #dfe6ee;
+}
+.fp-chip-card.fp-chip-card-alt:hover .fp-chip-title {
+    color: #fff;
+}
+.fp-chip-card.fp-chip-card-alt .fp-chip-go {
+    color: #4a5662;
+}
+.fp-chip-card.fp-chip-card-alt:hover .fp-chip-go {
+    color: #46d39a;
+}
+
 .fp-chip-hint {
     margin-top: 4px;
     font-size: 12px;
