@@ -596,6 +596,52 @@
     justify-content: flex-end;
 }
 
+/* W4 todo spine. Single-item plans render as a status line (.fp-todo-status);
+   multi-item plans render as a card (.fp-todo-card) with a checklist inside. */
+.fp-todo-status {
+    display: inline-block;
+    font-size: 12px;
+    padding: 3px 10px;
+    margin: 0 0 4px 0;
+    border-radius: 12px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.fp-todo-pending, .fp-todo-active {
+    background: var(--red-ui-secondary-background, #eee);
+    color: var(--red-ui-secondary-text-color, #888);
+}
+.fp-todo-done {
+    background: rgba(34, 139, 34, 0.12);
+    color: #1a7a1a;
+}
+.fp-todo-failed {
+    background: rgba(200, 40, 40, 0.10);
+    color: #b22222;
+}
+.fp-todo-card {
+    padding: 6px 10px;
+    margin: 0 0 4px 0;
+    background: var(--red-ui-secondary-background, #eee);
+    border-radius: 6px;
+    font-size: 13px;
+}
+.fp-todo-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+.fp-todo-item {
+    padding: 1px 0;
+    line-height: 1.5;
+}
+.fp-todo-item-pending { color: var(--red-ui-secondary-text-color, #999); }
+.fp-todo-item-active  { font-weight: 600; color: var(--red-ui-text-color, #333); }
+.fp-todo-item-done    { color: #1a7a1a; }
+.fp-todo-item-failed  { color: #b22222; }
+
 .fp-json-toolbar {
     display: flex;
     justify-content: flex-end;
