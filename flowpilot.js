@@ -9,6 +9,7 @@ const buildSystemPrompt = require("./lib/build-system-prompt");
 const personaPrompt = require("./lib/persona-prompt");
 const { buildCoreScript } = require("./lib/build-core-script");
 const { extractJsonObject } = require("./lib/envelope");
+const { repairEnvelope } = require("./lib/validator");
 
 module.exports = function flowPilotRuntime(RED) {
   const storage = createStorage(RED.settings.userDir);
@@ -1366,6 +1367,33 @@ module.exports = function flowPilotRuntime(RED) {
       }
     }
 
+    // W2 — Class A repair pass. Run on every successfully-parsed envelope
+    // before the mode-specific branches below. Repairs that don't apply
+    // to a given mode's envelope shape are no-ops (e.g. repairFlowNodes
+    // on an empty/absent flow array). Switch mismatches are surfaced as a
+    // skippedNote on the modify result rather than a 422 — a targeted
+    // message the model can act on, without discarding the rest of the
+    // response.
+    {
+      const repaired = repairEnvelope(parsed);
+      parsed = repaired.envelope;
+      if (repaired.repairs.length) {
+        console.info("[FlowPilot] W2 validator repaired %d field(s): %s",
+          repaired.repairs.length,
+          repaired.repairs.map(function (r) { return r.rule + ":" + r.detail; }).join("; "));
+      }
+      if (repaired.switchMismatches.length) {
+        const detail = repaired.switchMismatches.map(function (m) {
+          return "node " + m.id + " has " + m.rulesLen + " rule(s) but " + m.wiresLen + " wire port(s)";
+        }).join("; ");
+        // Surface as a validation warning on the parsed envelope — the
+        // modify path will pick it up below and add it as a skippedNote.
+        parsed._switchMismatchNote = "Switch rules/wires mismatch — " + detail +
+          ". The number of wires[] entries must equal the number of rules[]. " +
+          "Please resend with the corrected switch node.";
+      }
+    }
+
     // Clarifying-question envelope. The model may ask ONE
     // follow-up question instead of producing a flow when the request is too
     // ambiguous to act on. The frontend renders the question as a normal
@@ -1439,7 +1467,9 @@ module.exports = function flowPilotRuntime(RED) {
         removeNodes: removeNodes,
         newGroups: newGroups
       };
-      if (redactionSkippedNote) { modifyResult.skippedNote = redactionSkippedNote; }
+      // Combine skipped-note sources: redaction (W0.2) and switch mismatch (W2).
+      const skippedNotes = [redactionSkippedNote, parsed._switchMismatchNote].filter(Boolean);
+      if (skippedNotes.length) { modifyResult.skippedNote = skippedNotes.join(" "); }
       const modifyAction = extractSuggestedAction(parsed);
       if (modifyAction) { modifyResult.suggestedAction = modifyAction; }
       return modifyResult;
