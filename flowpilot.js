@@ -2115,10 +2115,13 @@ module.exports = function flowPilotRuntime(RED) {
     const historyTruncated = !!req.body.historyTruncated;
 
     const finalize = function (result) { return finalizeModifyResult(result, originalNodes); };
+    const hasSwitch = Array.isArray(context && context.nodes) &&
+      context.nodes.some(function (node) { return node && node.type === "switch"; });
+    const modifyPrompt = modifySystemPrompt({ hasSwitch: hasSwitch });
 
     if (req.body.stream) {
       return runExecuteStream(
-        req, res, modifySystemPrompt, "modify", String(prompt).trim(), context,
+        req, res, modifyPrompt, "modify", String(prompt).trim(), context,
         history, historyTruncated, finalize, req.body.conversationId
       );
     }
@@ -2126,7 +2129,7 @@ module.exports = function flowPilotRuntime(RED) {
     try {
       const useTools = !!req.body.tools;
       const result = await runFlowGeneration(
-        modifySystemPrompt, "modify", String(prompt).trim(), context,
+        modifyPrompt, "modify", String(prompt).trim(), context,
         history, historyTruncated, useTools
       );
       if (result.toolCalls) {
