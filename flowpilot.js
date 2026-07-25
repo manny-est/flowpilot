@@ -28,6 +28,10 @@ const SAFE_NODE_TYPES = new Set([
   "comment", "link in", "link out", "link call", "junction"
 ]);
 
+const MODIFY_VERIFY_SKIP_PROPS = new Set([
+  "wires", "x", "y", "z", "g", "outputLabels", "inputLabels", "links"
+]);
+
 function classifyFlowNodes(nodes) {
   const classes = { safe: [], sideEffecting: [] };
   if (!Array.isArray(nodes)) { return classes; }
@@ -1980,6 +1984,34 @@ module.exports = function flowPilotRuntime(RED) {
 
     if (newGroups.length > 0) { storage.appendAudit({ action: "modify_groups", count: newGroups.length }); }
 
+    const verifySteps = [];
+    validChanges.forEach(function (change) {
+      const set = patchById[String(change.id)] || {};
+      Object.keys(set).forEach(function (prop) {
+        if (MODIFY_VERIFY_SKIP_PROPS.has(prop)) { return; }
+        verifySteps.push({
+          nodeId: change.id,
+          check: "property",
+          prop: prop,
+          expected: set[prop]
+        });
+      });
+    });
+    newNodes.forEach(function (node) {
+      verifySteps.push({ nodeId: node.id, check: "exists" });
+    });
+    finalRemoveNodes.forEach(function (id) {
+      verifySteps.push({ nodeId: id, check: "absent" });
+    });
+    newWires.forEach(function (wire) {
+      verifySteps.push({
+        fromId: wire.from,
+        fromPort: wire.fromPort || 0,
+        toId: wire.to,
+        check: "wire"
+      });
+    });
+
     const body = {
       explanation: result.explanation,
       flow: flow,
@@ -1988,6 +2020,7 @@ module.exports = function flowPilotRuntime(RED) {
       removeNodes: finalRemoveNodes,
       newGroups: newGroups
     };
+    if (verifySteps.length) { body.verifySteps = verifySteps; }
     if (skippedDescriptions.length > 0) { body.skippedNote = skippedDescriptions.join(". ") + "."; }
     if (result.suggestedAction) { body.suggestedAction = result.suggestedAction; }
 
