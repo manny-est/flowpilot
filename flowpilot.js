@@ -6,6 +6,36 @@ const anthropicProvider = require("./lib/provider-anthropic");
 function getProvider(ap) {
   return (ap && ap.type === "anthropic") ? anthropicProvider : openaiProvider;
 }
+
+const DIRECT_COMPLETION_SCHEMA = {
+  type: "object",
+  properties: {
+    explanation: { type: "string" },
+    flow: { type: "array" },
+    changes: { type: "array" },
+    newNodes: { type: "array" },
+    newWires: { type: "array" },
+    removeNodes: { type: "array" },
+    question: { type: "string" },
+    mode: { type: "string" }
+  },
+  additionalProperties: true
+};
+
+function directCompletionResponseFormat(activeProvider, auditAction, useTools) {
+  if (useTools || (activeProvider && activeProvider.type === "anthropic") ||
+      (auditAction !== "generate" && auditAction !== "modify")) {
+    return null;
+  }
+  return {
+    type: "json_schema",
+    json_schema: {
+      name: "flowpilot_" + auditAction + "_response",
+      strict: false,
+      schema: DIRECT_COMPLETION_SCHEMA
+    }
+  };
+}
 const generationSystemPrompt = require("./lib/generation-system-prompt");
 const documentSystemPrompt = require("./lib/document-system-prompt");
 const modifySystemPrompt = require("./lib/modify-system-prompt");
@@ -1312,7 +1342,7 @@ module.exports = function flowPilotRuntime(RED) {
   // provider.chatStream). Throws an Error with .status and (when applicable)
   // .raw for the route to relay.
   // ---------------------------------------------------------------------
-  function processGenerationContent(content, providerResult, messages, auditAction, described, activeProvider) {
+  function processGenerationContent(content, providerResult, messages, auditAction, described, activeProvider, userPrompt) {
     const perf = performanceAuditFields(messages, content, providerResult);
 
     // Mode-mismatch redirect: the model may respond in plain prose —
@@ -1386,6 +1416,31 @@ module.exports = function flowPilotRuntime(RED) {
         err.raw = content;
         throw err;
       }
+    }
+
+    // Constrained-decoding providers cannot emit the legacy plain-prose
+    // redirect + hidden data block because response_format requires a JSON
+    // object. Accept the equivalent top-level {"mode":"..."} envelope and
+    // translate it back into the existing prose/suggestedAction result shape.
+    // Reuse the original request as the chip prompt when the model omits one.
+    if (typeof parsed.mode === "string" &&
+        ["generate", "document", "modify", "chat"].indexOf(parsed.mode) !== -1 &&
+        parsed.mode !== auditAction) {
+      const redirectPrompt = (typeof parsed.prompt === "string" && parsed.prompt.trim())
+        ? parsed.prompt.trim()
+        : String(userPrompt || "").trim();
+      const redirect = {
+        mode: parsed.mode,
+        prompt: redirectPrompt
+      };
+      if (typeof parsed.selectionHint === "string" && parsed.selectionHint.trim()) {
+        redirect.selectionHint = parsed.selectionHint.trim();
+      }
+      const redirectProse = (typeof parsed.explanation === "string" && parsed.explanation.trim())
+        ? parsed.explanation.trim()
+        : "This request belongs in " + parsed.mode + " mode.";
+      storage.appendAudit(Object.assign({ action: auditAction + "_prose" }, perf));
+      return { prose: redirectProse, suggestedAction: redirect };
     }
 
     // W2 — Class A repair pass. Run on every successfully-parsed envelope
@@ -1540,7 +1595,10 @@ module.exports = function flowPilotRuntime(RED) {
   // without running processGenerationContent yet.
   async function runFlowGeneration(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, useTools) {
     const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction);
-    const chatOptions = useTools ? { tools: AGENT_READ_TOOLS, toolChoice: "auto" } : undefined;
+    const responseFormat = directCompletionResponseFormat(activeProvider, auditAction, useTools);
+    const chatOptions = useTools
+      ? { tools: AGENT_READ_TOOLS, toolChoice: "auto" }
+      : (responseFormat ? { responseFormat: responseFormat } : undefined);
     const result = await getProvider(activeProvider).chat(activeProvider, messages, chatOptions);
     if (result.toolCalls) {
       return { toolCalls: result.toolCalls, messages: messages, content: result.content || null, usage: result.usage || null };
@@ -1548,7 +1606,7 @@ module.exports = function flowPilotRuntime(RED) {
     const content = result.content || "";
     let parseOutcome = "unknown";
     try {
-      const generated = processGenerationContent(content, result, messages, auditAction, described, activeProvider);
+      const generated = processGenerationContent(content, result, messages, auditAction, described, activeProvider, userPrompt);
       parseOutcome = generated.prose ? "prose" : generated.question ? "question" : "success";
       return generated;
     } catch (err) {
@@ -1569,11 +1627,15 @@ module.exports = function flowPilotRuntime(RED) {
   // ---------------------------------------------------------------------
   async function runFlowGenerationStream(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, onDelta) {
     const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction);
-    const result = await getProvider(activeProvider).chatStream(activeProvider, messages, onDelta);
+    const responseFormat = directCompletionResponseFormat(activeProvider, auditAction, false);
+    const streamOptions = responseFormat ? { responseFormat: responseFormat } : undefined;
+    const result = await getProvider(activeProvider).chatStream(
+      activeProvider, messages, onDelta, undefined, streamOptions
+    );
     const content = result.content || "";
     let parseOutcome = "unknown";
     try {
-      const generated = processGenerationContent(content, result, messages, auditAction, described, activeProvider);
+      const generated = processGenerationContent(content, result, messages, auditAction, described, activeProvider, userPrompt);
       parseOutcome = generated.prose ? "prose" : generated.question ? "question" : "success";
       return generated;
     } catch (err) {
