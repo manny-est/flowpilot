@@ -1342,6 +1342,35 @@ module.exports = function flowPilotRuntime(RED) {
   // provider.chatStream). Throws an Error with .status and (when applicable)
   // .raw for the route to relay.
   // ---------------------------------------------------------------------
+  function buildFpUidManifest(flow) {
+    if (!Array.isArray(flow)) { return []; }
+
+    return flow
+      .filter(function (node) {
+        return node && node.type === "debug" &&
+          typeof node.name === "string" && /^FP-UID\d+$/.test(node.name);
+      })
+      .sort(function (a, b) {
+        const bySequence = Number(a.name.slice(6)) - Number(b.name.slice(6));
+        if (bySequence !== 0) { return bySequence; }
+        const byName = a.name.localeCompare(b.name);
+        if (byName !== 0) { return byName; }
+        return String(a.id || "").localeCompare(String(b.id || ""));
+      })
+      .map(function (tap) {
+        const upstream = flow.find(function (node) {
+          return node && Array.isArray(node.wires) && node.wires.some(function (port) {
+            return Array.isArray(port) && port.indexOf(tap.id) !== -1;
+          });
+        });
+        return {
+          name: tap.name,
+          id: tap.id,
+          wiredFrom: upstream ? upstream.id : null
+        };
+      });
+  }
+
   function processGenerationContent(content, providerResult, messages, auditAction, described, activeProvider, userPrompt) {
     const perf = performanceAuditFields(messages, content, providerResult);
 
@@ -1575,6 +1604,10 @@ module.exports = function flowPilotRuntime(RED) {
       newNodes: Array.isArray(parsed.newNodes) ? parsed.newNodes : [],
       newWires: Array.isArray(parsed.newWires) ? parsed.newWires : []
     };
+    if (auditAction === "build") {
+      const fpUidManifest = buildFpUidManifest(flow);
+      if (fpUidManifest.length) { flowResult.fpUidManifest = fpUidManifest; }
+    }
     const flowAction = extractSuggestedAction(parsed);
     if (flowAction) { flowResult.suggestedAction = flowAction; }
     return flowResult;
