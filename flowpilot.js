@@ -1393,10 +1393,14 @@ module.exports = function flowPilotRuntime(RED) {
             return Array.isArray(port) && port.indexOf(tap.id) !== -1;
           });
         });
+        const upstreamPort = upstream ? upstream.wires.findIndex(function (port) {
+          return Array.isArray(port) && port.indexOf(tap.id) !== -1;
+        }) : -1;
         return {
           name: tap.name,
           id: tap.id,
-          wiredFrom: upstream ? upstream.id : null
+          wiredFrom: upstream ? upstream.id : null,
+          wiredFromPort: upstreamPort >= 0 ? upstreamPort : null
         };
       });
   }
