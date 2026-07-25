@@ -22,6 +22,32 @@ const DIRECT_COMPLETION_SCHEMA = {
   additionalProperties: true
 };
 
+const SAFE_NODE_TYPES = new Set([
+  "inject", "function", "change", "switch", "filter", "json", "xml", "csv",
+  "base64", "html", "split", "join", "sort", "batch", "debug", "status",
+  "comment", "link in", "link out", "link call", "junction"
+]);
+
+function classifyFlowNodes(nodes) {
+  const classes = { safe: [], sideEffecting: [] };
+  if (!Array.isArray(nodes)) { return classes; }
+
+  nodes.forEach(function (node) {
+    if (!node || typeof node !== "object") { return; }
+    const summary = {
+      id: node.id,
+      type: node.type,
+      name: node.name || ""
+    };
+    if (SAFE_NODE_TYPES.has(node.type)) {
+      classes.safe.push(summary);
+    } else {
+      classes.sideEffecting.push(summary);
+    }
+  });
+  return classes;
+}
+
 function directCompletionResponseFormat(activeProvider, auditAction, useTools) {
   if (useTools || (activeProvider && activeProvider.type === "anthropic") ||
       (auditAction !== "generate" && auditAction !== "modify")) {
@@ -1607,6 +1633,7 @@ module.exports = function flowPilotRuntime(RED) {
     if (auditAction === "build") {
       const fpUidManifest = buildFpUidManifest(flow);
       if (fpUidManifest.length) { flowResult.fpUidManifest = fpUidManifest; }
+      if (flow.length) { flowResult.stepNodeClasses = classifyFlowNodes(flow); }
     }
     const flowAction = extractSuggestedAction(parsed);
     if (flowAction) { flowResult.suggestedAction = flowAction; }
