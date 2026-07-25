@@ -1998,6 +1998,7 @@ module.exports = function flowPilotRuntime(RED) {
       });
     });
     newNodes.forEach(function (node) {
+      if (!node || node.id === undefined || node.id === null) { return; }
       verifySteps.push({ nodeId: node.id, check: "exists" });
     });
     finalRemoveNodes.forEach(function (id) {
