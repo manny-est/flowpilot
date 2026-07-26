@@ -393,6 +393,50 @@
     color: #46d39a;
 }
 
+/* WS4 build consent gate (Proceed/Skip): sits inline in a question-row,
+   side by side, so it stays .fp-chip-card's compact pill-shaped sibling
+   rather than that pattern's full-width stacked card layout. Reuses the
+   same cockpit accent/muted color language so both read as one family. */
+.fp-consent-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 14px;
+    border-radius: 999px;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    background: #141a21;
+    border: 1px solid #2c3742;
+    color: #dfe6ee;
+    transition: border-color .12s ease, box-shadow .12s ease;
+}
+
+.fp-consent-chip:hover:not(:disabled) {
+    border-color: #46d39a;
+    box-shadow: 0 0 0 1px #46d39a, 0 0 10px -2px #46d39a;
+}
+
+.fp-consent-chip:active:not(:disabled) {
+    transform: translateY(1px);
+}
+
+.fp-consent-chip:disabled {
+    cursor: default;
+    opacity: 0.75;
+}
+
+.fp-consent-chip-primary {
+    border-color: rgba(70, 211, 154, 0.35);
+    color: #46d39a;
+}
+
+.fp-consent-chip-alt {
+    background: transparent;
+    border-color: #2a333c;
+    color: #8a96a3;
+}
+
 .fp-chip-hint {
     margin-top: 4px;
     font-size: 12px;
