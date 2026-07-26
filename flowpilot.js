@@ -91,12 +91,11 @@ module.exports = function flowPilotRuntime(RED) {
     "that may have been said earlier, ask the user.";
 
   // ---------------------------------------------------------------------
-  // Tier-1 READ tools the model may call autonomously during
-  // a chat turn. Their data (RED.nodes, live selection, debug buffer) lives
-  // only in the editor, so each call is executed CLIENT-SIDE and its result
-  // passed back through the same sanitizer as selection context — a tool
-  // result can never carry a raw secret. WRITE actions are never exposed as
-  // tools; they stay on the existing diff/review/apply envelope.
+  // Tier-1 READ tools the model may call autonomously. Their data
+  // (RED.nodes, live selection, debug buffer) lives only in the editor, so
+  // each call is executed CLIENT-SIDE and its result passed back through the
+  // same sanitizer as selection context — a tool result can never carry a
+  // raw secret.
   // ---------------------------------------------------------------------
   const AGENT_READ_TOOLS = [
     {
@@ -204,6 +203,171 @@ module.exports = function flowPilotRuntime(RED) {
       }
     }
   ];
+
+  // W7 Round 1 WRITE tools. One call represents one plan/todo item: a small
+  // coherent bundle, never one call per field. `tier` is FlowPilot metadata,
+  // not part of either provider's tool schema; providerToolDefinitions()
+  // strips it before the request leaves the server. The client combines this
+  // registry tier with classifyFlowNodes-equivalent per-call node safety so a
+  // write-gated call only prompts when it actually touches an unsafe type.
+  const WRITE_TOOLS = [
+    {
+      tier: "write-gated",
+      type: "function",
+      function: {
+        name: "apply_step",
+        description: "Apply ONE plan item as a small bundle of sparse " +
+          "property patches, new nodes, and immediate wires. Use one call " +
+          "for the whole item, not one call per field. Existing wire " +
+          "removal/replacement is expressed as a sparse changes[].set.wires " +
+          "final value.",
+        parameters: {
+          type: "object",
+          properties: {
+            summary: {
+              type: "string",
+              description: "Short todo-item description of this step."
+            },
+            changes: {
+              type: "array",
+              description: "Sparse patches for existing nodes.",
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  set: { type: "object", additionalProperties: true }
+                },
+                required: ["id", "set"],
+                additionalProperties: false
+              }
+            },
+            newNodes: {
+              type: "array",
+              description: "New nodes for this step, using temporary ids.",
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  type: { type: "string" }
+                },
+                required: ["id", "type"],
+                additionalProperties: true
+              }
+            },
+            newWires: {
+              type: "array",
+              description: "Immediate wires for this step; ids may refer to " +
+                "existing nodes or newNodes temporary ids.",
+              items: {
+                type: "object",
+                properties: {
+                  from: { type: "string" },
+                  fromPort: { type: "integer", minimum: 0 },
+                  to: { type: "string" }
+                },
+                required: ["from", "fromPort", "to"],
+                additionalProperties: false
+              }
+            }
+          },
+          required: ["summary"],
+          additionalProperties: false
+        }
+      }
+    },
+    {
+      tier: "write-gated",
+      type: "function",
+      function: {
+        name: "remove_step",
+        description: "Remove one node as ONE plan item. Its connected wires " +
+          "are removed with it by the existing editor apply path.",
+        parameters: {
+          type: "object",
+          properties: {
+            summary: {
+              type: "string",
+              description: "Short todo-item description of this removal."
+            },
+            nodeId: { type: "string", description: "Existing node id to remove." }
+          },
+          required: ["summary", "nodeId"],
+          additionalProperties: false
+        }
+      }
+    },
+    {
+      tier: "write-gated",
+      type: "function",
+      function: {
+        name: "rename_node",
+        description: "Rename one existing node as ONE plan item.",
+        parameters: {
+          type: "object",
+          properties: {
+            summary: {
+              type: "string",
+              description: "Short todo-item description of this rename."
+            },
+            nodeId: { type: "string", description: "Existing node id to rename." },
+            name: { type: "string", description: "Exact final node name." }
+          },
+          required: ["summary", "nodeId", "name"],
+          additionalProperties: false
+        }
+      }
+    },
+    {
+      tier: "write-safe",
+      type: "function",
+      function: {
+        name: "ask_user",
+        description: "Ask the user a clarifying question, pause this loop, " +
+          "and resume with their answer. This does not mutate the flow.",
+        parameters: {
+          type: "object",
+          properties: {
+            question: { type: "string" },
+            options: {
+              type: "array",
+              items: { type: "string" },
+              description: "Optional short answer choices."
+            }
+          },
+          required: ["question"],
+          additionalProperties: false
+        }
+      }
+    }
+  ];
+
+  function providerToolDefinitions(tools) {
+    return tools.map(function (tool) {
+      return { type: tool.type, function: tool.function };
+    });
+  }
+
+  function agentToolsFor(settings, activeProvider, mode) {
+    const writesEnabled = settings.enableAgentWrite === true &&
+      mode === "modify" && activeProvider && activeProvider.supportsTools === true;
+    return providerToolDefinitions(AGENT_READ_TOOLS.concat(writesEnabled ? WRITE_TOOLS : []));
+  }
+
+  function toolTierMap(toolCalls) {
+    if (!Array.isArray(toolCalls) || !toolCalls.length) { return null; }
+    const tiersByName = {};
+    WRITE_TOOLS.forEach(function (tool) {
+      tiersByName[tool.function.name] = tool.tier;
+    });
+    const byCallId = {};
+    toolCalls.forEach(function (call) {
+      const name = call && call.function && call.function.name;
+      if (call && call.id && tiersByName[name]) {
+        byCallId[call.id] = tiersByName[name];
+      }
+    });
+    return Object.keys(byCallId).length ? byCallId : null;
+  }
 
   // Keep only well-formed { role: "user"|"assistant", content: <string> }
   // entries. Anything else (bad shapes, empty content, other roles) is
@@ -669,7 +833,8 @@ module.exports = function flowPilotRuntime(RED) {
   // log it, and return the result. Used by both /chat and /test so the two
   // never drift apart. contextMode is recorded for the audit trail.
   // ---------------------------------------------------------------------
-  // useTools: when true, the request offers AGENT_READ_TOOLS
+  // useTools: when true and the active provider supports native tools, the
+  // request offers the mode-appropriate agent tools
   // with tool_choice "auto". If the provider responds with tool_calls instead
   // of a final message, we return early with `toolCalls` + the `messages`
   // array built so far (so the caller/frontend can append the tool results
@@ -686,7 +851,10 @@ module.exports = function flowPilotRuntime(RED) {
     );
     warnNumCtxOverflow(messages, activeProvider, "chat");
 
-    const chatOptions = useTools ? { tools: AGENT_READ_TOOLS, toolChoice: "auto" } : undefined;
+    const toolsEnabled = !!useTools && activeProvider.supportsTools === true;
+    const chatOptions = toolsEnabled
+      ? { tools: agentToolsFor(settings, activeProvider, "chat"), toolChoice: "auto" }
+      : undefined;
     const result = await getProvider(activeProvider).chat(activeProvider, messages, chatOptions);
 
     if (result.toolCalls) {
@@ -982,7 +1150,16 @@ module.exports = function flowPilotRuntime(RED) {
     try {
       const settings = storage.getSettings();
       const activeProvider = storage.getActiveProvider(settings);
-      const result = await getProvider(activeProvider).chat(activeProvider, messages, { tools: AGENT_READ_TOOLS, toolChoice: "auto" });
+      const toolsEnabled = activeProvider.supportsTools === true;
+      const offeredTools = toolsEnabled ? agentToolsFor(settings, activeProvider, mode) : [];
+      const chatOptions = toolsEnabled
+        ? { tools: offeredTools, toolChoice: "auto" }
+        : undefined;
+      // Messages include client-produced role:"tool" results. Pass them
+      // straight to the adapter; OpenAI-compatible providers receive them
+      // unchanged and Anthropic converts only the outer message envelope to
+      // native tool_result blocks.
+      const result = await getProvider(activeProvider).chat(activeProvider, messages, chatOptions);
 
       storage.appendAudit(Object.assign({
         action: "agent_step",
@@ -994,7 +1171,12 @@ module.exports = function flowPilotRuntime(RED) {
       }, performanceAuditFields(messages, result.content, result)));
 
       if (result.toolCalls) {
-        return res.json({ toolCalls: result.toolCalls, content: result.content || null, usage: result.usage || null });
+        return res.json({
+          toolCalls: result.toolCalls,
+          toolTiers: toolTierMap(result.toolCalls),
+          content: result.content || null,
+          usage: result.usage || null
+        });
       }
 
       if (mode !== "chat") {
@@ -1656,20 +1838,31 @@ module.exports = function flowPilotRuntime(RED) {
   // action name, and how the route validates its inputs beforehand. Throws
   // an Error with .status and (when applicable) .raw for the route to relay.
   // ---------------------------------------------------------------------
-  // Step 4: useTools offers AGENT_READ_TOOLS (explore-then-propose). If the
+  // Step 4: useTools offers the mode-appropriate agent tools. WRITE tools
+  // are Modify-only and require enableAgentWrite plus a tool-capable
+  // provider. If the
   // provider responds with tool_calls instead of a final envelope, returns
   // early with { toolCalls, messages, content, usage } — same shape as
   // runChat's early return — so the route can hand it to the frontend
   // without running processGenerationContent yet.
   async function runFlowGeneration(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, useTools) {
     const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction);
-    const responseFormat = directCompletionResponseFormat(activeProvider, auditAction, useTools);
-    const chatOptions = useTools
-      ? { tools: AGENT_READ_TOOLS, toolChoice: "auto" }
+    const settings = storage.getSettings();
+    const toolsEnabled = !!useTools && activeProvider.supportsTools === true;
+    const offeredTools = toolsEnabled ? agentToolsFor(settings, activeProvider, auditAction) : [];
+    const responseFormat = directCompletionResponseFormat(activeProvider, auditAction, toolsEnabled);
+    const chatOptions = toolsEnabled
+      ? { tools: offeredTools, toolChoice: "auto" }
       : (responseFormat ? { responseFormat: responseFormat } : undefined);
     const result = await getProvider(activeProvider).chat(activeProvider, messages, chatOptions);
     if (result.toolCalls) {
-      return { toolCalls: result.toolCalls, messages: messages, content: result.content || null, usage: result.usage || null };
+      return {
+        toolCalls: result.toolCalls,
+        toolTiers: toolTierMap(result.toolCalls),
+        messages: messages,
+        content: result.content || null,
+        usage: result.usage || null
+      };
     }
     const content = result.content || "";
     let parseOutcome = "unknown";
@@ -2102,7 +2295,13 @@ module.exports = function flowPilotRuntime(RED) {
         history, historyTruncated, useTools
       );
       if (generated.toolCalls) {
-        return res.json({ toolCalls: generated.toolCalls, messages: generated.messages, content: generated.content, usage: generated.usage });
+        return res.json({
+          toolCalls: generated.toolCalls,
+          toolTiers: generated.toolTiers,
+          messages: generated.messages,
+          content: generated.content,
+          usage: generated.usage
+        });
       }
       recordTranscriptTurn(req.body.conversationId, "generate", prompt, transcriptTextFromGenerationResult(generated));
       const { status, body } = finalizeSimpleGeneration(generated);
@@ -2142,7 +2341,13 @@ module.exports = function flowPilotRuntime(RED) {
         history, historyTruncated, useTools
       );
       if (built.toolCalls) {
-        return res.json({ toolCalls: built.toolCalls, messages: built.messages, content: built.content, usage: built.usage });
+        return res.json({
+          toolCalls: built.toolCalls,
+          toolTiers: built.toolTiers,
+          messages: built.messages,
+          content: built.content,
+          usage: built.usage
+        });
       }
       recordTranscriptTurn(req.body.conversationId, "build", prompt, transcriptTextFromGenerationResult(built));
       const { status, body } = finalizeSimpleGeneration(built);
@@ -2182,7 +2387,13 @@ module.exports = function flowPilotRuntime(RED) {
         history, historyTruncated, useTools
       );
       if (documented.toolCalls) {
-        return res.json({ toolCalls: documented.toolCalls, messages: documented.messages, content: documented.content, usage: documented.usage });
+        return res.json({
+          toolCalls: documented.toolCalls,
+          toolTiers: documented.toolTiers,
+          messages: documented.messages,
+          content: documented.content,
+          usage: documented.usage
+        });
       }
       recordTranscriptTurn(req.body.conversationId, "document", userPrompt, transcriptTextFromGenerationResult(documented));
       const { status, body } = finalizeSimpleGeneration(documented);
@@ -2231,7 +2442,13 @@ module.exports = function flowPilotRuntime(RED) {
         history, historyTruncated, useTools
       );
       if (result.toolCalls) {
-        return res.json({ toolCalls: result.toolCalls, messages: result.messages, content: result.content, usage: result.usage });
+        return res.json({
+          toolCalls: result.toolCalls,
+          toolTiers: result.toolTiers,
+          messages: result.messages,
+          content: result.content,
+          usage: result.usage
+        });
       }
       recordTranscriptTurn(req.body.conversationId, "modify", String(prompt).trim(), transcriptTextFromGenerationResult(result));
       const { status, body } = finalize(result);
