@@ -217,10 +217,10 @@ module.exports = function flowPilotRuntime(RED) {
       function: {
         name: "apply_step",
         description: "Apply ONE plan item as a small bundle of sparse " +
-          "property patches, new nodes, and immediate wires. Use one call " +
-          "for the whole item, not one call per field. Existing wire " +
-          "removal/replacement is expressed as a sparse changes[].set.wires " +
-          "final value.",
+          "property patches, at most one new node, and its immediate wires. " +
+          "Use one call for the whole item, not one call per field. Existing " +
+          "wire removal/replacement is expressed as a sparse " +
+          "changes[].set.wires final value.",
         parameters: {
           type: "object",
           properties: {
@@ -243,7 +243,7 @@ module.exports = function flowPilotRuntime(RED) {
             },
             newNodes: {
               type: "array",
-              description: "New nodes for this step, using temporary ids.",
+              description: "At most one new node for this step, using a temporary id.",
               items: {
                 type: "object",
                 properties: {
@@ -2426,7 +2426,17 @@ module.exports = function flowPilotRuntime(RED) {
     const finalize = function (result) { return finalizeModifyResult(result, originalNodes); };
     const hasSwitch = Array.isArray(context && context.nodes) &&
       context.nodes.some(function (node) { return node && node.type === "switch"; });
-    const modifyPrompt = modifySystemPrompt({ hasSwitch: hasSwitch });
+    // Keep the legacy prompt byte-identical unless WRITE tools will actually
+    // be offered on this request. Streaming does not run the agent tool loop.
+    const settings = storage.getSettings();
+    const activeProvider = storage.getActiveProvider(settings);
+    const agentWriteEnabled = !req.body.stream && !!req.body.tools &&
+      settings.enableAgentWrite === true &&
+      activeProvider && activeProvider.supportsTools === true;
+    const modifyPrompt = modifySystemPrompt({
+      hasSwitch: hasSwitch,
+      agentWriteEnabled: agentWriteEnabled
+    });
 
     if (req.body.stream) {
       return runExecuteStream(
