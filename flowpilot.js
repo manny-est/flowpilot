@@ -347,9 +347,10 @@ module.exports = function flowPilotRuntime(RED) {
     });
   }
 
-  function agentToolsFor(settings, activeProvider, mode) {
+  function agentToolsFor(settings, activeProvider, mode, writesAllowed) {
     const writesEnabled = settings.enableAgentWrite === true &&
-      mode === "modify" && activeProvider && activeProvider.supportsTools === true;
+      mode === "modify" && writesAllowed !== false &&
+      activeProvider && activeProvider.supportsTools === true;
     return providerToolDefinitions(AGENT_READ_TOOLS.concat(writesEnabled ? WRITE_TOOLS : []));
   }
 
@@ -1151,7 +1152,9 @@ module.exports = function flowPilotRuntime(RED) {
       const settings = storage.getSettings();
       const activeProvider = storage.getActiveProvider(settings);
       const toolsEnabled = activeProvider.supportsTools === true;
-      const offeredTools = toolsEnabled ? agentToolsFor(settings, activeProvider, mode) : [];
+      const offeredTools = toolsEnabled
+        ? agentToolsFor(settings, activeProvider, mode, !req.body.buildReview)
+        : [];
       const chatOptions = toolsEnabled
         ? { tools: offeredTools, toolChoice: "auto" }
         : undefined;
@@ -1845,13 +1848,15 @@ module.exports = function flowPilotRuntime(RED) {
   // early with { toolCalls, messages, content, usage } — same shape as
   // runChat's early return — so the route can hand it to the frontend
   // without running processGenerationContent yet.
-  async function runFlowGeneration(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, useTools) {
+  async function runFlowGeneration(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, useTools, buildReview) {
     const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction);
     const settings = storage.getSettings();
     const toolsEnabled = !!useTools && activeProvider.supportsTools === true;
-    const offeredTools = toolsEnabled ? agentToolsFor(settings, activeProvider, auditAction) : [];
+    const offeredTools = toolsEnabled
+      ? agentToolsFor(settings, activeProvider, auditAction, !buildReview)
+      : [];
     const responseFormat = directCompletionResponseFormat(activeProvider, auditAction, toolsEnabled);
-    const toolChoice = auditAction === "modify" &&
+    const toolChoice = auditAction === "modify" && !buildReview &&
       settings.enableAgentWrite === true ? "required" : "auto";
     const chatOptions = toolsEnabled
       ? { tools: offeredTools, toolChoice: toolChoice }
@@ -2432,7 +2437,8 @@ module.exports = function flowPilotRuntime(RED) {
     // be offered on this request. Streaming does not run the agent tool loop.
     const settings = storage.getSettings();
     const activeProvider = storage.getActiveProvider(settings);
-    const agentWriteEnabled = !req.body.stream && !!req.body.tools &&
+    const agentWriteEnabled = !req.body.buildReview &&
+      !req.body.stream && !!req.body.tools &&
       settings.enableAgentWrite === true &&
       activeProvider && activeProvider.supportsTools === true;
     const modifyPrompt = modifySystemPrompt({
@@ -2451,7 +2457,7 @@ module.exports = function flowPilotRuntime(RED) {
       const useTools = !!req.body.tools;
       const result = await runFlowGeneration(
         modifyPrompt, "modify", String(prompt).trim(), context,
-        history, historyTruncated, useTools
+        history, historyTruncated, useTools, !!req.body.buildReview
       );
       if (result.toolCalls) {
         return res.json({
