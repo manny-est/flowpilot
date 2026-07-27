@@ -1851,8 +1851,10 @@ module.exports = function flowPilotRuntime(RED) {
     const toolsEnabled = !!useTools && activeProvider.supportsTools === true;
     const offeredTools = toolsEnabled ? agentToolsFor(settings, activeProvider, auditAction) : [];
     const responseFormat = directCompletionResponseFormat(activeProvider, auditAction, toolsEnabled);
+    const toolChoice = auditAction === "modify" &&
+      settings.enableAgentWrite === true ? "required" : "auto";
     const chatOptions = toolsEnabled
-      ? { tools: offeredTools, toolChoice: "auto" }
+      ? { tools: offeredTools, toolChoice: toolChoice }
       : (responseFormat ? { responseFormat: responseFormat } : undefined);
     const result = await getProvider(activeProvider).chat(activeProvider, messages, chatOptions);
     if (result.toolCalls) {
