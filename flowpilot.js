@@ -1142,7 +1142,9 @@ module.exports = function flowPilotRuntime(RED) {
   //    `prompt` (for transcript recording) are passed through from the
   //    initial request.
   const EXECUTION_STRATEGIES = new Set(["agent", "classic"]);
-  const EXECUTION_ENTRIES = new Set(["modify", "build-review", "build-existing", "agent-continuation"]);
+  const EXECUTION_ENTRIES = new Set([
+    "chat", "document", "generate", "build", "modify", "build-review", "build-existing"
+  ]);
 
   function requireExecutionContract(req, res, settings, activeProvider) {
     const body = (req && req.body) || {};
