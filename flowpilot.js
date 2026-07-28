@@ -1141,7 +1141,39 @@ module.exports = function flowPilotRuntime(RED) {
   //    `context` (for describeSelectionContext / modify's originalNodes) and
   //    `prompt` (for transcript recording) are passed through from the
   //    initial request.
+  const EXECUTION_STRATEGIES = new Set(["agent", "classic"]);
+  const EXECUTION_ENTRIES = new Set(["modify", "build-review", "build-existing", "agent-continuation"]);
+
+  function requireExecutionContract(req, res, settings, activeProvider) {
+    const body = (req && req.body) || {};
+    if (!EXECUTION_STRATEGIES.has(body.strategy) || !EXECUTION_ENTRIES.has(body.entry)) {
+      res.status(400).json({
+        error: "strategy_required",
+        message: "strategy and entry are required and must be recognized values."
+      });
+      return null;
+    }
+    if (body.strategy === "agent" &&
+        !(settings.enableAgentWrite === true && activeProvider && activeProvider.supportsTools === true)) {
+      res.status(409).json({
+        error: "agent_strategy_unavailable",
+        message: "The agent strategy requires enableAgentWrite and a tool-capable provider."
+      });
+      return null;
+    }
+    return {
+      strategy: body.strategy,
+      entry: body.entry,
+      conversationId: body.conversationId || null
+    };
+  }
+
   RED.httpAdmin.post("/flowpilot/agent-step", RED.auth.needsPermission("settings.write"), async function (req, res) {
+    const settings = storage.getSettings();
+    const activeProvider = storage.getActiveProvider(settings);
+    const execution = requireExecutionContract(req, res, settings, activeProvider);
+    if (!execution) { return; }
+
     const messages = req.body && req.body.messages;
     if (!Array.isArray(messages) || messages.length === 0) {
       return res.status(400).json({ error: "messages array is required." });
@@ -1149,11 +1181,9 @@ module.exports = function flowPilotRuntime(RED) {
     const mode = req.body.mode || "chat";
 
     try {
-      const settings = storage.getSettings();
-      const activeProvider = storage.getActiveProvider(settings);
       const toolsEnabled = activeProvider.supportsTools === true;
       const offeredTools = toolsEnabled
-        ? agentToolsFor(settings, activeProvider, mode, !req.body.buildReview)
+        ? agentToolsFor(settings, activeProvider, mode, execution.strategy === "agent")
         : [];
       const chatOptions = toolsEnabled
         ? { tools: offeredTools, toolChoice: "auto" }
@@ -1167,6 +1197,9 @@ module.exports = function flowPilotRuntime(RED) {
       storage.appendAudit(Object.assign({
         action: "agent_step",
         mode: mode,
+        strategy: execution.strategy,
+        entry: execution.entry,
+        conversationId: execution.conversationId,
         providerName: activeProvider.providerName,
         baseUrl: activeProvider.baseUrl,
         model: activeProvider.model,
@@ -1185,10 +1218,17 @@ module.exports = function flowPilotRuntime(RED) {
       if (mode !== "chat") {
         const context = req.body.context;
         const described = describeSelectionContext(context, settings.redactionEnabled);
-        const generated = processGenerationContent(result.content || "", result, messages, mode, described, activeProvider);
+        const generated = processGenerationContent(
+          result.content || "", result, messages, mode, described, activeProvider,
+          req.body.prompt, execution
+        );
         recordTranscriptTurn(req.body.conversationId, mode, req.body.prompt || null, transcriptTextFromGenerationResult(generated));
         const finalize = (mode === "modify")
-          ? function (r) { return finalizeModifyResult(r, (context && Array.isArray(context.nodes)) ? context.nodes : []); }
+          ? function (r) {
+              return finalizeModifyResult(
+                r, (context && Array.isArray(context.nodes)) ? context.nodes : [], execution
+              );
+            }
           : finalizeSimpleGeneration;
         const { status, body } = finalize(generated);
         return res.status(status).json(body);
@@ -1204,7 +1244,7 @@ module.exports = function flowPilotRuntime(RED) {
       if (questionOptions) { body.questionOptions = questionOptions; }
       res.json(body);
     } catch (err) {
-      sendGenerationError(res, mode + "_agent_step", err);
+      sendGenerationError(res, mode + "_agent_step", err, execution);
     }
   });
 
@@ -1590,8 +1630,9 @@ module.exports = function flowPilotRuntime(RED) {
       });
   }
 
-  function processGenerationContent(content, providerResult, messages, auditAction, described, activeProvider, userPrompt) {
+  function processGenerationContent(content, providerResult, messages, auditAction, described, activeProvider, userPrompt, auditContext) {
     const perf = performanceAuditFields(messages, content, providerResult);
+    const auditFields = auditContext || {};
 
     // Mode-mismatch redirect: the model may respond in plain prose —
     // addressing a request that doesn't belong in generate/document/modify —
@@ -1604,7 +1645,7 @@ module.exports = function flowPilotRuntime(RED) {
       const preSplit = splitChatDataBlock(content);
       const proseMessage = preSplit.message.trim();
       if (proseMessage && proseMessage[0] !== "{") {
-        storage.appendAudit(Object.assign({ action: auditAction + "_prose" }, perf));
+        storage.appendAudit(Object.assign({ action: auditAction + "_prose" }, auditFields, perf));
         const proseResult = { prose: proseMessage };
         if (preSplit.data) {
           const proseAction = extractSuggestedAction(preSplit.data);
@@ -1643,7 +1684,7 @@ module.exports = function flowPilotRuntime(RED) {
         // render it as a normal assistant message and keep the action armed.
         // Errors stay reserved for empty responses or a found-but-broken {...}.
         if (parseErr.noJsonFound && content.trim()) {
-          storage.appendAudit(Object.assign({ action: auditAction + "_prose" }, perf));
+          storage.appendAudit(Object.assign({ action: auditAction + "_prose" }, auditFields, perf));
           // Mode-mismatch redirect: a prose reply may carry the same hidden
           // <<<FLOWPILOT_DATA>>> block as Chat, suggesting a mode switch (e.g.
           // "chat" when the request was actually a question, not a
@@ -1658,7 +1699,7 @@ module.exports = function flowPilotRuntime(RED) {
           }
           return proseResult;
         }
-        storage.appendAudit(Object.assign({ action: auditAction + "_parse_error", error: parseErr.message }, perf));
+        storage.appendAudit(Object.assign({ action: auditAction + "_parse_error", error: parseErr.message }, auditFields, perf));
         const err = new Error("Could not parse a flow from the response: " + parseErr.message);
         err.status = 422;
         err.raw = content;
@@ -1687,7 +1728,7 @@ module.exports = function flowPilotRuntime(RED) {
       const redirectProse = (typeof parsed.explanation === "string" && parsed.explanation.trim())
         ? parsed.explanation.trim()
         : "This request belongs in " + parsed.mode + " mode.";
-      storage.appendAudit(Object.assign({ action: auditAction + "_prose" }, perf));
+      storage.appendAudit(Object.assign({ action: auditAction + "_prose" }, auditFields, perf));
       return { prose: redirectProse, suggestedAction: redirect };
     }
 
@@ -1724,7 +1765,7 @@ module.exports = function flowPilotRuntime(RED) {
     // assistant message and keeps the Execute action armed for the answer.
     if (typeof parsed.question === "string" && parsed.question.trim() &&
         (!Array.isArray(parsed.flow) || parsed.flow.length === 0)) {
-      storage.appendAudit(Object.assign({ action: auditAction + "_question" }, perf));
+      storage.appendAudit(Object.assign({ action: auditAction + "_question" }, auditFields, perf));
       const questionResult = { question: parsed.question, explanation: parsed.explanation || "" };
       const questionAction = extractSuggestedAction(parsed);
       if (questionAction) { questionResult.suggestedAction = questionAction; }
@@ -1781,7 +1822,7 @@ module.exports = function flowPilotRuntime(RED) {
         newGroupCount: newGroups.length,
         contextNodeCount: described ? described.nodeCount : 0,
         contextConnectionCount: described ? described.connectionCount : 0
-      }, perf));
+      }, auditFields, perf));
 
       const modifyResult = {
         explanation: parsed.explanation || "",
@@ -1815,7 +1856,7 @@ module.exports = function flowPilotRuntime(RED) {
       nodeCount: flow.length,
       contextNodeCount: described ? described.nodeCount : 0,
       contextConnectionCount: described ? described.connectionCount : 0
-    }, perf));
+    }, auditFields, perf));
 
     const flowResult = {
       explanation: parsed.explanation || "",
@@ -1848,16 +1889,16 @@ module.exports = function flowPilotRuntime(RED) {
   // early with { toolCalls, messages, content, usage } — same shape as
   // runChat's early return — so the route can hand it to the frontend
   // without running processGenerationContent yet.
-  async function runFlowGeneration(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, useTools, buildReview) {
+  async function runFlowGeneration(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, useTools, execution) {
     const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction);
     const settings = storage.getSettings();
     const toolsEnabled = !!useTools && activeProvider.supportsTools === true;
     const offeredTools = toolsEnabled
-      ? agentToolsFor(settings, activeProvider, auditAction, !buildReview)
+      ? agentToolsFor(settings, activeProvider, auditAction, execution && execution.strategy === "agent")
       : [];
     const responseFormat = directCompletionResponseFormat(activeProvider, auditAction, toolsEnabled);
-    const toolChoice = auditAction === "modify" && !buildReview &&
-      settings.enableAgentWrite === true ? "required" : "auto";
+    const toolChoice = auditAction === "modify" && execution &&
+      execution.strategy === "agent" ? "required" : "auto";
     const chatOptions = toolsEnabled
       ? { tools: offeredTools, toolChoice: toolChoice }
       : (responseFormat ? { responseFormat: responseFormat } : undefined);
@@ -1874,7 +1915,9 @@ module.exports = function flowPilotRuntime(RED) {
     const content = result.content || "";
     let parseOutcome = "unknown";
     try {
-      const generated = processGenerationContent(content, result, messages, auditAction, described, activeProvider, userPrompt);
+      const generated = processGenerationContent(
+        content, result, messages, auditAction, described, activeProvider, userPrompt, execution
+      );
       parseOutcome = generated.prose ? "prose" : generated.question ? "question" : "success";
       return generated;
     } catch (err) {
@@ -1893,7 +1936,7 @@ module.exports = function flowPilotRuntime(RED) {
   // while the rest of the JSON (the "flow" array etc.) is buffered until
   // this resolves.
   // ---------------------------------------------------------------------
-  async function runFlowGenerationStream(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, onDelta) {
+  async function runFlowGenerationStream(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, onDelta, auditContext) {
     const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction);
     const responseFormat = directCompletionResponseFormat(activeProvider, auditAction, false);
     const streamOptions = responseFormat ? { responseFormat: responseFormat } : undefined;
@@ -1903,7 +1946,9 @@ module.exports = function flowPilotRuntime(RED) {
     const content = result.content || "";
     let parseOutcome = "unknown";
     try {
-      const generated = processGenerationContent(content, result, messages, auditAction, described, activeProvider, userPrompt);
+      const generated = processGenerationContent(
+        content, result, messages, auditAction, described, activeProvider, userPrompt, auditContext
+      );
       parseOutcome = generated.prose ? "prose" : generated.question ? "question" : "success";
       return generated;
     } catch (err) {
@@ -1916,13 +1961,16 @@ module.exports = function flowPilotRuntime(RED) {
 
   // Relays a runFlowGeneration error to the client with the right status,
   // falling back to 500 for anything that didn't set .status itself.
-  function sendGenerationError(res, auditAction, err) {
+  function sendGenerationError(res, auditAction, err, auditContext) {
     if (err && err.status) {
       const body = { error: err.message };
       if (err.raw) { body.raw = err.raw; }
       return res.status(err.status).json(body);
     }
-    storage.appendAudit({ action: auditAction + "_error", error: err.message });
+    storage.appendAudit(Object.assign(
+      { action: auditAction + "_error", error: err.message },
+      auditContext || {}
+    ));
     res.status(500).json({ error: err.message });
   }
 
@@ -1960,7 +2008,7 @@ module.exports = function flowPilotRuntime(RED) {
   // the /flowpilot/modify route handler. Used by both the non-streaming and
   // streaming routes.
   // ---------------------------------------------------------------------
-  function finalizeModifyResult(result, originalNodes) {
+  function finalizeModifyResult(result, originalNodes, auditContext) {
     if (result.question) {
       const questionBody = { explanation: result.explanation, question: result.question, flow: null };
       if (result.suggestedAction) { questionBody.suggestedAction = result.suggestedAction; }
@@ -2186,7 +2234,12 @@ module.exports = function flowPilotRuntime(RED) {
       }
     }
 
-    if (newGroups.length > 0) { storage.appendAudit({ action: "modify_groups", count: newGroups.length }); }
+    if (newGroups.length > 0) {
+      storage.appendAudit(Object.assign(
+        { action: "modify_groups", count: newGroups.length },
+        auditContext || {}
+      ));
+    }
 
     const verifySteps = [];
     validChanges.forEach(function (change) {
@@ -2245,7 +2298,7 @@ module.exports = function flowPilotRuntime(RED) {
   // `data: {"error": <body>, "status": <status>}`, since SSE responses can't
   // change their HTTP status after headers are sent.
   // ---------------------------------------------------------------------
-  async function runExecuteStream(req, res, systemPrompt, auditAction, userPrompt, context, history, historyTruncated, finalize, conversationId) {
+  async function runExecuteStream(req, res, systemPrompt, auditAction, userPrompt, context, history, historyTruncated, finalize, conversationId, auditContext) {
     res.writeHead(200, {
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
@@ -2258,12 +2311,17 @@ module.exports = function flowPilotRuntime(RED) {
     try {
       result = await runFlowGenerationStream(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, function (delta) {
         res.write("data: " + JSON.stringify({ delta: delta }) + "\n\n");
-      });
+      }, auditContext);
     } catch (err) {
       const status = err && err.status ? err.status : 500;
       const body = { error: err.message };
       if (err && err.raw) { body.raw = err.raw; }
-      if (!err || !err.status) { storage.appendAudit({ action: auditAction + "_error", error: err.message }); }
+      if (!err || !err.status) {
+        storage.appendAudit(Object.assign(
+          { action: auditAction + "_error", error: err.message },
+          auditContext || {}
+        ));
+      }
       res.write("data: " + JSON.stringify({ error: body, status: status }) + "\n\n");
       res.write("data: [DONE]\n\n");
       res.end();
@@ -2411,8 +2469,13 @@ module.exports = function flowPilotRuntime(RED) {
   });
 
   RED.httpAdmin.post("/flowpilot/modify", RED.auth.needsPermission("settings.write"), async function (req, res) {
+    const settings = storage.getSettings();
+    const activeProvider = storage.getActiveProvider(settings);
+    const execution = requireExecutionContract(req, res, settings, activeProvider);
+    if (!execution) { return; }
+
     const context = req.body && req.body.context;
-    const described = describeSelectionContext(context, storage.getSettings().redactionEnabled);
+    const described = describeSelectionContext(context, settings.redactionEnabled);
 
     if (!described) {
       return res.status(400).json({ error: "Select the node(s) you want to modify first." });
@@ -2430,26 +2493,20 @@ module.exports = function flowPilotRuntime(RED) {
     const history = sanitizeHistory(req.body.history);
     const historyTruncated = !!req.body.historyTruncated;
 
-    const finalize = function (result) { return finalizeModifyResult(result, originalNodes); };
+    const finalize = function (result) { return finalizeModifyResult(result, originalNodes, execution); };
     const hasSwitch = Array.isArray(context && context.nodes) &&
       context.nodes.some(function (node) { return node && node.type === "switch"; });
-    // Keep the legacy prompt byte-identical unless WRITE tools will actually
-    // be offered on this request. Streaming does not run the agent tool loop.
-    const settings = storage.getSettings();
-    const activeProvider = storage.getActiveProvider(settings);
-    const agentWriteEnabled = !req.body.buildReview &&
-      !req.body.stream && !!req.body.tools &&
-      settings.enableAgentWrite === true &&
-      activeProvider && activeProvider.supportsTools === true;
+    // Keep the legacy prompt byte-identical for the explicit classic
+    // strategy. Agent prompt behavior keys only off the propagated strategy.
     const modifyPrompt = modifySystemPrompt({
       hasSwitch: hasSwitch,
-      agentWriteEnabled: agentWriteEnabled
+      agentWriteEnabled: execution.strategy === "agent"
     });
 
     if (req.body.stream) {
       return runExecuteStream(
         req, res, modifyPrompt, "modify", String(prompt).trim(), context,
-        history, historyTruncated, finalize, req.body.conversationId
+        history, historyTruncated, finalize, req.body.conversationId, execution
       );
     }
 
@@ -2457,7 +2514,7 @@ module.exports = function flowPilotRuntime(RED) {
       const useTools = !!req.body.tools;
       const result = await runFlowGeneration(
         modifyPrompt, "modify", String(prompt).trim(), context,
-        history, historyTruncated, useTools, !!req.body.buildReview
+        history, historyTruncated, useTools, execution
       );
       if (result.toolCalls) {
         return res.json({
@@ -2472,7 +2529,7 @@ module.exports = function flowPilotRuntime(RED) {
       const { status, body } = finalize(result);
       res.status(status).json(body);
     } catch (err) {
-      sendGenerationError(res, "modify", err);
+      sendGenerationError(res, "modify", err, execution);
     }
   });
 };
