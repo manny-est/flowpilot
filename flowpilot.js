@@ -1514,6 +1514,35 @@ module.exports = function flowPilotRuntime(RED) {
     return cleaned;
   }
 
+  const AGENT_MUTATION_FIELDS = ["changes", "newNodes", "newWires", "removeNodes", "newGroups"];
+
+  function enforceAgentContract(result, execution, hasToolCalls) {
+    if (!result || !execution || execution.strategy !== "agent" || hasToolCalls) {
+      return result;
+    }
+
+    const strippedFields = [];
+    const counts = {};
+    AGENT_MUTATION_FIELDS.forEach(function (field) {
+      if (!Object.prototype.hasOwnProperty.call(result, field)) { return; }
+      strippedFields.push(field);
+      counts[field] = Array.isArray(result[field]) ? result[field].length : 1;
+      delete result[field];
+    });
+
+    if (strippedFields.length) {
+      result.strippedFields = strippedFields;
+      console.warn(
+        "[FlowPilot] agent contract stripped mutation fields strategy=%s entry=%s conversationId=%s counts=%s",
+        execution.strategy,
+        execution.entry,
+        execution.conversationId || "none",
+        JSON.stringify(counts)
+      );
+    }
+    return result;
+  }
+
   // ---------------------------------------------------------------------
   // Chat (free-text) responses can end with an optional, hidden data block —
   // a marker line followed by a single JSON object carrying a
@@ -1793,6 +1822,8 @@ module.exports = function flowPilotRuntime(RED) {
         throw err;
       }
 
+      enforceAgentContract(parsed, auditContext, false);
+
       const changes = Array.isArray(parsed.changes) ? parsed.changes : [];
       const newNodes = Array.isArray(parsed.newNodes) ? parsed.newNodes : [];
       const newWires = Array.isArray(parsed.newWires) ? parsed.newWires : [];
@@ -1834,6 +1865,12 @@ module.exports = function flowPilotRuntime(RED) {
         removeNodes: removeNodes,
         newGroups: newGroups
       };
+      if (Array.isArray(parsed.strippedFields) && parsed.strippedFields.length) {
+        modifyResult.strippedFields = parsed.strippedFields.slice();
+      }
+      if (Array.isArray(parsed.verifySteps) && parsed.verifySteps.length) {
+        modifyResult.verifySteps = parsed.verifySteps.slice();
+      }
       // Combine skipped-note sources: redaction (W0.2) and switch mismatch (W2).
       const skippedNotes = [redactionSkippedNote, parsed._switchMismatchNote].filter(Boolean);
       if (skippedNotes.length) { modifyResult.skippedNote = skippedNotes.join(" "); }
@@ -2022,6 +2059,22 @@ module.exports = function flowPilotRuntime(RED) {
       if (result.suggestedAction) { proseBody.suggestedAction = result.suggestedAction; }
       if (result.questionOptions) { proseBody.questionOptions = result.questionOptions; }
       return { status: 200, body: proseBody };
+    }
+    if (auditContext && auditContext.strategy === "agent") {
+      const agentBody = {
+        explanation: result.explanation || "",
+        prose: true,
+        flow: null
+      };
+      if (Array.isArray(result.strippedFields) && result.strippedFields.length) {
+        agentBody.strippedFields = result.strippedFields.slice();
+      }
+      if (Array.isArray(result.verifySteps) && result.verifySteps.length) {
+        agentBody.verifySteps = result.verifySteps.slice();
+      }
+      if (result.skippedNote) { agentBody.skippedNote = result.skippedNote; }
+      if (result.suggestedAction) { agentBody.suggestedAction = result.suggestedAction; }
+      return { status: 200, body: agentBody };
     }
 
     const originalIds = new Set(originalNodes.map(function (n) { return n.id; }));
