@@ -860,6 +860,30 @@ module.exports = function flowPilotRuntime(RED) {
     return { content: content, nodeCount: nodes.length, connectionCount: edges.length, debugMessageCount: debugMessages.length };
   }
 
+  const AGENT_TRUNCATION_NUDGE =
+    "your last reply was cut off — emit ONLY the tool call";
+
+  function agentTurnOptions(settings, options) {
+    const configured = Number(settings.agentTurnMaxTokens);
+    return Object.assign({}, options || {}, {
+      maxTokens: Number.isInteger(configured) && configured > 0 ? configured : 4096
+    });
+  }
+
+  async function chatWithAgentCap(provider, activeProvider, messages, options) {
+    const first = await provider.chat(activeProvider, messages, options);
+    if (first.finishReason !== "length") { return first; }
+
+    const retryMessages = messages.concat([
+      { role: "system", content: AGENT_TRUNCATION_NUDGE }
+    ]);
+    const retry = await provider.chat(activeProvider, retryMessages, options);
+    if (retry.finishReason === "length") {
+      retry.fallbackToClassic = true;
+    }
+    return retry;
+  }
+
   // ---------------------------------------------------------------------
   // Shared helper: run a single-turn chat against the configured provider,
   // log it, and return the result. Used by both /chat and /test so the two
@@ -872,7 +896,7 @@ module.exports = function flowPilotRuntime(RED) {
   // array built so far (so the caller/frontend can append the tool results
   // and continue via /flowpilot/agent-step) — nothing is recorded to the
   // transcript yet, since this isn't the final answer for the turn.
-  async function runChat(prompt, contextMode, context, history, historyTruncated, conversationId, useTools) {
+  async function runChat(prompt, contextMode, context, history, historyTruncated, conversationId, useTools, strategy) {
     const settings = storage.getSettings();
     const activeProvider = storage.getActiveProvider(settings);
 
@@ -884,12 +908,19 @@ module.exports = function flowPilotRuntime(RED) {
     warnNumCtxOverflow(messages, activeProvider, "chat");
 
     const toolsEnabled = !!useTools && activeProvider.supportsTools === true;
-    const chatOptions = toolsEnabled
+    let chatOptions = toolsEnabled
       ? { tools: agentToolsFor(settings, activeProvider, "chat"), toolChoice: "auto" }
       : undefined;
-    const result = await getProvider(activeProvider).chat(activeProvider, messages, chatOptions);
+    const provider = getProvider(activeProvider);
+    let result;
+    if (strategy === "agent") {
+      chatOptions = agentTurnOptions(settings, chatOptions);
+      result = await chatWithAgentCap(provider, activeProvider, messages, chatOptions);
+    } else {
+      result = await provider.chat(activeProvider, messages, chatOptions);
+    }
 
-    if (result.toolCalls) {
+    if (result.toolCalls || result.fallbackToClassic) {
       const perf = performanceAuditFields(messages, result.content, result);
       return { settings, activeProvider, result, perf, messages, toolCalls: result.toolCalls };
     }
@@ -1119,7 +1150,8 @@ module.exports = function flowPilotRuntime(RED) {
     try {
       const useTools = !!req.body.tools;
       const { activeProvider, result, perf, chatMessage, chatData, messages, toolCalls } =
-        await runChat(prompt, "selected-nodes", req.body.context, history, historyTruncated, req.body.conversationId, useTools);
+        await runChat(prompt, "selected-nodes", req.body.context, history, historyTruncated,
+          req.body.conversationId, useTools, req.body.strategy);
 
       storage.appendAudit(Object.assign({
         action: "chat",
@@ -1129,6 +1161,9 @@ module.exports = function flowPilotRuntime(RED) {
         toolCallCount: toolCalls ? toolCalls.length : 0
       }, perf));
 
+      if (result.fallbackToClassic) {
+        return res.json({ fallbackToClassic: true, usage: result.usage || null });
+      }
       if (toolCalls) {
         return res.json({ toolCalls: toolCalls, messages: messages, content: result.content || null, usage: result.usage || null });
       }
@@ -1218,14 +1253,24 @@ module.exports = function flowPilotRuntime(RED) {
       const offeredTools = toolsEnabled
         ? agentToolsFor(settings, activeProvider, mode, execution.strategy === "agent")
         : [];
-      const chatOptions = toolsEnabled
+      let chatOptions = toolsEnabled
         ? { tools: offeredTools, toolChoice: "auto" }
         : undefined;
+      if (execution.strategy === "agent") {
+        chatOptions = agentTurnOptions(settings, chatOptions);
+      }
       // Messages include client-produced role:"tool" results. Pass them
       // straight to the adapter; OpenAI-compatible providers receive them
       // unchanged and Anthropic converts only the outer message envelope to
       // native tool_result blocks.
-      const result = await getProvider(activeProvider).chat(activeProvider, messages, chatOptions);
+      const provider = getProvider(activeProvider);
+      const result = execution.strategy === "agent"
+        ? await chatWithAgentCap(provider, activeProvider, messages, chatOptions)
+        : await provider.chat(activeProvider, messages, chatOptions);
+
+      if (result.fallbackToClassic) {
+        return res.json({ fallbackToClassic: true, usage: result.usage || null });
+      }
 
       storage.appendAudit(Object.assign({
         action: "agent_step",
@@ -1969,10 +2014,20 @@ module.exports = function flowPilotRuntime(RED) {
     const responseFormat = directCompletionResponseFormat(activeProvider, auditAction, toolsEnabled);
     const toolChoice = auditAction === "modify" && execution &&
       execution.strategy === "agent" ? "required" : "auto";
-    const chatOptions = toolsEnabled
+    let chatOptions = toolsEnabled
       ? { tools: offeredTools, toolChoice: toolChoice }
       : (responseFormat ? { responseFormat: responseFormat } : undefined);
-    const result = await getProvider(activeProvider).chat(activeProvider, messages, chatOptions);
+    const provider = getProvider(activeProvider);
+    let result;
+    if (execution && execution.strategy === "agent") {
+      chatOptions = agentTurnOptions(settings, chatOptions);
+      result = await chatWithAgentCap(provider, activeProvider, messages, chatOptions);
+    } else {
+      result = await provider.chat(activeProvider, messages, chatOptions);
+    }
+    if (result.fallbackToClassic) {
+      return { fallbackToClassic: true, usage: result.usage || null };
+    }
     if (result.toolCalls) {
       return {
         toolCalls: result.toolCalls,
