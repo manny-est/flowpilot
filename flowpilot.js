@@ -318,6 +318,37 @@ module.exports = function flowPilotRuntime(RED) {
       }
     },
     {
+      // ADR-003 R3a: grouping is visual-only, classified safe (auto-apply)
+      // regardless of which node types are grouped — "write-safe" here means
+      // "never eligible for consent-gating" (the mechanism
+      // writeToolCallNeedsConsent actually keys on), not "non-mutating" —
+      // this call does mutate (creates a group, pushes history), unlike
+      // ask_user, the tier's other current member.
+      tier: "write-safe",
+      type: "function",
+      function: {
+        name: "group_nodes",
+        description: "Create a new named group from existing, already-verified " +
+          "node ids. No nested groups (a group id among nodeIds) and no " +
+          "editing an existing group's membership — both are reported as an " +
+          "unsupported_operation instead of attempted.",
+        parameters: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Name for the new group." },
+            nodeIds: {
+              type: "array",
+              description: "Existing node ids to include in the new group.",
+              items: { type: "string" },
+              minItems: 1
+            }
+          },
+          required: ["name", "nodeIds"],
+          additionalProperties: false
+        }
+      }
+    },
+    {
       tier: "write-safe",
       type: "function",
       function: {
