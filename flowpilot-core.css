@@ -713,6 +713,17 @@
 .fp-todo-item-done    { color: #1a7a1a; }
 .fp-todo-item-failed  { color: #b22222; }
 
+/* P10-D2: honest-interruption notice appended inside a "todo" record whose
+   last run event isn't "done" (see rerenderTodoRecord, modes.js). */
+.fp-todo-interrupted {
+    margin-top: 6px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    background: rgba(200, 140, 0, 0.10);
+    color: #8a5a00;
+}
+
 .fp-json-toolbar {
     display: flex;
     justify-content: flex-end;
