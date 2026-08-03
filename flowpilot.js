@@ -1232,7 +1232,8 @@ module.exports = function flowPilotRuntime(RED) {
     return {
       strategy: body.strategy,
       entry: body.entry,
-      conversationId: body.conversationId || null
+      conversationId: body.conversationId || null,
+      runId: body.runId || null
     };
   }
 
@@ -1278,6 +1279,7 @@ module.exports = function flowPilotRuntime(RED) {
         strategy: execution.strategy,
         entry: execution.entry,
         conversationId: execution.conversationId,
+        runId: execution.runId,
         providerName: activeProvider.providerName,
         baseUrl: activeProvider.baseUrl,
         model: activeProvider.model,
