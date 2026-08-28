@@ -1256,7 +1256,13 @@ module.exports = function flowPilotRuntime(RED) {
       strategy: body.strategy,
       entry: body.entry,
       conversationId: body.conversationId || null,
-      runId: body.runId || null
+      runId: body.runId || null,
+      // CLAUDE-014: plain-language note for the client-side decision (consent
+      // gate / ask_user / loop-checkpoint) that triggered this request, only
+      // sent when settings.debugLogging is on — threaded into
+      // maybeLogDebugEvent calls below so debug.log shows what the user
+      // actually decided instead of only raw tool-result JSON.
+      debugNote: body.debugNote || null
     };
   }
 
@@ -1316,7 +1322,8 @@ module.exports = function flowPilotRuntime(RED) {
           model: activeProvider.model,
           messages: messages,
           toolCalls: result.toolCalls,
-          responseContent: result.content || null
+          responseContent: result.content || null,
+          debugNote: execution.debugNote || undefined
         });
         return res.json({
           toolCalls: result.toolCalls,
@@ -1333,7 +1340,8 @@ module.exports = function flowPilotRuntime(RED) {
         messages: messages,
         responseChars: typeof result.content === "string" ? result.content.length : 0,
         responseContent: result.content || "",
-        parseOutcome: "received"
+        parseOutcome: "received",
+        debugNote: execution.debugNote || undefined
       });
 
       if (mode !== "chat") {
@@ -2099,7 +2107,8 @@ module.exports = function flowPilotRuntime(RED) {
         messages: messages,
         responseChars: typeof content === "string" ? content.length : 0,
         responseContent: content,
-        parseOutcome: parseOutcome
+        parseOutcome: parseOutcome,
+        debugNote: (execution && execution.debugNote) || undefined
       });
     }
   }
@@ -2138,7 +2147,8 @@ module.exports = function flowPilotRuntime(RED) {
         messages: messages,
         responseChars: typeof content === "string" ? content.length : 0,
         responseContent: content,
-        parseOutcome: parseOutcome
+        parseOutcome: parseOutcome,
+        debugNote: (auditContext && auditContext.debugNote) || undefined
       });
     }
   }
