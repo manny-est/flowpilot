@@ -744,27 +744,22 @@ module.exports = function flowPilotRuntime(RED) {
     return clean;
   }
 
-  // W0.4: when logAssembledPrompts is enabled, append one JSON-lines entry to
-  // assembled-prompts.log. Called after each provider round-trip with both
-  // the outgoing messages and the raw response content. Auth keys are never
-  // included — only baseUrl + model from the provider profile.
-  function maybeLogAssembledPrompt(mode, messages, responseContent, parseOutcome, activeProvider) {
+  // Append a provider-turn event to debug.log when debugLogging is enabled.
+  // Callers pass only post-redaction messages/content and non-secret provider
+  // metadata; auth keys and headers must never be included.
+  function maybeLogDebugEvent(type, fields) {
     const settings = storage.getSettings();
-    if (!settings.logAssembledPrompts) { return; }
+    if (!settings.debugLogging) { return; }
+    fields = fields || {};
+    const messages = fields.messages || [];
     const promptChars = (messages || []).reduce(function (sum, m) {
       return sum + (m && typeof m.content === "string" ? m.content.length : 0);
     }, 0);
-    storage.appendAssembledPromptLog({
-      mode: mode,
-      providerBaseUrl: activeProvider && activeProvider.baseUrl,
-      model: activeProvider && activeProvider.model,
+    storage.appendDebugLog(Object.assign({
+      type: type,
       promptTokenEst: Math.round(promptChars / 4),
-      messageCount: (messages || []).length,
-      messages: messages,
-      responseChars: typeof responseContent === "string" ? responseContent.length : 0,
-      responseContent: responseContent,
-      parseOutcome: parseOutcome
-    });
+      messageCount: messages.length
+    }, fields));
   }
 
   // W0.1: warn when estimated prompt token count approaches the provider's
@@ -1287,6 +1282,14 @@ module.exports = function flowPilotRuntime(RED) {
       }, performanceAuditFields(messages, result.content, result)));
 
       if (result.toolCalls) {
+        maybeLogDebugEvent("tool_call", {
+          mode: mode,
+          providerBaseUrl: activeProvider.baseUrl,
+          model: activeProvider.model,
+          messages: messages,
+          toolCalls: result.toolCalls,
+          responseContent: result.content || null
+        });
         return res.json({
           toolCalls: result.toolCalls,
           toolTiers: toolTierMap(result.toolCalls),
@@ -1294,6 +1297,16 @@ module.exports = function flowPilotRuntime(RED) {
           usage: result.usage || null
         });
       }
+
+      maybeLogDebugEvent("assistant_reply", {
+        mode: mode,
+        providerBaseUrl: activeProvider.baseUrl,
+        model: activeProvider.model,
+        messages: messages,
+        responseChars: typeof result.content === "string" ? result.content.length : 0,
+        responseContent: result.content || "",
+        parseOutcome: "received"
+      });
 
       if (mode !== "chat") {
         const context = req.body.context;
@@ -2051,7 +2064,15 @@ module.exports = function flowPilotRuntime(RED) {
       parseOutcome = "parse_error:" + (err.message || "");
       throw err;
     } finally {
-      maybeLogAssembledPrompt(auditAction, messages, content, parseOutcome, activeProvider);
+      maybeLogDebugEvent("assistant_reply", {
+        mode: auditAction,
+        providerBaseUrl: activeProvider && activeProvider.baseUrl,
+        model: activeProvider && activeProvider.model,
+        messages: messages,
+        responseChars: typeof content === "string" ? content.length : 0,
+        responseContent: content,
+        parseOutcome: parseOutcome
+      });
     }
   }
 
@@ -2082,7 +2103,15 @@ module.exports = function flowPilotRuntime(RED) {
       parseOutcome = "parse_error:" + (err.message || "");
       throw err;
     } finally {
-      maybeLogAssembledPrompt(auditAction, messages, content, parseOutcome, activeProvider);
+      maybeLogDebugEvent("assistant_reply", {
+        mode: auditAction,
+        providerBaseUrl: activeProvider && activeProvider.baseUrl,
+        model: activeProvider && activeProvider.model,
+        messages: messages,
+        responseChars: typeof content === "string" ? content.length : 0,
+        responseContent: content,
+        parseOutcome: parseOutcome
+      });
     }
   }
 
