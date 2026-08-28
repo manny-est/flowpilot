@@ -130,11 +130,24 @@ under `<node-red-userDir>/flowpilot/`:
 - `chats/` — lightweight per-session chat logs
 - `backups/` — pre-change backups
 
-## Provider setup (example: LocalAI)
+## Provider setup
 
 Open the FlowPilot sidebar, click the settings (gear) icon, and add a
-provider:
+provider.
 
+**Anthropic (Claude models):**
+
+- Provider type: `Anthropic`
+- Provider name: `Claude` (or any label)
+- Base URL: leave blank (uses `api.anthropic.com`)
+- API key: your Anthropic API key. If it returns an
+  `anthropic-workspace-id is required` error, create a new key in the
+  Anthropic Console scoped to a single workspace.
+- Model: e.g. `claude-opus-5`, or click **Refresh models**
+
+**Example: LocalAI (OpenAI-compatible):**
+
+- Provider type: `OpenAI-compatible`
 - Provider name: `LocalAI` (or any label)
 - Base URL: `http://localhost:8080`
 - API key: blank unless your instance requires one
