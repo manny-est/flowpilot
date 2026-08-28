@@ -39,6 +39,32 @@ until it's ready to replace this one.
   the canvas.
 
 ### Fixed
+- **Build loop — status-only evidence false negatives**: a live, working
+  node could be declared "disconnected"/broken off a single coarse
+  node-status read, with no way to confirm otherwise. Evidence is now
+  tagged by source (`debug` vs. `status`); when only status-line evidence
+  is available and it doesn't clearly prove success or failure, the build
+  loop asks a direct yes/no confirmation instead of guessing.
+- **Modify's wire verification** read a node's stale `.wires` array
+  instead of the live link registry — a wire added earlier in the same
+  editing session could be reported as "did not land" even though it was
+  actually there. Verification now reads from `RED.nodes.eachLink`.
+- **Phantom output port on newly-created nodes**: a model-supplied
+  `wires` array that disagreed with a node type's real port count (e.g.
+  a stray empty port on a 0-output type like `http response`) rendered a
+  visible port anchor that shouldn't exist. The array length is now
+  reconciled against the node's real output count on insertion.
+- **New-node layout scatter**: the collision-avoidance grid still placed
+  two nodes at the same vertical level; switched to a single-column
+  layout (one node per row, wrap to a new column after 5 rows).
+- **`newWires` endpoint aliases**: a model response using `fromId`/`toId`
+  instead of `from`/`to` on a `newWires` entry is now repaired
+  automatically instead of both endpoints silently appearing missing.
+- **`.fp-chip-card-alt` background**: the secondary "Just add to canvas"
+  chip relied on its surrounding message bubble being dark to read as
+  part of the same chip-card family as the primary action above it —
+  bubbles follow Node-RED's light editor theme by default, so it rendered
+  as a plain white box instead.
 - Redaction round-trip poisoning, token-credential redaction gaps, and
   several redaction echo/false-positive fixes across Modify and the build
   loop's review step.
