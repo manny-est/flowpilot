@@ -2,6 +2,59 @@
 
 All notable changes to FlowPilot are documented here.
 
+## [0.5.2] - 2026-08-04
+
+This release continues the 0.5.x line. Phase 10's agentic Modify redesign
+(WRITE-tool loop, per-call consent gates, `ask_user`) is developed
+separately and is not included here — it ships under its own beta line
+until it's ready to replace this one.
+
+### Added
+- **Anthropic provider support**: FlowPilot can now talk directly to the
+  Anthropic API (Claude models) alongside any OpenAI-compatible endpoint.
+  A new Provider Type dropdown in Settings switches between them; message
+  format, tool-call translation, and streaming (SSE) are handled
+  transparently by a dedicated adapter. Leave Base URL blank to use
+  `api.anthropic.com`.
+- **Reasoning model support**: FlowPilot detects reasoning models
+  (Nemotron, DeepSeek, QwQ, and any model returning `reasoning_content` or
+  `<think>` blocks) and shows a live collapsing "Thinking…" block during
+  streaming, or a pre-collapsed one on the agent-loop path.
+- **Auto-preflight on model change**: switching models and sending a
+  message silently probes capabilities first — no more manual "Test
+  Provider" click after every model swap.
+- **`/refresh` command**: re-renders the message panel from the in-memory
+  record store without losing conversation history — restores interactive
+  Apply buttons and review panels that went stale after a long session.
+- **Build loop — consent gates for side-effecting steps, checkpoint
+  questions, context-aware start from a selection, and an explicit
+  done/fail confirmation** instead of silently stopping.
+- **Modify — todo/plan checklist rendering**: multi-item Modify requests
+  now show a checklist that resolves as verification confirms each item
+  landed, instead of a single opaque pass/fail.
+- **Config node support**: config nodes (MQTT brokers, TLS configs, etc.)
+  are now exposed in context and can be created/connected by Modify.
+- **Server-side validator/repair layer**: malformed model output is
+  caught and, where possible, automatically repaired before it reaches
+  the canvas.
+
+### Fixed
+- Redaction round-trip poisoning, token-credential redaction gaps, and
+  several redaction echo/false-positive fixes across Modify and the build
+  loop's review step.
+- Group data corruption from a stray `changes` patch touching a group's
+  membership array directly; mixed-membership group create/extend
+  corruption.
+- Invalid port wiring (wiring to/from a port index that doesn't exist)
+  now guarded instead of silently applied.
+- New-node insertion collision avoidance tuned for faster, more reliable
+  separation on dense flows.
+- Several build-loop review false positives (metadata-field echoes,
+  debug/function/mqtt node misclassification, stale in-progress status
+  read as a real error).
+- Partial id-validation no longer discards an entire valid Modify batch
+  over one bad node id.
+
 ## [0.5.1] - 2026-07-24
 
 ### Added
