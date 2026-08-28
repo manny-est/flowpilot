@@ -366,11 +366,15 @@
     font-size: 16px;
 }
 
-/* Secondary/escape-hatch variant: transparent background, muted text.
+/* Secondary/escape-hatch variant: muted dark background, muted text.
    Same hover glow as fp-chip-card so it reads as part of the same family
-   without competing visually with the primary action above it. */
+   without competing visually with the primary action above it. Explicit
+   background, not transparent — .fp-message's surrounding bubble follows
+   Node-RED's light editor theme variable by default, so "transparent"
+   showed through as plain white instead of blending into a dark parent
+   that doesn't actually exist. */
 .fp-chip-card.fp-chip-card-alt {
-    background: transparent;
+    background: #171e25;
     border-color: #2a333c;
     color: #8a96a3;
 }
