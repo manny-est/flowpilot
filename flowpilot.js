@@ -1609,7 +1609,8 @@ module.exports = function flowPilotRuntime(RED) {
   // parsed envelope. Validated but non-critical — a malformed or missing
   // suggestion is just dropped (returns null), never an error, since chips
   // are an additive hint on top of the real response.
-  //   { mode: "generate"|"document"|"modify"|"chat", prompt: "...", selectionHint?: "..." }
+  //   { mode: "generate"|"document"|"modify"|"chat", prompt: "...",
+  //     selectionHint?: "...", targetNodeIds?: "all"|string[] }
   // ---------------------------------------------------------------------
   function extractSuggestedAction(parsed) {
     const sa = parsed && parsed.suggestedAction;
@@ -1620,6 +1621,14 @@ module.exports = function flowPilotRuntime(RED) {
     const result = { mode: sa.mode, prompt: sa.prompt.trim() };
     if (typeof sa.selectionHint === "string" && sa.selectionHint.trim()) {
       result.selectionHint = sa.selectionHint.trim();
+    }
+    if (sa.targetNodeIds === "all") {
+      result.targetNodeIds = "all";
+    } else if (Array.isArray(sa.targetNodeIds)) {
+      const targetNodeIds = sa.targetNodeIds
+        .filter(function (id) { return typeof id === "string" && id.trim(); })
+        .map(function (id) { return id.trim(); });
+      if (targetNodeIds.length) { result.targetNodeIds = targetNodeIds; }
     }
     return result;
   }
@@ -1882,6 +1891,14 @@ module.exports = function flowPilotRuntime(RED) {
       };
       if (typeof parsed.selectionHint === "string" && parsed.selectionHint.trim()) {
         redirect.selectionHint = parsed.selectionHint.trim();
+      }
+      if (parsed.targetNodeIds === "all") {
+        redirect.targetNodeIds = "all";
+      } else if (Array.isArray(parsed.targetNodeIds)) {
+        const targetNodeIds = parsed.targetNodeIds
+          .filter(function (id) { return typeof id === "string" && id.trim(); })
+          .map(function (id) { return id.trim(); });
+        if (targetNodeIds.length) { redirect.targetNodeIds = targetNodeIds; }
       }
       const redirectProse = (typeof parsed.explanation === "string" && parsed.explanation.trim())
         ? parsed.explanation.trim()
