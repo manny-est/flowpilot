@@ -917,6 +917,16 @@ module.exports = function flowPilotRuntime(RED) {
 
     if (result.toolCalls || result.fallbackToClassic) {
       const perf = performanceAuditFields(messages, result.content, result);
+      if (result.toolCalls) {
+        maybeLogDebugEvent("tool_call", {
+          mode: "chat",
+          providerBaseUrl: activeProvider.baseUrl,
+          model: activeProvider.model,
+          messages: messages,
+          toolCalls: result.toolCalls,
+          responseContent: result.content || null
+        });
+      }
       return { settings, activeProvider, result, perf, messages, toolCalls: result.toolCalls };
     }
 
@@ -926,6 +936,15 @@ module.exports = function flowPilotRuntime(RED) {
     const split = splitChatDataBlock(result.content || "");
 
     recordTranscriptTurn(conversationId, "chat", prompt, split.message);
+    maybeLogDebugEvent("assistant_reply", {
+      mode: "chat",
+      providerBaseUrl: activeProvider.baseUrl,
+      model: activeProvider.model,
+      messages: messages,
+      responseChars: typeof result.content === "string" ? result.content.length : 0,
+      responseContent: result.content || "",
+      parseOutcome: "received"
+    });
 
     const perf = performanceAuditFields(messages, result.content, result);
 
@@ -1014,6 +1033,15 @@ module.exports = function flowPilotRuntime(RED) {
     }, performanceAuditFields(messages, full, streamResult)));
 
     recordTranscriptTurn(conversationId, "chat", prompt, visibleText);
+    maybeLogDebugEvent("assistant_reply", {
+      mode: "chat-stream",
+      providerBaseUrl: activeProvider.baseUrl,
+      model: activeProvider.model,
+      messages: messages,
+      responseChars: typeof full === "string" ? full.length : 0,
+      responseContent: full || "",
+      parseOutcome: "received"
+    });
   }
 
   // ---- Settings: read --------------------------------------------------
