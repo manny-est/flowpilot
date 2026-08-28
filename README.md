@@ -6,9 +6,10 @@ FlowPilot: AI assistance for Node-RED, designed for builders who want help
 without giving up control.
 
 FlowPilot is an AI-powered development assistant that lives in the Node-RED
-editor sidebar. It talks to any OpenAI-compatible API (OpenAI, LocalAI,
-Ollama, etc.) and helps you generate, modify, document, and discuss your
-flows — without ever acting behind your back.
+editor sidebar. It talks natively to Anthropic (Claude models) or to any
+OpenAI-compatible API (OpenAI, LocalAI, Ollama, etc.) and helps you
+generate, modify, document, and discuss your flows — without ever acting
+behind your back.
 
 ![FlowPilot sidebar](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/sidebar-chat-overview.png)
 
@@ -29,8 +30,8 @@ installation, the sidebar UI, and a chapter on every feature.
 - **Undo first** — every change goes through Node-RED's native undo
   (Ctrl+Z), including multi-part changes (insertions + rewires + new nodes)
   as a single step.
-- **Open architecture** — provider-agnostic, OpenAI-compatible REST. No
-  lock-in to one AI platform.
+- **Open architecture** — provider-agnostic: native Anthropic support, or
+  any OpenAI-compatible REST endpoint. No lock-in to one AI platform.
 - **Simple and lightweight** — favors simple, maintainable solutions over
   speculative complexity.
 

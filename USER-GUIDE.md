@@ -103,23 +103,32 @@ saved transcript permanently.
 
 ## Set a Provider
 
-FlowPilot talks to any **OpenAI-compatible** API — OpenAI itself, LocalAI,
-Ollama (with its OpenAI-compatible endpoint), LM Studio, etc.
+FlowPilot talks to **Anthropic** (Claude models) natively, or to any
+**OpenAI-compatible** API — OpenAI itself, LocalAI, Ollama (with its
+OpenAI-compatible endpoint), LM Studio, etc.
 
 1. Open **Settings** (gear icon).
 2. Under **Providers**, click **+ Add** if you need a new provider slot
    (one is created for you by default).
-3. Fill in:
-   - **Provider Name** — any label, e.g. `LocalAI` or `OpenAI`.
-   - **Base URL** — e.g. `http://localhost:8080` or `https://api.openai.com`.
-     If Node-RED is running in Docker, `localhost` refers to the *Node-RED
-     container*, not the Docker host — use the provider's container name, a
-     Docker network alias, or a host IP (e.g. `http://172.17.0.1:8080`)
-     instead.
-   - **API Key** — leave blank unless your provider requires one.
-   - **Model** — type a model name, or click **Refresh models** to fetch the
-     provider's available models (via `GET /v1/models`) and pick from the
-     list.
+3. Pick a **Provider Type**: `OpenAI-compatible` (the default) or
+   `Anthropic`.
+4. Fill in:
+   - **Provider Name** — any label, e.g. `LocalAI`, `OpenAI`, or `Claude`.
+   - **Base URL** —
+     - OpenAI-compatible: e.g. `http://localhost:8080` or
+       `https://api.openai.com`. If Node-RED is running in Docker,
+       `localhost` refers to the *Node-RED container*, not the Docker
+       host — use the provider's container name, a Docker network alias,
+       or a host IP (e.g. `http://172.17.0.1:8080`) instead.
+     - Anthropic: leave blank to use `api.anthropic.com` — only set this
+       if you're routing through a proxy or gateway.
+   - **API Key** — for OpenAI-compatible, leave blank unless your provider
+     requires one. For Anthropic, this is required. If your key returns
+     an `anthropic-workspace-id is required` error, it wasn't scoped to a
+     single workspace when created — go to the Anthropic Console, create a
+     new key, and choose a specific workspace at creation time.
+   - **Model** — type a model name, or click **Refresh models** to fetch
+     the provider's available models and pick from the list.
    - **Temperature** — a starting value of `0.2` works well for most uses.
 
 ![Provider settings: Base URL, API key, model, and temperature fields](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/sidebar-settings-providers.png)
