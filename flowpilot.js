@@ -357,6 +357,50 @@ module.exports = function flowPilotRuntime(RED) {
       tier: "write-safe",
       type: "function",
       function: {
+        name: "redirect_mode",
+        description: "End this Modify agent turn without mutating anything " +
+          "and redirect the user to Generate, Document, or Chat instead.",
+        parameters: {
+          type: "object",
+          properties: {
+            mode: {
+              type: "string",
+              enum: ["generate", "document", "chat"],
+              description: "The mode this request actually belongs in."
+            },
+            prompt: {
+              type: "string",
+              description: "Ready-to-send prompt to prefill after switching modes."
+            },
+            explanation: {
+              type: "string",
+              description: "Visible reply shown to the user before the redirect chip."
+            },
+            selectionHint: {
+              type: "string",
+              description: "Optional selection guidance for Document redirects."
+            },
+            targetNodeIds: {
+              oneOf: [
+                { type: "string", enum: ["all"] },
+                {
+                  type: "array",
+                  items: { type: "string" },
+                  minItems: 1
+                }
+              ],
+              description: "Optional resolved node target for Document redirects."
+            }
+          },
+          required: ["mode", "prompt", "explanation"],
+          additionalProperties: false
+        }
+      }
+    },
+    {
+      tier: "write-safe",
+      type: "function",
+      function: {
         name: "ask_user",
         description: "Ask the user a clarifying question, pause this loop, " +
           "and resume with their answer. This does not mutate the flow.",
