@@ -72,6 +72,11 @@ const modifySystemPrompt = require("./lib/modify-system-prompt");
 const buildSystemPrompt = require("./lib/build-system-prompt");
 const personaPrompt = require("./lib/persona-prompt");
 const { buildCoreScript } = require("./lib/build-core-script");
+const {
+  createChatDataStreamSplitter,
+  findChatDataMarker,
+  splitChatDataBlock
+} = require("./lib/chat-data");
 const { extractJsonObject } = require("./lib/envelope");
 const { repairEnvelope } = require("./lib/validator");
 
@@ -1689,71 +1694,6 @@ module.exports = function flowPilotRuntime(RED) {
   // createChatDataStreamSplitter below so the marker/JSON are never flashed
   // to the user mid-stream.
   // ---------------------------------------------------------------------
-  const CHAT_DATA_MARKER = "<<<FLOWPILOT_DATA>>>";
-
-  function splitChatDataBlock(content) {
-    const text = String(content || "");
-    const idx = text.indexOf(CHAT_DATA_MARKER);
-    if (idx === -1) { return { message: text, data: null }; }
-
-    const message = text.slice(0, idx).replace(/\s+$/, "");
-    const jsonStr = text.slice(idx + CHAT_DATA_MARKER.length).trim();
-    let data = null;
-    try { data = JSON.parse(jsonStr); } catch (e) { data = null; }
-    return { message: message, data: data };
-  }
-
-  // Streaming counterpart of splitChatDataBlock: buffers just enough of the
-  // tail to detect CHAT_DATA_MARKER even if it's split across provider
-  // chunks, without delaying normal text. push(delta) returns the portion of
-  // `delta` (plus any previously-held tail) that's safe to display now —
-  // possibly "". Once the marker is seen, all further input is buffered as
-  // the JSON data block instead of being displayed. finish() returns any
-  // held-back text that turned out NOT to be part of the marker (a false
-  // positive at end of stream) plus the parsed data block, if any.
-  // ---------------------------------------------------------------------
-  function createChatDataStreamSplitter() {
-    let held = "";
-    let inData = false;
-    let dataBuf = "";
-
-    function push(delta) {
-      if (inData) { dataBuf += delta; return ""; }
-
-      const combined = held + delta;
-      const idx = combined.indexOf(CHAT_DATA_MARKER);
-      if (idx !== -1) {
-        inData = true;
-        dataBuf = combined.slice(idx + CHAT_DATA_MARKER.length);
-        held = "";
-        return combined.slice(0, idx);
-      }
-
-      // No full marker yet — check whether the tail of `combined` is a
-      // prefix of the marker (i.e. the marker may be split across chunks)
-      // and hold that part back.
-      const maxOverlap = Math.min(combined.length, CHAT_DATA_MARKER.length - 1);
-      let overlap = 0;
-      for (let len = maxOverlap; len >= 1; len--) {
-        if (combined.slice(-len) === CHAT_DATA_MARKER.slice(0, len)) { overlap = len; break; }
-      }
-      held = overlap ? combined.slice(-overlap) : "";
-      return overlap ? combined.slice(0, -overlap) : combined;
-    }
-
-    function finish() {
-      const tail = held;
-      held = "";
-      let data = null;
-      if (inData) {
-        try { data = JSON.parse(dataBuf.trim()); } catch (e) { data = null; }
-      }
-      return { tail: tail, data: data };
-    }
-
-    return { push: push, finish: finish };
-  }
-
   // ---------------------------------------------------------------------
   // Shared helper: parse, validate and audit a completed provider response
   // for a generation-style request, returning { question } / { prose } /
@@ -1808,7 +1748,7 @@ module.exports = function flowPilotRuntime(RED) {
     // it would otherwise grab the "{" inside the data block and treat it as
     // a broken envelope.
     let envelopeParsed;
-    if (content.indexOf(CHAT_DATA_MARKER) !== -1) {
+    if (findChatDataMarker(content)) {
       const preSplit = splitChatDataBlock(content);
       const proseMessage = preSplit.message.trim();
       if (proseMessage && proseMessage[0] !== "{") {
