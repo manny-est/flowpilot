@@ -1966,6 +1966,22 @@ module.exports = function flowPilotRuntime(RED) {
         throw err;
       }
 
+      // Do not silently turn malformed structured fields into empty arrays.
+      // A model reply such as {"changes": {...}} is plainly an attempted
+      // Modify envelope, not prose or a legitimate no-op. Treat wrong field
+      // types like other envelope parse failures so the client uses its safe
+      // 422 handling and never presents raw JSON as a trusted assistant reply.
+      const modifyArrayFields = ["changes", "newNodes", "newWires", "removeNodes", "newGroups"];
+      const invalidArrayFields = modifyArrayFields.filter(function (field) {
+        return field in parsed && !Array.isArray(parsed[field]);
+      });
+      if (invalidArrayFields.length) {
+        const err = new Error("The response contained non-array modify field(s): " + invalidArrayFields.join(", ") + ".");
+        err.status = 422;
+        err.raw = content;
+        throw err;
+      }
+
       enforceAgentContract(parsed, auditContext, false);
 
       const changes = Array.isArray(parsed.changes) ? parsed.changes : [];
