@@ -249,7 +249,7 @@
     padding: 4px 0;
 }
 
-.fp-typing span:not(.fp-typing-label) {
+.fp-typing span:not(.fp-typing-label):not(.fp-typing-elapsed) {
     width: 7px;
     height: 7px;
     border-radius: 50%;
@@ -265,6 +265,12 @@
     font-size: 11px;
     color: var(--red-ui-secondary-text-color, #999);
     margin-left: 4px;
+    align-self: center;
+}
+
+.fp-typing-elapsed {
+    font-size: 11px;
+    color: var(--red-ui-secondary-text-color, #999);
     align-self: center;
 }
 
