@@ -2097,6 +2097,14 @@ module.exports = function flowPilotRuntime(RED) {
       return { fallbackToClassic: true, usage: result.usage || null };
     }
     if (result.toolCalls) {
+      maybeLogDebugEvent("tool_call", {
+        mode: auditAction,
+        providerBaseUrl: activeProvider.baseUrl,
+        model: activeProvider.model,
+        messages: messages,
+        toolCalls: result.toolCalls,
+        responseContent: result.content || null
+      });
       return {
         toolCalls: result.toolCalls,
         toolTiers: toolTierMap(result.toolCalls),
