@@ -258,8 +258,15 @@
     animation: fp-bounce 1.2s infinite ease-in-out;
 }
 
-.fp-typing span:nth-child(2) { animation-delay: 0.18s; }
-.fp-typing span:nth-child(3) { animation-delay: 0.36s; }
+/* CLAUDE-033: matches the base rule's :not() clauses too, so specificity
+   (0,4,1) beats the base rule's (0,3,1) — otherwise the base rule's
+   "animation" SHORTHAND implicitly resets animation-delay back to 0s on
+   every dot regardless of source order, since shorthand properties reset
+   unspecified sub-values, and CSS resolves same-property conflicts by
+   specificity first. Without this, all three dots silently bounce in
+   perfect sync instead of staggered. */
+.fp-typing span:not(.fp-typing-label):not(.fp-typing-elapsed):nth-child(2) { animation-delay: 0.18s; }
+.fp-typing span:not(.fp-typing-label):not(.fp-typing-elapsed):nth-child(3) { animation-delay: 0.36s; }
 
 .fp-typing-label {
     font-size: 11px;
@@ -390,6 +397,14 @@
     font-weight: 500;
 }
 .fp-chip-card.fp-chip-card-alt:hover {
+    /* CLAUDE-031: this variant's background stays transparent at rest by
+       design, so on Node-RED's LIGHT theme it inherits a white/near-white
+       surrounding background — the near-white hover text below then had
+       nothing dark to sit on and became unreadable. A solid dark fill on
+       hover (paired with the same green glow as the primary chip) fixes
+       contrast regardless of the surrounding theme, without touching the
+       transparent, theme-following look at rest. */
+    background: #141a21;
     border-color: #46d39a;
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 0 1px #46d39a, 0 0 14px -2px #46d39a;
     color: #dfe6ee;
