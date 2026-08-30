@@ -1151,7 +1151,12 @@ module.exports = function flowPilotRuntime(RED) {
     res.sendFile(path.join(__dirname, "lib", "popout", "view.html"));
   });
 
-  RED.httpAdmin.use(function (err, req, res, next) {
+  // Scoped to /flowpilot/* specifically — RED.httpAdmin is Node-RED's own
+  // shared admin app, so an unscoped .use() here would also intercept
+  // malformed-JSON errors on core Node-RED admin routes (flow deploy, node
+  // install, etc.), well beyond this ticket's intent to harden FlowPilot's
+  // own endpoints.
+  RED.httpAdmin.use("/flowpilot", function (err, req, res, next) {
     if (err && ((err instanceof SyntaxError && err.status === 400 && "body" in err) ||
         err.type === "entity.parse.failed")) {
       return res.status(400).json({ error: "Malformed JSON body." });
