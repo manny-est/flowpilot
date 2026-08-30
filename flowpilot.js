@@ -1931,7 +1931,7 @@ module.exports = function flowPilotRuntime(RED) {
       const redirectProse = (typeof parsed.explanation === "string" && parsed.explanation.trim())
         ? parsed.explanation.trim()
         : "This request belongs in " + parsed.mode + " mode.";
-      storage.appendAudit(Object.assign({ action: auditAction + "_prose" }, auditFields, perf));
+      storage.appendAudit(Object.assign({ action: auditAction + "_mode_redirect" }, auditFields, perf));
       return { prose: redirectProse, suggestedAction: redirect };
     }
 
@@ -2141,6 +2141,14 @@ module.exports = function flowPilotRuntime(RED) {
       return { fallbackToClassic: true, usage: result.usage || null };
     }
     if (result.toolCalls) {
+      maybeLogDebugEvent("tool_call", {
+        mode: auditAction,
+        providerBaseUrl: activeProvider.baseUrl,
+        model: activeProvider.model,
+        messages: messages,
+        toolCalls: result.toolCalls,
+        responseContent: result.content || null
+      });
       return {
         toolCalls: result.toolCalls,
         toolTiers: toolTierMap(result.toolCalls),
