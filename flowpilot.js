@@ -1257,13 +1257,19 @@ module.exports = function flowPilotRuntime(RED) {
   // malformed-JSON errors on core Node-RED admin routes (flow deploy, node
   // install, etc.), well beyond this ticket's intent to harden FlowPilot's
   // own endpoints.
-  RED.httpAdmin.use("/flowpilot", function (err, req, res, next) {
-    if (err && ((err instanceof SyntaxError && err.status === 400 && "body" in err) ||
-        err.type === "entity.parse.failed")) {
-      return res.status(400).json({ error: "Malformed JSON body." });
-    }
-    next(err);
-  });
+  // CODEX-027 follow-up: a scoped RED.httpAdmin.use(errorHandler) here
+  // (tried both with and without a "/flowpilot" path prefix) never actually
+  // intercepted a malformed-JSON body-parse error live — Express's own
+  // default HTML error page still won, for every /flowpilot/* route tested,
+  // meaning Node-RED's core httpAdmin setup already fully resolves that
+  // error (parser -> its own handler -> response sent) before a route
+  // registered by a loaded plugin ever gets a chance to react, regardless
+  // of where among the plugin's own routes it's positioned. Reverted rather
+  // than ship a handler that silently never fires. The two higher-value
+  // parts of this ticket (empty-body validation, 404s for missing
+  // conversations) are real and verified working; malformed-JSON responses
+  // still return Express's default HTML page, not clean JSON — flagged as
+  // a known limitation, not fixed by this ticket.
 
   function hasRequestBody(body) {
     return !!body && typeof body === "object" && !Array.isArray(body) && Object.keys(body).length > 0;
