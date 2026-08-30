@@ -835,10 +835,78 @@ module.exports = function flowPilotRuntime(RED) {
   // Returns null when there's no selection — used by both /chat and
   // /generate so the two describe context identically and never drift.
   // ---------------------------------------------------------------------
-  function describeSelectionContext(context, redactionEnabled) {
+  function maxSelectionContextChars(settings) {
+    const configured = Number(settings && settings.maxContextChars);
+    return Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : 12000;
+  }
+
+  function joinSelectionContextSections(sections) {
+    return sections
+      .filter(function (section) { return !!section && typeof section.content === "string" && section.content.length > 0; })
+      .map(function (section) { return section.content; })
+      .join("\n\n");
+  }
+
+  function selectionContextTruncationNote(maxChars, omittedSections, hardCutoff) {
+    let note = "\n\n[FlowPilot truncated selection context to fit maxContextChars=" + maxChars + ".";
+    if (omittedSections.length) {
+      note += " Omitted sections: " + omittedSections.join(", ") + ".";
+    }
+    if (hardCutoff) {
+      note += " Remaining content was hard-cut and may end mid-JSON.";
+    }
+    return note + "]";
+  }
+
+  function truncateSelectionContext(sections, maxChars) {
+    let activeSections = (sections || []).filter(function (section) { return !!section; });
+    let content = joinSelectionContextSections(activeSections);
+    if (!maxChars || maxChars <= 0 || content.length <= maxChars) {
+      return { content: content, truncated: false };
+    }
+
+    const omittedSections = [];
+    ["debug", "config", "perNode", "edges", "subflows"].forEach(function (key) {
+      if (content.length <= maxChars) { return; }
+      const nextSections = [];
+      let removed = false;
+      activeSections.forEach(function (section) {
+        if (!removed && section.key === key && section.required !== true) {
+          removed = true;
+          omittedSections.push(section.label);
+          return;
+        }
+        nextSections.push(section);
+      });
+      if (removed) {
+        activeSections = nextSections;
+        content = joinSelectionContextSections(activeSections);
+      }
+    });
+
+    if (content.length <= maxChars) {
+      const note = selectionContextTruncationNote(maxChars, omittedSections, false);
+      if (content.length + note.length <= maxChars) {
+        content += note;
+      }
+      return { content: content, truncated: true };
+    }
+
+    const hardCutNote = selectionContextTruncationNote(maxChars, omittedSections, true);
+    if (hardCutNote.length >= maxChars) {
+      return { content: content.slice(0, maxChars), truncated: true };
+    }
+    return {
+      content: content.slice(0, maxChars - hardCutNote.length) + hardCutNote,
+      truncated: true
+    };
+  }
+
+  function describeSelectionContext(context, settings) {
     const nodes = context && Array.isArray(context.nodes) ? context.nodes : [];
     const debugMessages = context && Array.isArray(context.debugMessages) ? context.debugMessages : [];
     if (nodes.length === 0 && debugMessages.length === 0) { return null; }
+    settings = settings || {};
 
     const connections = (context && context.connections) ? context.connections : {};
     const edges = Array.isArray(connections.edges) ? connections.edges : [];
@@ -850,7 +918,7 @@ module.exports = function flowPilotRuntime(RED) {
     // changes. redactionEnabled only controls the SEPARATE secret-shaped-value
     // scrubbing (password/token/apiKey-looking fields elsewhere in a node's
     // config) — tell the model the truth about which protection is active.
-    const credentialNote = redactionEnabled === false
+    const credentialNote = settings.redactionEnabled === false
       ? "Redaction is OFF for this session — context may contain sensitive " +
         "values the user chose to share (e.g. embedded API keys or tokens); " +
         "handle carefully and never volunteer them. Node-RED's separate " +
@@ -861,47 +929,80 @@ module.exports = function flowPilotRuntime(RED) {
         "(it requires re-confirming a type-to-confirm phrase, by design)."
       : "This is sanitized configuration; credentials are redacted.";
 
-    let content = "";
+    const sections = [];
     if (nodes.length > 0) {
-      content += "The user has selected the following Node-RED nodes as context. " +
-                credentialNote + "\n\n" +
-                "Nodes:\n```json\n" + JSON.stringify(nodes) + "\n```";
+      sections.push({
+        key: "nodes",
+        label: "selected nodes",
+        required: true,
+        content: "The user has selected the following Node-RED nodes as context. " +
+          credentialNote + "\n\n" +
+          "Nodes:\n```json\n" + JSON.stringify(nodes) + "\n```"
+      });
       if (edges.length > 0) {
-        content += "\n\nConnections — directed edges by node id (a node's wires " +
-               "describe its OUTPUTS; one edge per output port; fromId/toId refer " +
-               "to the \"id\" fields in Nodes above):\n```json\n" +
-               JSON.stringify(edges) + "\n```";
-        content += "\n\nPer-node wiring summary, with readable \"Name [type]\" " +
-               "labels (inputs are reconstructed, since Node-RED nodes do not " +
-               "store their own inputs; subFlow groups nodes into connected " +
-               "sub-flows):\n```json\n" +
-               JSON.stringify(perNode) + "\n```";
+        sections.push({
+          key: "edges",
+          label: "connection edges",
+          content: "Connections — directed edges by node id (a node's wires " +
+            "describe its OUTPUTS; one edge per output port; fromId/toId refer " +
+            "to the \"id\" fields in Nodes above):\n```json\n" +
+            JSON.stringify(edges) + "\n```"
+        });
+        sections.push({
+          key: "perNode",
+          label: "per-node wiring summary",
+          content: "Per-node wiring summary, with readable \"Name [type]\" " +
+            "labels (inputs are reconstructed, since Node-RED nodes do not " +
+            "store their own inputs; subFlow groups nodes into connected " +
+            "sub-flows):\n```json\n" +
+            JSON.stringify(perNode) + "\n```"
+        });
       }
       if (subFlowCount > 1) {
-        content += "\n\nNote: the selection contains " + subFlowCount + " separate, " +
-               "unconnected sub-flows (see each node's subFlow number). Treat " +
-               "them as distinct unless the user says otherwise.";
+        sections.push({
+          key: "subflows",
+          label: "sub-flow note",
+          content: "Note: the selection contains " + subFlowCount + " separate, " +
+            "unconnected sub-flows (see each node's subFlow number). Treat " +
+            "them as distinct unless the user says otherwise."
+        });
       }
     }
 
-    const configNodes = (context && Array.isArray(context.configNodes)) ? context.configNodes : [];
+    const configNodes = settings.allowConfigContext === true &&
+      context && Array.isArray(context.configNodes) ? context.configNodes : [];
     if (configNodes.length > 0) {
-      content += (content ? "\n\n" : "") +
-             "Config nodes referenced by the selection (shared configuration " +
-             "objects not shown on the canvas; credentials are redacted). " +
-             "Use a config node's \"id\" to point an existing node at it via " +
-             "a \"changes\" patch, or create a new one via \"newNodes\":\n```json\n" +
-             JSON.stringify(configNodes) + "\n```";
+      sections.push({
+        key: "config",
+        label: "config nodes",
+        required: sections.length === 0,
+        content: "Config nodes referenced by the selection (shared configuration " +
+          "objects not shown on the canvas; credentials are redacted). " +
+          "Use a config node's \"id\" to point an existing node at it via " +
+          "a \"changes\" patch, or create a new one via \"newNodes\":\n```json\n" +
+          JSON.stringify(configNodes) + "\n```"
+      });
     }
 
     if (debugMessages.length > 0) {
-      content += (content ? "\n\n" : "") +
-             "The user attached recent Node-RED Debug sidebar output for " +
-             "troubleshooting (runtime data, may be truncated):\n```json\n" +
-             JSON.stringify(debugMessages) + "\n```";
+      sections.push({
+        key: "debug",
+        label: "debug messages",
+        required: sections.length === 0,
+        content: "The user attached recent Node-RED Debug sidebar output for " +
+          "troubleshooting (runtime data, may be truncated):\n```json\n" +
+          JSON.stringify(debugMessages) + "\n```"
+      });
     }
 
-    return { content: content, nodeCount: nodes.length, connectionCount: edges.length, debugMessageCount: debugMessages.length };
+    const limited = truncateSelectionContext(sections, maxSelectionContextChars(settings));
+    return {
+      content: limited.content,
+      nodeCount: nodes.length,
+      connectionCount: edges.length,
+      debugMessageCount: debugMessages.length,
+      truncated: limited.truncated
+    };
   }
 
   const AGENT_TRUNCATION_NUDGE =
@@ -944,7 +1045,7 @@ module.exports = function flowPilotRuntime(RED) {
     const settings = storage.getSettings();
     const activeProvider = storage.getActiveProvider(settings);
 
-    const described = describeSelectionContext(context, settings.redactionEnabled);
+    const described = describeSelectionContext(context, settings);
     const messages = buildMessages(
       buildChatSystemPrompt(settings),
       history, historyTruncated, described, prompt
@@ -1011,7 +1112,7 @@ module.exports = function flowPilotRuntime(RED) {
     const settings = storage.getSettings();
     const activeProvider = storage.getActiveProvider(settings);
 
-    const described = describeSelectionContext(context, settings.redactionEnabled);
+    const described = describeSelectionContext(context, settings);
     const messages = buildMessages(
       buildChatSystemPrompt(settings),
       history, historyTruncated, described, prompt
@@ -1432,7 +1533,7 @@ module.exports = function flowPilotRuntime(RED) {
 
       if (mode !== "chat") {
         const context = req.body.context;
-        const described = describeSelectionContext(context, settings.redactionEnabled);
+        const described = describeSelectionContext(context, settings);
         const generated = processGenerationContent(
           result.content || "", result, messages, mode, described, activeProvider,
           req.body.prompt, execution
@@ -1691,7 +1792,7 @@ module.exports = function flowPilotRuntime(RED) {
   function buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction) {
     const settings = storage.getSettings();
     const activeProvider = storage.getActiveProvider(settings);
-    const described = describeSelectionContext(context, settings.redactionEnabled);
+    const described = describeSelectionContext(context, settings);
     // Persona applies to the "explanation" field only (a real hand-off/
     // transition moment — "here's the flow I built for you") — never to
     // node names, ids, or any structural JSON, which stays exactly as each
@@ -2708,7 +2809,7 @@ module.exports = function flowPilotRuntime(RED) {
 
   RED.httpAdmin.post("/flowpilot/document", RED.auth.needsPermission("settings.write"), async function (req, res) {
     const context = req.body && req.body.context;
-    const described = describeSelectionContext(context, storage.getSettings().redactionEnabled);
+    const described = describeSelectionContext(context, storage.getSettings());
 
     if (!described) {
       return res.status(400).json({ error: "Select the node(s) you want documented first." });
@@ -2759,7 +2860,7 @@ module.exports = function flowPilotRuntime(RED) {
     if (!execution) { return; }
 
     const context = req.body && req.body.context;
-    const described = describeSelectionContext(context, settings.redactionEnabled);
+    const described = describeSelectionContext(context, settings);
 
     if (!described) {
       return res.status(400).json({ error: "Select the node(s) you want to modify first." });
