@@ -79,6 +79,7 @@ const {
 } = require("./lib/chat-data");
 const { extractJsonObject } = require("./lib/envelope");
 const { repairEnvelope } = require("./lib/validator");
+const { enforceAgentContract } = require("./lib/agent-contract");
 
 module.exports = function flowPilotRuntime(RED) {
   const storage = createStorage(RED.settings.userDir);
@@ -1853,35 +1854,6 @@ module.exports = function flowPilotRuntime(RED) {
       .filter(Boolean);
     if (cleaned.length < 2 || cleaned.length > 4) { return null; }
     return cleaned;
-  }
-
-  const AGENT_MUTATION_FIELDS = ["changes", "newNodes", "newWires", "removeNodes", "newGroups"];
-
-  function enforceAgentContract(result, execution, hasToolCalls) {
-    if (!result || !execution || execution.strategy !== "agent" || hasToolCalls) {
-      return result;
-    }
-
-    const strippedFields = [];
-    const counts = {};
-    AGENT_MUTATION_FIELDS.forEach(function (field) {
-      if (!Object.prototype.hasOwnProperty.call(result, field)) { return; }
-      strippedFields.push(field);
-      counts[field] = Array.isArray(result[field]) ? result[field].length : 1;
-      delete result[field];
-    });
-
-    if (strippedFields.length) {
-      result.strippedFields = strippedFields;
-      console.warn(
-        "[FlowPilot] agent contract stripped mutation fields strategy=%s entry=%s conversationId=%s counts=%s",
-        execution.strategy,
-        execution.entry,
-        execution.conversationId || "none",
-        JSON.stringify(counts)
-      );
-    }
-    return result;
   }
 
   // ---------------------------------------------------------------------
