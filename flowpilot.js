@@ -1887,7 +1887,7 @@ module.exports = function flowPilotRuntime(RED) {
       const redirectProse = (typeof parsed.explanation === "string" && parsed.explanation.trim())
         ? parsed.explanation.trim()
         : "This request belongs in " + parsed.mode + " mode.";
-      storage.appendAudit(Object.assign({ action: auditAction + "_prose" }, auditFields, perf));
+      storage.appendAudit(Object.assign({ action: auditAction + "_mode_redirect" }, auditFields, perf));
       return { prose: redirectProse, suggestedAction: redirect };
     }
 
