@@ -1151,11 +1151,45 @@ module.exports = function flowPilotRuntime(RED) {
     res.sendFile(path.join(__dirname, "lib", "popout", "view.html"));
   });
 
+  // Scoped to /flowpilot/* specifically — RED.httpAdmin is Node-RED's own
+  // shared admin app, so an unscoped .use() here would also intercept
+  // malformed-JSON errors on core Node-RED admin routes (flow deploy, node
+  // install, etc.), well beyond this ticket's intent to harden FlowPilot's
+  // own endpoints.
+  RED.httpAdmin.use("/flowpilot", function (err, req, res, next) {
+    if (err && ((err instanceof SyntaxError && err.status === 400 && "body" in err) ||
+        err.type === "entity.parse.failed")) {
+      return res.status(400).json({ error: "Malformed JSON body." });
+    }
+    next(err);
+  });
+
+  function hasRequestBody(body) {
+    return !!body && typeof body === "object" && !Array.isArray(body) && Object.keys(body).length > 0;
+  }
+
+  function validateSettingsSaveBody(body) {
+    if (!hasRequestBody(body)) {
+      return "Settings payload is required.";
+    }
+    if (!Array.isArray(body.providers) || body.providers.length === 0) {
+      return "Settings payload must include at least one provider.";
+    }
+    if (!body.activeProviderId || !String(body.activeProviderId).trim()) {
+      return "Settings payload must include an activeProviderId.";
+    }
+    return null;
+  }
+
   // ---- Settings: write -------------------------------------------------
 
   RED.httpAdmin.post("/flowpilot/settings", RED.auth.needsPermission("settings.write"), function (req, res) {
+    const validationError = validateSettingsSaveBody(req.body);
+    if (validationError) {
+      return res.status(400).json({ error: validationError });
+    }
     try {
-      const saved = storage.saveSettings(req.body || {});
+      const saved = storage.saveSettings(req.body);
       storage.appendAudit({
         action: "settings_saved",
         providerName: saved.providerName,
@@ -1174,6 +1208,9 @@ module.exports = function flowPilotRuntime(RED) {
   // that doesn't support /v1/models — see listModels().
 
   RED.httpAdmin.post("/flowpilot/models", RED.auth.needsPermission("settings.write"), async function (req, res) {
+    if (!hasRequestBody(req.body)) {
+      return res.status(400).json({ error: "Request body is required." });
+    }
     try {
       const settings = storage.getSettings();
       const activeProvider = storage.getActiveProvider(settings);
@@ -1480,6 +1517,9 @@ module.exports = function flowPilotRuntime(RED) {
   RED.httpAdmin.get("/flowpilot/conversations/:id", RED.auth.needsPermission("settings.read"), function (req, res) {
     const id = sanitizeConversationId(req.params.id);
     if (!id) { return res.status(400).json({ error: "Invalid conversation id." }); }
+    if (storage.listConversationIds().indexOf(id) === -1) {
+      return res.status(404).json({ error: "Conversation not found." });
+    }
     try {
       res.json({ id: id, messages: storage.readTranscript(id) });
     } catch (err) {
@@ -1490,6 +1530,9 @@ module.exports = function flowPilotRuntime(RED) {
   RED.httpAdmin.delete("/flowpilot/conversations/:id", RED.auth.needsPermission("settings.write"), function (req, res) {
     const id = sanitizeConversationId(req.params.id);
     if (!id) { return res.status(400).json({ error: "Invalid conversation id." }); }
+    if (storage.listConversationIds().indexOf(id) === -1) {
+      return res.status(404).json({ error: "Conversation not found." });
+    }
     try {
       storage.deleteTranscript(id);
       storage.appendAudit({ action: "conversation_delete", conversationId: id });
@@ -1515,6 +1558,9 @@ module.exports = function flowPilotRuntime(RED) {
   // reply at all." Never depends on chat history or flow context.
 
   RED.httpAdmin.post("/flowpilot/test", RED.auth.needsPermission("settings.write"), async function (req, res) {
+    if (!hasRequestBody(req.body)) {
+      return res.status(400).json({ error: "Request body is required." });
+    }
     const prompt = (req.body && req.body.prompt) || "Say hello from FlowPilot.";
 
     try {
@@ -1583,6 +1629,9 @@ module.exports = function flowPilotRuntime(RED) {
   // probedModel, and returns { supportsTools, isReasoningModel, probedModel }.
 
   RED.httpAdmin.post("/flowpilot/probe", RED.auth.needsPermission("settings.write"), async function (req, res) {
+    if (!hasRequestBody(req.body)) {
+      return res.status(400).json({ error: "Request body is required." });
+    }
     try {
       const settings = storage.getSettings();
       const activeProvider = storage.getActiveProvider(settings);
