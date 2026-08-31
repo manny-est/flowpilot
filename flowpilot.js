@@ -80,6 +80,8 @@ const {
 const { extractJsonObject } = require("./lib/envelope");
 const { repairEnvelope } = require("./lib/validator");
 const { enforceAgentContract } = require("./lib/agent-contract");
+const { isProviderShapedResponse } = require("./lib/provider-shape-check");
+const API_KEY_UNCHANGED = createStorage.API_KEY_UNCHANGED;
 
 module.exports = function flowPilotRuntime(RED) {
   const storage = createStorage(RED.settings.userDir);
@@ -1046,6 +1048,13 @@ module.exports = function flowPilotRuntime(RED) {
     const settings = storage.getSettings();
     const activeProvider = storage.getActiveProvider(settings);
 
+    // Shared with /flowpilot/test (contextMode === "connectivity-test"),
+    // which IS the confirming check itself and is exempt — every other
+    // caller (/flowpilot/chat) is a real operational request and gated.
+    if (contextMode !== "connectivity-test" && !isProviderConfirmed(activeProvider)) {
+      throw providerUnconfirmedError();
+    }
+
     const described = describeSelectionContext(context, settings);
     const messages = buildMessages(
       buildChatSystemPrompt(settings),
@@ -1112,6 +1121,12 @@ module.exports = function flowPilotRuntime(RED) {
   async function runChatStream(req, res, prompt, context, history, historyTruncated, conversationId) {
     const settings = storage.getSettings();
     const activeProvider = storage.getActiveProvider(settings);
+
+    // Checked before any SSE headers are written, so the caller's catch
+    // block can still send a normal JSON 409 (res.headersSent is false).
+    if (!isProviderConfirmed(activeProvider)) {
+      throw providerUnconfirmedError();
+    }
 
     const described = describeSelectionContext(context, settings);
     const messages = buildMessages(
@@ -1197,9 +1212,28 @@ module.exports = function flowPilotRuntime(RED) {
 
   // ---- Settings: read --------------------------------------------------
 
+  // Never let a real provider apiKey reach an HTTP response — storage's own
+  // getSettings()/saveSettings() still return the real key internally
+  // (getActiveProvider -> provider.chat depends on it), this masks ONLY the
+  // two client-facing routes below. hasApiKey lets the UI show "a key is
+  // saved" without ever receiving it; API_KEY_UNCHANGED is what the client
+  // echoes back on save to mean "leave it alone" (see
+  // reconcileProviderSecrets in lib/storage.js, the other half of this).
+  function maskProviderSecrets(settings) {
+    const masked = Object.assign({}, settings);
+    masked.providers = (Array.isArray(settings.providers) ? settings.providers : []).map(function (p) {
+      const hasApiKey = !!(p && p.apiKey && String(p.apiKey).trim());
+      const next = Object.assign({}, p);
+      next.apiKey = hasApiKey ? API_KEY_UNCHANGED : "";
+      next.hasApiKey = hasApiKey;
+      return next;
+    });
+    return masked;
+  }
+
   RED.httpAdmin.get("/flowpilot/settings", RED.auth.needsPermission("settings.read"), function (req, res) {
     try {
-      res.json(storage.getSettings());
+      res.json(maskProviderSecrets(storage.getSettings()));
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -1272,6 +1306,51 @@ module.exports = function flowPilotRuntime(RED) {
   // still return Express's default HTML page, not clean JSON — flagged as
   // a known limitation, not fixed by this ticket.
 
+  // ---- Provider confirmation gate (ADR-007, SSRF mitigation) -----------
+  // No operational request (chat/generate/modify/document/build/agent-step/
+  // models) touches a provider's baseUrl until that exact URL has passed a
+  // real FlowPilot provider check — see isProviderShapedResponse
+  // (lib/provider-shape-check.js) below
+  // and /flowpilot/test, /flowpilot/probe, the only two routes allowed to
+  // contact an unconfirmed URL. confirmedBaseUrl/confirmedAt are written
+  // ONLY by those two routes on a passing check; lib/storage.js's
+  // reconcileProviderSecrets is the other half — it strips any
+  // client-supplied confirmedBaseUrl/confirmedAt on save and clears
+  // confirmation whenever baseUrl or apiKey actually changes, so
+  // confirmation can never be forged or silently carried over to a
+  // different URL.
+
+  function isProviderConfirmed(provider) {
+    return !!(provider && provider.confirmedBaseUrl && provider.confirmedBaseUrl === provider.baseUrl);
+  }
+
+  const PROVIDER_UNCONFIRMED_MESSAGE = "This provider hasn't passed a connection test yet — run Test Provider first.";
+
+  // For routes that resolve activeProvider themselves and can respond
+  // directly (models, agent-step, chat, chat-stream) — matches the
+  // {error:"code", message:"text"} shape requireExecutionContract already
+  // uses elsewhere in this file.
+  function requireConfirmedProvider(res, activeProvider) {
+    if (isProviderConfirmed(activeProvider)) { return true; }
+    res.status(409).json({ error: "provider_unconfirmed", message: PROVIDER_UNCONFIRMED_MESSAGE });
+    return false;
+  }
+
+  // For the generation-family helpers (runFlowGeneration/
+  // runFlowGenerationStream), which don't have direct access to `res` — they
+  // throw, and the route's existing sendGenerationError/stream-error path
+  // turns .status/.code into the actual response.
+  function providerUnconfirmedError() {
+    const err = new Error(PROVIDER_UNCONFIRMED_MESSAGE);
+    err.status = 409;
+    err.code = "provider_unconfirmed";
+    return err;
+  }
+
+  // The confirming check's own pass/fail criterion (B3) — extracted to its
+  // own module (lib/provider-shape-check.js) so it has a real, re-executable
+  // unit test rather than only code-review-level evidence.
+
   function hasRequestBody(body) {
     return !!body && typeof body === "object" && !Array.isArray(body) && Object.keys(body).length > 0;
   }
@@ -1304,7 +1383,7 @@ module.exports = function flowPilotRuntime(RED) {
         baseUrl: saved.baseUrl,
         model: saved.model
       });
-      res.json(saved);
+      res.json(maskProviderSecrets(saved));
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -1322,6 +1401,7 @@ module.exports = function flowPilotRuntime(RED) {
     try {
       const settings = storage.getSettings();
       const activeProvider = storage.getActiveProvider(settings);
+      if (!requireConfirmedProvider(res, activeProvider)) { return; }
       const result = await getProvider(activeProvider).listModels(activeProvider);
       storage.appendAudit({
         action: "list_models",
@@ -1354,6 +1434,11 @@ module.exports = function flowPilotRuntime(RED) {
       try {
         await runChatStream(req, res, prompt, req.body.context, history, historyTruncated, req.body.conversationId);
       } catch (err) {
+        if (!res.headersSent && err && err.status) {
+          const errBody = { error: err.code || err.message };
+          if (err.code) { errBody.message = err.message; }
+          return res.status(err.status).json(errBody);
+        }
         storage.appendAudit({ action: "chat_stream_error", error: err.message });
         if (!res.headersSent) {
           res.status(500).json({ error: err.message });
@@ -1400,6 +1485,11 @@ module.exports = function flowPilotRuntime(RED) {
       if (rawMsg && rawMsg.reasoning_content) { body.reasoningContent = rawMsg.reasoning_content; }
       res.json(body);
     } catch (err) {
+      if (err && err.status) {
+        const errBody = { error: err.code || err.message };
+        if (err.code) { errBody.message = err.message; }
+        return res.status(err.status).json(errBody);
+      }
       storage.appendAudit({ action: "chat_error", error: err.message });
       res.status(500).json({ error: err.message });
     }
@@ -1465,6 +1555,7 @@ module.exports = function flowPilotRuntime(RED) {
     const activeProvider = storage.getActiveProvider(settings);
     const execution = requireExecutionContract(req, res, settings, activeProvider);
     if (!execution) { return; }
+    if (!requireConfirmedProvider(res, activeProvider)) { return; }
 
     const messages = req.body && req.body.messages;
     if (!Array.isArray(messages) || messages.length === 0) {
@@ -1672,7 +1763,30 @@ module.exports = function flowPilotRuntime(RED) {
     const prompt = (req.body && req.body.prompt) || "Say hello from FlowPilot.";
 
     try {
+      // This IS the provider-confirmation check (ADR-007) — the one request
+      // allowed to touch a not-yet-confirmed baseUrl. runChat("connectivity-
+      // test") skips the confirmation gate for exactly this call.
       const { settings, activeProvider, result, perf, chatMessage } = await runChat(prompt, "connectivity-test");
+
+      // Strict pass criterion (B3): a 200 with SOME JSON body is not enough
+      // — an internal service or a cloud metadata endpoint can return that
+      // trivially. Require an actually provider-shaped chat-completion
+      // response, or the check fails and the provider stays unconfirmed.
+      // The error returned to the client is deliberately generic — never
+      // the upstream body — so a probe against a non-provider target
+      // yields nothing readable (the actual SSRF seal).
+      if (!isProviderShapedResponse(activeProvider.type, result.raw)) {
+        storage.appendAudit({
+          action: "chat_test_error",
+          providerName: activeProvider.providerName,
+          baseUrl: activeProvider.baseUrl,
+          error: "not_provider_shaped"
+        });
+        return res.status(422).json({
+          error: "provider_check_failed",
+          message: "Not a valid provider endpoint (no FlowPilot-compatible response)."
+        });
+      }
 
       storage.appendAudit(Object.assign({
         action: "chat_test",
@@ -1702,11 +1816,16 @@ module.exports = function flowPilotRuntime(RED) {
               toolsProbedAt: new Date().toISOString(),
               isReasoningModel: reasoning.isReasoningModel,
               reasoningProbedAt: new Date().toISOString(),
-              probedModel: activeProvider.model
+              probedModel: activeProvider.model,
+              // The check above passed — this exact baseUrl is now
+              // confirmed. Cleared automatically (reconcileProviderSecrets,
+              // lib/storage.js) the moment baseUrl or apiKey changes.
+              confirmedBaseUrl: activeProvider.baseUrl,
+              confirmedAt: new Date().toISOString()
             })
           : p;
       });
-      storage.saveSettings(Object.assign({}, settings, { providers: updatedProviders }));
+      storage.saveSettings(Object.assign({}, settings, { providers: updatedProviders }), { trustConfirmation: true });
 
       const toolLabel = probe.supportsTools
         ? "✓ Connected · ✓ Supports tools"
@@ -1744,11 +1863,27 @@ module.exports = function flowPilotRuntime(RED) {
       const settings = storage.getSettings();
       const activeProvider = storage.getActiveProvider(settings);
 
+      // This is the OTHER route allowed to touch an unconfirmed baseUrl
+      // (ADR-007) — same confirming-check treatment as /flowpilot/test.
       const probe = await getProvider(activeProvider).probeTools(activeProvider);
       const chatResult = await getProvider(activeProvider).chat(activeProvider, [
         { role: "system", content: "You are a helpful assistant." },
         { role: "user", content: "Say hello." }
       ]);
+
+      if (!isProviderShapedResponse(activeProvider.type, chatResult.raw)) {
+        storage.appendAudit({
+          action: "auto_probe_error",
+          providerName: activeProvider.providerName,
+          baseUrl: activeProvider.baseUrl,
+          error: "not_provider_shaped"
+        });
+        return res.status(422).json({
+          error: "provider_check_failed",
+          message: "Not a valid provider endpoint (no FlowPilot-compatible response)."
+        });
+      }
+
       const reasoning = getProvider(activeProvider).detectReasoning(chatResult.raw);
 
       const updatedProviders = (settings.providers || []).map(function (p) {
@@ -1758,11 +1893,13 @@ module.exports = function flowPilotRuntime(RED) {
               toolsProbedAt: new Date().toISOString(),
               isReasoningModel: reasoning.isReasoningModel,
               reasoningProbedAt: new Date().toISOString(),
-              probedModel: activeProvider.model
+              probedModel: activeProvider.model,
+              confirmedBaseUrl: activeProvider.baseUrl,
+              confirmedAt: new Date().toISOString()
             })
           : p;
       });
-      storage.saveSettings(Object.assign({}, settings, { providers: updatedProviders }));
+      storage.saveSettings(Object.assign({}, settings, { providers: updatedProviders }), { trustConfirmation: true });
 
       storage.appendAudit({
         action: "auto_probe",
@@ -2202,6 +2339,7 @@ module.exports = function flowPilotRuntime(RED) {
   // without running processGenerationContent yet.
   async function runFlowGeneration(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, useTools, execution) {
     const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction);
+    if (!isProviderConfirmed(activeProvider)) { throw providerUnconfirmedError(); }
     const settings = storage.getSettings();
     const toolsEnabled = !!useTools && activeProvider.supportsTools === true;
     const offeredTools = toolsEnabled
@@ -2225,6 +2363,29 @@ module.exports = function flowPilotRuntime(RED) {
       return { fallbackToClassic: true, usage: result.usage || null };
     }
     if (result.toolCalls) {
+      // F-5: this is the FIRST turn of an agent-strategy request (routed
+      // through /flowpilot/{generate,build,document,modify}, not the
+      // /flowpilot/agent-step continuation endpoint below, which already
+      // audits unconditionally) — it can carry a real WRITE tool call, so
+      // it must not be the one turn that leaves zero record. Previously
+      // this path returned before any storage.appendAudit call; a request
+      // whose very first turn was a tool call (e.g. an immediate ask_user,
+      // or — as here — the opening WRITE call of a multi-item Modify)
+      // vanished from audit.log entirely. maybeLogDebugEvent below is
+      // additive (only fires when settings.debugLogging is on); this
+      // appendAudit call is unconditional, matching /flowpilot/agent-step.
+      storage.appendAudit({
+        action: "first_turn_tool_call",
+        mode: auditAction,
+        strategy: (execution && execution.strategy) || null,
+        entry: (execution && execution.entry) || null,
+        conversationId: (execution && execution.conversationId) || null,
+        runId: (execution && execution.runId) || null,
+        providerName: activeProvider.providerName,
+        baseUrl: activeProvider.baseUrl,
+        model: activeProvider.model,
+        toolCallCount: result.toolCalls.length
+      });
       maybeLogDebugEvent("tool_call", {
         mode: auditAction,
         providerBaseUrl: activeProvider.baseUrl,
@@ -2276,6 +2437,7 @@ module.exports = function flowPilotRuntime(RED) {
   // ---------------------------------------------------------------------
   async function runFlowGenerationStream(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, onDelta, auditContext) {
     const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction);
+    if (!isProviderConfirmed(activeProvider)) { throw providerUnconfirmedError(); }
     const responseFormat = directCompletionResponseFormat(activeProvider, auditAction, false);
     const streamOptions = responseFormat ? { responseFormat: responseFormat } : undefined;
     const result = await getProvider(activeProvider).chatStream(
@@ -2311,6 +2473,7 @@ module.exports = function flowPilotRuntime(RED) {
   function sendGenerationError(res, auditAction, err, auditContext) {
     if (err && err.status) {
       const body = { error: err.message };
+      if (err.code) { body.code = err.code; }
       if (err.raw) { body.raw = err.raw; }
       return res.status(err.status).json(body);
     }
@@ -2678,6 +2841,7 @@ module.exports = function flowPilotRuntime(RED) {
     } catch (err) {
       const status = err && err.status ? err.status : 500;
       const body = { error: err.message };
+      if (err && err.code) { body.code = err.code; }
       if (err && err.raw) { body.raw = err.raw; }
       if (!err || !err.status) {
         storage.appendAudit(Object.assign(

@@ -42,24 +42,34 @@ function withMockedRequest(responseFactory, run) {
     });
 }
 
+// ADR-007 (SSRF mitigation): the error message must be generic — never the
+// raw upstream body. Before that fix, a non-provider target's response text
+// ("this is not sse at all", here standing in for anything an SSRF target
+// might return) would round-trip verbatim into this error message.
 async function testMalformedNonSseResponse() {
   await withMockedRequest(function (res) {
-    res.emit("data", "this is not sse at all");
+    res.emit("data", "this is not sse at all — a secret internal hostname, for instance");
     res.emit("end");
   }, async function () {
-    await assert.rejects(
-      function () {
-        return chatStream(
-          {
-            baseUrl: "http://example.invalid",
-            model: "test-model",
-            requestTimeoutMs: 1000
-          },
-          [{ role: "user", content: "hello" }],
-          function () {}
-        );
-      },
-      /Provider returned non-SSE response \(200\): this is not sse at all/
+    let caught = null;
+    try {
+      await chatStream(
+        {
+          baseUrl: "http://example.invalid",
+          model: "test-model",
+          requestTimeoutMs: 1000
+        },
+        [{ role: "user", content: "hello" }],
+        function () {}
+      );
+    } catch (err) {
+      caught = err;
+    }
+    assert.ok(caught, "expected chatStream to reject on a non-SSE response");
+    assert.strictEqual(caught.message, "Provider returned a non-SSE response (status 200).");
+    assert.ok(
+      caught.message.indexOf("this is not sse at all") === -1,
+      "error message must never contain the raw upstream body"
     );
   });
 }

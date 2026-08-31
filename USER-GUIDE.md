@@ -134,7 +134,11 @@ OpenAI-compatible endpoint), LM Studio, etc.
 ![Provider settings: Base URL, API key, model, and temperature fields](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/sidebar-settings-providers.png)
 
 4. Click **Pre-flight check**. This saves your settings and sends a small
-   test request. A reply in the chat panel means you're connected.
+   test request. A reply in the chat panel means you're connected. **This
+   step is required** — a provider must pass Pre-flight check before Chat,
+   Generate, Modify, Document, or Build will send it anything; a provider
+   you just added or just changed the Base URL/API key on starts
+   unconfirmed until this check passes again.
 
 ![A successful Pre-flight check reply in Chat](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/preflight-success.png)
 
