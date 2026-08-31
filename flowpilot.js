@@ -1321,7 +1321,14 @@ module.exports = function flowPilotRuntime(RED) {
   // different URL.
 
   function isProviderConfirmed(provider) {
-    return !!(provider && provider.confirmedBaseUrl && provider.confirmedBaseUrl === provider.baseUrl);
+    // typeof check, not truthiness: baseUrl "" is a real, documented,
+    // supported value (Anthropic's "leave blank for api.anthropic.com"
+    // convention) — a provider CAN be legitimately confirmed with an empty
+    // confirmedBaseUrl, and `"" && ...` would silently evaluate false,
+    // locking that configuration out of confirmation forever. Only an
+    // actually-absent (never confirmed) field should fail this check.
+    return !!provider && typeof provider.confirmedBaseUrl === "string" &&
+      provider.confirmedBaseUrl === provider.baseUrl;
   }
 
   const PROVIDER_UNCONFIRMED_MESSAGE = "This provider hasn't passed a connection test yet — run Test Provider first.";
