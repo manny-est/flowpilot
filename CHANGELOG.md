@@ -2,6 +2,64 @@
 
 All notable changes to FlowPilot are documented here.
 
+## [0.6.0-beta.1] - 2026-08-31
+
+Prerelease — published to the `beta` npm tag only. `latest` stays on `0.5.2`.
+
+### Added
+- **Agentic WRITE-tool loop for Modify** (behind the `enableAgentWrite`
+  setting, default off): step-by-step tool calls against the live flow
+  (`apply_step`, `remove_step`, `rename_node`, `group_nodes`), each
+  write-gated by a per-step consent prompt (Proceed / Skip this step) before
+  it touches the canvas. Multi-item requests are tracked and executed as
+  separate, individually-verified steps rather than one all-or-nothing
+  envelope; an injected mid-run failure (e.g. a referenced node no longer
+  exists) fails only that item, with the rest completing normally.
+- **`ask_user` clarifying-question tool**: an agent-strategy turn can pause
+  mid-run to ask a single focused question (with optional quick-reply
+  buttons) instead of guessing, and resumes exactly where it left off once
+  answered.
+- **Contract-exclusivity enforcement**: a server-side safety net
+  (`enforceAgentContract`) strips any classic-style mutation fields
+  (`changes`/`newNodes`/`newWires`/`removeNodes`/`newGroups`) that
+  accidentally appear on an agent-strategy turn with no tool calls, before
+  they ever reach the client — the two mutation paths (classic envelope vs.
+  agentic WRITE tools) stay mutually exclusive per turn.
+- **Run identity and honest interruption**: agent-strategy runs now carry a
+  stable run/operation id so a duplicate tool-call delivery (a retry, or the
+  model repeating itself) is applied at most once; a run that's stopped or
+  hits its step/token ceiling reports an honest "interrupted after N steps"
+  instead of silently truncating.
+
+### Security
+- **API keys are now write-only over HTTP** (previously exposed on
+  `GET`/`POST /flowpilot/settings` — a fork-hygiene regression from the
+  0.5.1 stable line, now ported forward and closed for good). Every
+  provider's `apiKey` is masked to a sentinel or `""` in both responses;
+  the real key never leaves the server. `settings.json` and per-conversation
+  transcripts are now created with `0600` permissions.
+- **Provider-confirmation gate (SSRF mitigation)**: no chat, generate,
+  modify, document, build, agent-step, or model-list request reaches a
+  configured provider's Base URL until that exact URL has passed a real
+  FlowPilot connection check (Pre-flight check / Test Provider). The check
+  itself is blind on failure — a non-provider target's response is never
+  reflected back to the client — so pointing a provider at an unintended
+  internal address yields nothing readable. Confirmation is tied to the
+  exact URL and clears automatically if the Base URL or API key changes.
+  See `dev-docs/decisions/ADR-007-Provider-Confirmation-Gate.md` for the
+  full design.
+- **Audit-trail completeness**: an agent-strategy request whose very first
+  model turn is a tool call (rather than a later continuation) is now
+  always recorded to the audit log — previously this specific case left no
+  trace at all.
+
+### Internal
+- Phase 10: strategy propagation, contract-exclusivity enforcement, agent
+  turn output caps, run identity/idempotency, and verification consolidation
+  across the classic and agentic Modify paths. Full history in
+  `dev-docs/current/Phase10-Build-Progress.md` and
+  `dev-docs/current/Phase10-Gate-Closeout-Final.md`.
+
 ## [0.5.1] - 2026-07-24
 
 ### Added
