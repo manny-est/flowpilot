@@ -1,5 +1,6 @@
 const http = require("http");
 const path = require("path");
+const PACKAGE_VERSION = require("./package.json").version;
 const createStorage = require("./lib/storage");
 const openaiProvider = require("./lib/provider-openai-compatible");
 const anthropicProvider = require("./lib/provider-anthropic");
@@ -1236,7 +1237,9 @@ module.exports = function flowPilotRuntime(RED) {
 
   RED.httpAdmin.get("/flowpilot/settings", RED.auth.needsPermission("settings.read"), function (req, res) {
     try {
-      res.json(maskProviderSecrets(storage.getSettings()));
+      const responseBody = maskProviderSecrets(storage.getSettings());
+      responseBody.flowpilotVersion = PACKAGE_VERSION;
+      res.json(responseBody);
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
