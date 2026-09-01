@@ -385,14 +385,17 @@ module.exports = function flowPilotRuntime(RED) {
             },
             targetNodeIds: {
               oneOf: [
-                { type: "string", enum: ["all"] },
+                { type: "string", enum: ["all", "instance"] },
                 {
                   type: "array",
                   items: { type: "string" },
                   minItems: 1
                 }
               ],
-              description: "Optional resolved node target for Document redirects."
+              description: "Optional resolved node target for Document redirects. " +
+                "\"all\" is the entire active flow/tab; \"instance\" is every flow " +
+                "tab in the whole Node-RED instance. Omit when the scope genuinely " +
+                "can't be resolved from context."
             }
           },
           required: ["mode", "prompt", "explanation"],
@@ -1307,13 +1310,21 @@ module.exports = function flowPilotRuntime(RED) {
   // a known limitation, not fixed by this ticket.
 
   // ---- Provider confirmation gate (ADR-007, SSRF mitigation) -----------
-  // No operational request (chat/generate/modify/document/build/agent-step/
-  // models) touches a provider's baseUrl until that exact URL has passed a
-  // real FlowPilot provider check — see isProviderShapedResponse
+  // No operational request (chat/generate/modify/document/build/agent-step)
+  // touches a provider's baseUrl until that exact URL has passed a real
+  // FlowPilot provider check — see isProviderShapedResponse
   // (lib/provider-shape-check.js) below
-  // and /flowpilot/test, /flowpilot/probe, the only two routes allowed to
-  // contact an unconfirmed URL. confirmedBaseUrl/confirmedAt are written
-  // ONLY by those two routes on a passing check; lib/storage.js's
+  // and /flowpilot/test, /flowpilot/probe, /flowpilot/models — the only
+  // three routes allowed to contact an unconfirmed URL. The first two
+  // WRITE confirmedBaseUrl/confirmedAt on a passing check (the deliberate
+  // confirming action); /flowpilot/models never does — it's read-only
+  // reconnaissance (listing available models), safe to allow pre-confirmation
+  // the same way /probe is, but not itself a confirmation. All three stay
+  // safe against an unconfirmed/malicious target the same way: a strict
+  // shape check on any "success" response (isProviderShapedResponse for
+  // chat-shaped, isModelsListShaped for a models list) and a generic,
+  // never-reflects-the-body error on failure (enforced at the shared HTTP
+  // client layer in lib/provider-*.js). lib/storage.js's
   // reconcileProviderSecrets is the other half — it strips any
   // client-supplied confirmedBaseUrl/confirmedAt on save and clears
   // confirmation whenever baseUrl or apiKey actually changes, so
@@ -1399,16 +1410,22 @@ module.exports = function flowPilotRuntime(RED) {
   // ---- Models: list models via the active provider's /v1/models -------
   // Always acts on the SAVED active provider (the frontend saves the form
   // first, mirroring Pre-flight check), and never errors out for a provider
-  // that doesn't support /v1/models — see listModels().
+  // that doesn't support /v1/models — see listModels(). No request body is
+  // read here, so no body-presence check applies (unlike /flowpilot/settings,
+  // which does act on its body).
+  //
+  // This is the THIRD route allowed to touch an unconfirmed baseUrl (ADR-007)
+  // — users need to see a model list before ever running Pre-flight check,
+  // and the confirmation gate would otherwise block that. Kept safe the same
+  // way /flowpilot/test and /flowpilot/probe are: listModels() only trusts a
+  // genuinely provider-shaped response (isModelsListShaped) and never
+  // reflects a raw failure body. Does not itself write confirmedBaseUrl/
+  // confirmedAt — only the deliberate /flowpilot/test action confirms.
 
   RED.httpAdmin.post("/flowpilot/models", RED.auth.needsPermission("settings.write"), async function (req, res) {
-    if (!hasRequestBody(req.body)) {
-      return res.status(400).json({ error: "Request body is required." });
-    }
     try {
       const settings = storage.getSettings();
       const activeProvider = storage.getActiveProvider(settings);
-      if (!requireConfirmedProvider(res, activeProvider)) { return; }
       const result = await getProvider(activeProvider).listModels(activeProvider);
       storage.appendAudit({
         action: "list_models",
