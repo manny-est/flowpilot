@@ -1,4 +1,5 @@
 const http = require("http");
+const https = require("https");
 const path = require("path");
 const PACKAGE_VERSION = require("./package.json").version;
 const createStorage = require("./lib/storage");
@@ -83,6 +84,108 @@ const { repairEnvelope } = require("./lib/validator");
 const { enforceAgentContract } = require("./lib/agent-contract");
 const { isProviderShapedResponse } = require("./lib/provider-shape-check");
 const API_KEY_UNCHANGED = createStorage.API_KEY_UNCHANGED;
+const UPDATE_CHECK_URL = "https://registry.npmjs.org/-/package/@manny-est/node-red-flowpilot/dist-tags";
+const UPDATE_CHECK_SUCCESS_TTL_MS = 6 * 60 * 60 * 1000;
+const UPDATE_CHECK_FAILURE_TTL_MS = 15 * 60 * 1000;
+let updateCheckCache = null;
+
+function parseVersion(v) {
+  var parts = String(v).split("-");
+  var core = parts[0].split(".").map(Number);
+  var pre = parts.length > 1 ? parts.slice(1).join("-").split(".") : null;
+  return { core: core, pre: pre };
+}
+
+function isNewer(remoteVersion, localVersion) {
+  var r = parseVersion(remoteVersion), l = parseVersion(localVersion);
+  for (var i = 0; i < 3; i++) {
+    var rv = r.core[i] || 0, lv = l.core[i] || 0;
+    if (rv !== lv) { return rv > lv; }
+  }
+  // core version numbers are equal
+  if (!r.pre && l.pre) { return true; }   // remote is a full release, local is a prerelease of the same core
+  if (r.pre && !l.pre) { return false; }  // remote is a prerelease, local is already past it
+  if (!r.pre && !l.pre) { return false; } // identical plain releases
+  // both are prereleases of the same core version — compare the last dot segment numerically if possible
+  var rn = Number(r.pre[r.pre.length - 1]);
+  var ln = Number(l.pre[l.pre.length - 1]);
+  if (!isNaN(rn) && !isNaN(ln)) { return rn > ln; }
+  return r.pre.join(".") !== l.pre.join(".") && r.pre.join(".") > l.pre.join(".");
+}
+
+function updateCheckFallbackResponse() {
+  return { enabled: true, updateAvailable: false };
+}
+
+function fetchUpdateDistTags() {
+  return new Promise((resolve, reject) => {
+    let url;
+    try {
+      url = new URL(UPDATE_CHECK_URL);
+    } catch (err) {
+      reject(err);
+      return;
+    }
+
+    const req = https.request({
+      method: "GET",
+      hostname: url.hostname,
+      port: url.port || 443,
+      path: url.pathname + url.search,
+      headers: { Accept: "application/json" }
+    }, (res) => {
+      let data = "";
+      res.setEncoding("utf8");
+      res.on("data", chunk => { data += chunk; });
+      res.on("end", () => {
+        let parsed = null;
+        try {
+          parsed = data ? JSON.parse(data) : null;
+        } catch (err) {
+          reject(err);
+          return;
+        }
+        if (res.statusCode !== 200 || !parsed || typeof parsed !== "object") {
+          reject(new Error("Update check failed."));
+          return;
+        }
+        resolve(parsed);
+      });
+    });
+
+    req.on("error", reject);
+    req.setTimeout(5000, () => {
+      req.destroy(new Error("Timeout"));
+    });
+    req.end();
+  });
+}
+
+async function performUpdateCheck() {
+  try {
+    const distTags = await fetchUpdateDistTags();
+    const tag = PACKAGE_VERSION.indexOf("-") !== -1 ? "beta" : "latest";
+    const tagVersion = distTags && distTags[tag];
+    if (typeof tagVersion !== "string" || !tagVersion) {
+      throw new Error("Missing dist-tag.");
+    }
+    return {
+      succeeded: true,
+      result: {
+        enabled: true,
+        updateAvailable: isNewer(tagVersion, PACKAGE_VERSION),
+        latestVersion: tagVersion,
+        currentVersion: PACKAGE_VERSION,
+        tag: tag
+      }
+    };
+  } catch (err) {
+    return {
+      succeeded: false,
+      result: updateCheckFallbackResponse()
+    };
+  }
+}
 
 module.exports = function flowPilotRuntime(RED) {
   const storage = createStorage(RED.settings.userDir);
@@ -1243,6 +1346,35 @@ module.exports = function flowPilotRuntime(RED) {
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
+  });
+
+  RED.httpAdmin.get("/flowpilot/update-check", RED.auth.needsPermission("settings.read"), async function (req, res) {
+    const settings = storage.getSettings();
+    if (settings.checkForUpdates === false) {
+      res.json({ enabled: false });
+      return;
+    }
+
+    const now = Date.now();
+    if (updateCheckCache) {
+      const ageMs = now - updateCheckCache.checkedAt;
+      if (updateCheckCache.succeeded && ageMs < UPDATE_CHECK_SUCCESS_TTL_MS) {
+        res.json(updateCheckCache.result);
+        return;
+      }
+      if (!updateCheckCache.succeeded && ageMs < UPDATE_CHECK_FAILURE_TTL_MS) {
+        res.json(updateCheckFallbackResponse());
+        return;
+      }
+    }
+
+    const check = await performUpdateCheck();
+    updateCheckCache = {
+      checkedAt: now,
+      succeeded: check.succeeded,
+      result: check.result
+    };
+    res.json(check.result);
   });
 
   // ---- Settings: default system prompt (for "Reset to default") -------
