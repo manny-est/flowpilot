@@ -742,6 +742,8 @@ module.exports = function flowPilotRuntime(RED) {
   let installedNodesCache = null;
   let installedNodesCacheAt = 0;
   const INSTALLED_NODES_CACHE_TTL_MS = 5 * 60 * 1000;
+  const INSTALLED_NODES_SETTLE_REFRESH_MS = 5000;
+  let installedNodesSettleTimeout = null;
 
   // Found live (0.6.1): describeInstalledNodes() used to hand back
   // installedNodesCache's current value unconditionally — including right
@@ -753,21 +755,33 @@ module.exports = function flowPilotRuntime(RED) {
   // handed that incomplete list would confidently — and wrongly — tell a
   // user an installed package isn't available.
   //
-  // Fix: gate on Node-RED's own "nodes-started" event (fired from
-  // @node-red/runtime/lib/flows/index.js right after flows — and therefore
-  // every node type — have finished loading; confirmed against that source,
-  // not assumed) rather than trusting any fetch that merely succeeded.
-  // Until this fires at least once, describeInstalledNodes() returns null
-  // (no installed-packages system message at all) instead of whatever a
-  // possibly-premature cache holds — "don't know yet" instead of a false
-  // "confirmed absent." The TTL-based refresh below still exists and keeps
-  // firing as a backstop for palette changes after startup (installing a
-  // package while Node-RED is running, or a later deploy), but its results
-  // are only ever surfaced once nodesRegistryReady is true.
+  // Fix: gate on Node-RED's own "flows:started" event (the non-deprecated
+  // alias of "nodes-started", emitted from @node-red/runtime/lib/flows/index.js
+  // right after activeFlows[id].start(diff) completes for each active flow)
+  // rather than trusting any fetch that merely succeeded. Until this fires at
+  // least once, describeInstalledNodes() returns null (no installed-packages
+  // system message at all) instead of whatever a possibly-premature cache
+  // holds — "don't know yet" instead of a false "confirmed absent."
+  //
+  // Found live (0.6.1, nodered-test): this event is still not a hard barrier
+  // for slow packages finishing their own follow-on startup work. Uibuilder's
+  // runtime plugin does additional async work from its own flows:started
+  // handler, and the same getNodeList() call that later shows its types can be
+  // too early if taken immediately at this boundary. Pragmatic refinement:
+  // keep the first synchronous snapshot here, then schedule exactly one bounded
+  // follow-up refresh a few seconds later to let slow packages settle. The
+  // TTL-based refresh below still exists as a backstop for later palette
+  // changes while running; this timeout only covers the immediate post-start
+  // window and never loops forever.
   let nodesRegistryReady = false;
-  RED.events.on("nodes-started", function () {
+  RED.events.on("flows:started", function () {
     nodesRegistryReady = true;
     refreshInstalledNodesCache();
+    if (installedNodesSettleTimeout) { clearTimeout(installedNodesSettleTimeout); }
+    installedNodesSettleTimeout = setTimeout(function () {
+      installedNodesSettleTimeout = null;
+      refreshInstalledNodesCache();
+    }, INSTALLED_NODES_SETTLE_REFRESH_MS);
   });
 
   function buildInstalledNodesContent(list) {
