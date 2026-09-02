@@ -2465,6 +2465,8 @@ module.exports = function flowPilotRuntime(RED) {
       return modifyResult;
     }
 
+    enforceAgentContract(parsed, auditContext, false);
+
     const flow = Array.isArray(parsed.flow) ? parsed.flow : null;
     if (!flow) {
       const err = new Error("The response did not contain a 'flow' array.");
@@ -2472,8 +2474,6 @@ module.exports = function flowPilotRuntime(RED) {
       err.raw = content;
       throw err;
     }
-
-    enforceAgentContract(parsed, auditContext, false);
 
     storage.appendAudit(Object.assign({
       action: auditAction,
