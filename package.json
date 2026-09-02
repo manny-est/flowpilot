@@ -26,7 +26,7 @@
   "node-red": {
     "version": ">=4.0.0",
     "nodes": {
-      "flowpilot": "flowpilot.js"
+      "flowpilot": "flowpilot-node-entry.js"
     },
     "plugins": {
       "flowpilot": "flowpilot.html"
@@ -37,6 +37,7 @@
   },
   "files": [
     "flowpilot.js",
+    "flowpilot-node-entry.js",
     "flowpilot.html",
     "flowpilot-core.css",
     "lib",
