@@ -16,14 +16,17 @@ All notable changes to FlowPilot are documented here.
   instead, exactly the narrative-accuracy gap this feature exists to
   close. Found and fixed during this release's own go-live testing,
   now live-verified against a real agentic write.
-- **FlowPilot no longer wrongly tells you an installed package isn't
-  installed.** The "what's in your palette" awareness that keeps
-  Generate/Modify from proposing node types you don't have was reading
-  from an API that doesn't exist on this Node-RED version's plugin
-  interface — every call silently failed, so the model was handed no
-  palette information at all and, in some cases, guessed rather than
-  saying so. Now reads the real, live registry directly and is
-  correct immediately after a restart, not just eventually.
+- **Installed-package awareness was silently non-functional — FlowPilot
+  now actually receives your palette.** The feature that keeps
+  Generate/Modify from proposing node types you don't have, and lets
+  FlowPilot correctly answer "is X installed?", called a Node-RED API
+  that doesn't exist on this version's plugin interface. The call was
+  a silent no-op on every single request: FlowPilot never had real
+  palette information to work with, so the model either said as much
+  or, in some cases, guessed. This wasn't a timing bug or a stale
+  cache — the underlying data source itself never worked. Now reads
+  the live node registry directly and is correct immediately, from
+  the very first request after a restart.
 
 ## [0.6.0] - 2026-09-01
 
