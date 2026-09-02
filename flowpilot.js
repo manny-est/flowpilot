@@ -539,7 +539,7 @@ module.exports = function flowPilotRuntime(RED) {
 
   function agentToolsFor(settings, activeProvider, mode, writesAllowed) {
     const writesEnabled = settings.enableAgentWrite === true &&
-      mode === "modify" && writesAllowed !== false &&
+      (mode === "modify" || mode === "generate") && writesAllowed !== false &&
       activeProvider && activeProvider.supportsTools === true;
     return providerToolDefinitions(AGENT_READ_TOOLS.concat(writesEnabled ? WRITE_TOOLS : []));
   }
@@ -2505,7 +2505,7 @@ module.exports = function flowPilotRuntime(RED) {
       ? agentToolsFor(settings, activeProvider, auditAction, execution && execution.strategy === "agent")
       : [];
     const responseFormat = directCompletionResponseFormat(activeProvider, auditAction, toolsEnabled);
-    const toolChoice = auditAction === "modify" && execution &&
+    const toolChoice = (auditAction === "modify" || auditAction === "generate") && execution &&
       execution.strategy === "agent" ? "required" : "auto";
     let chatOptions = toolsEnabled
       ? { tools: offeredTools, toolChoice: toolChoice }
@@ -2650,7 +2650,7 @@ module.exports = function flowPilotRuntime(RED) {
   // Used by both the non-streaming route (res.status(status).json(body)) and
   // the streaming route (relayed as the final SSE event).
   // ---------------------------------------------------------------------
-  function finalizeSimpleGeneration(result) {
+  function finalizeSimpleGeneration(result, execution) {
     if (result.question) {
       const body = { explanation: result.explanation, question: result.question, flow: null };
       if (result.suggestedAction) { body.suggestedAction = result.suggestedAction; }
@@ -2662,6 +2662,19 @@ module.exports = function flowPilotRuntime(RED) {
       if (result.suggestedAction) { proseBody.suggestedAction = result.suggestedAction; }
       if (result.questionOptions) { proseBody.questionOptions = result.questionOptions; }
       return { status: 200, body: proseBody };
+    }
+    if (execution && execution.strategy === "agent") {
+      const agentBody = {
+        explanation: result.explanation || "",
+        prose: true,
+        flow: null
+      };
+      if (Array.isArray(result.strippedFields) && result.strippedFields.length) {
+        agentBody.strippedFields = result.strippedFields.slice();
+      }
+      if (result.skippedNote) { agentBody.skippedNote = result.skippedNote; }
+      if (result.suggestedAction) { agentBody.suggestedAction = result.suggestedAction; }
+      return { status: 200, body: agentBody };
     }
     return { status: 200, body: result };
   }
@@ -3023,6 +3036,11 @@ module.exports = function flowPilotRuntime(RED) {
   }
 
   RED.httpAdmin.post("/flowpilot/generate", RED.auth.needsPermission("settings.write"), async function (req, res) {
+    const settings = storage.getSettings();
+    const activeProvider = storage.getActiveProvider(settings);
+    const execution = requireExecutionContract(req, res, settings, activeProvider);
+    if (!execution) { return; }
+
     const prompt = req.body && req.body.prompt;
 
     if (!prompt || !String(prompt).trim()) {
@@ -3031,11 +3049,12 @@ module.exports = function flowPilotRuntime(RED) {
 
     const history = sanitizeHistory(req.body.history);
     const historyTruncated = !!req.body.historyTruncated;
+    const finalize = function (result) { return finalizeSimpleGeneration(result, execution); };
 
     if (req.body.stream) {
       return runExecuteStream(
         req, res, generationSystemPrompt, "generate", prompt, req.body && req.body.context,
-        history, historyTruncated, finalizeSimpleGeneration, req.body.conversationId
+        history, historyTruncated, finalize, req.body.conversationId, execution
       );
     }
 
@@ -3043,7 +3062,7 @@ module.exports = function flowPilotRuntime(RED) {
       const useTools = !!req.body.tools;
       const generated = await runFlowGeneration(
         generationSystemPrompt, "generate", prompt, req.body && req.body.context,
-        history, historyTruncated, useTools
+        history, historyTruncated, useTools, execution
       );
       if (generated.toolCalls) {
         return res.json({
@@ -3055,7 +3074,7 @@ module.exports = function flowPilotRuntime(RED) {
         });
       }
       recordTranscriptTurn(req.body.conversationId, "generate", prompt, transcriptTextFromGenerationResult(generated));
-      const { status, body } = finalizeSimpleGeneration(generated);
+      const { status, body } = finalize(generated);
       res.status(status).json(body);
     } catch (err) {
       sendGenerationError(res, "generate", err);
