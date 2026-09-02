@@ -2,6 +2,29 @@
 
 All notable changes to FlowPilot are documented here.
 
+## [0.6.1] - 2026-09-02
+
+### Fixed
+- **Deterministic run summaries actually work now.** 0.6.0 shipped this
+  feature — the per-item ✓/✗ outcome from a Modify or Generate run,
+  built from what the WRITE tools actually reported instead of the
+  model's own retelling — but a control-flow bug in the message-
+  rendering path made it unreachable for every real run: the code path
+  that shows the deterministic summary as primary (with the model's
+  own explanation demoted underneath) never executed. Every response
+  fell through to showing the model's own prose at full weight
+  instead, exactly the narrative-accuracy gap this feature exists to
+  close. Found and fixed during this release's own go-live testing,
+  now live-verified against a real agentic write.
+- **FlowPilot no longer wrongly tells you an installed package isn't
+  installed.** The "what's in your palette" awareness that keeps
+  Generate/Modify from proposing node types you don't have was reading
+  from an API that doesn't exist on this Node-RED version's plugin
+  interface — every call silently failed, so the model was handed no
+  palette information at all and, in some cases, guessed rather than
+  saying so. Now reads the real, live registry directly and is
+  correct immediately after a restart, not just eventually.
+
 ## [0.6.0] - 2026-09-01
 
 Promoted from `0.6.0-beta.1` to the stable `latest` npm tag.
