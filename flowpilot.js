@@ -204,20 +204,30 @@ async function performUpdateCheck() {
 // Unlike the client-side html/script duplication, this one can't be closed
 // by renaming what "plugins" points to without duplicating flowpilot.html's
 // content under a second filename — not worth the maintenance burden for
-// what's fundamentally the same fix in spirit. Guard here instead: since
-// Node.js's require() cache means this file's own top-level code runs
-// exactly once regardless of how many callers require() it, a plain
-// module-level flag is a genuine, reliable one-time-only gate — whichever
-// caller (the "nodes" shim or the "plugins" auto-discovered companion)
-// invokes this function first does the real setup; the second invocation
-// is now a safe no-op instead of a second full, independent server-side
-// instance (its own storage, its own caches, its own event listeners,
-// registering the same httpAdmin routes a second time).
-let flowPilotRuntimeInitialized = false;
-
+// what's fundamentally the same fix in spirit. Guard here instead.
+//
+// A first attempt at this guard used a plain module-level `let` flag,
+// reasoning that Node's require() cache makes a module's own top-level code
+// run exactly once. That reasoning doesn't hold here: confirmed by reading
+// @node-red/registry/lib/loader.js directly, the "nodes" entry is loaded via
+// loadNodeSet, which uses a dynamic import() of a file:// URL (see its
+// `pathToFileURL(node.file)` call), while the "plugins" entry's companion
+// file is loaded via loadPlugin, which uses a plain require(). Node's CJS
+// require() cache and its ESM import() module cache are not the same
+// cache — a module reached through both paths can genuinely execute its
+// top-level code twice, each with its OWN independent closure (own
+// `let flowPilotRuntimeInitialized`, own everything). Confirmed live: a
+// module-level flag did NOT stop the second invocation's independent
+// httpAdmin route registrations from being the ones actually serving
+// requests, while the diagnostic-carrying instance sat silent.
+//
+// Fix: mark completion on `global` instead. Node's global object is a
+// true process-wide singleton — unaffected by which loader/module-cache
+// reached this file — so it's a reliable gate regardless of how many
+// separate module realms this file's code ends up evaluated in.
 module.exports = function flowPilotRuntime(RED) {
-  if (flowPilotRuntimeInitialized) { return; }
-  flowPilotRuntimeInitialized = true;
+  if (global.__flowPilotRuntimeInitialized) { return; }
+  global.__flowPilotRuntimeInitialized = true;
 
   const storage = createStorage(RED.settings.userDir);
 
@@ -732,57 +742,35 @@ module.exports = function flowPilotRuntime(RED) {
   // their node types when relevant and otherwise stick to core nodes
   // rather than proposing types that aren't installed.
   //
-  // Node-RED's node-level RED API does expose the same registry list the
+  // Node-RED's node-level RED API exposes the same registry list the
   // admin GET /nodes route uses: @node-red/runtime/lib/api/nodes.js calls
   // runtime.nodes.getNodeList(), and @node-red/registry/lib/util.js copies
   // that method onto RED.nodes for node modules (it's not one of the six
-  // excluded names). Use that in-process API directly here: same data, no
-  // loopback HTTP request, no adminAuth 401, still cheap and synchronous.
+  // excluded names). Call it fresh on every request — no caching at all.
+  //
+  // Found live (0.6.1): this WAS a cached snapshot, through three
+  // successive designs (a naive restart-seeded TTL timer; a
+  // "nodes-started"-gated refresh; that plus a bounded settle re-check on
+  // top), because the original data source was an HTTP loopback to this
+  // same instance's own /nodes admin route — expensive enough to be worth
+  // caching, and, on any adminAuth-enabled instance, unable to
+  // authenticate itself at all (a real bug, fixed by switching to the
+  // in-process RED.nodes.getNodeList() call below). Once the data source
+  // is a synchronous, already-in-memory function call, caching it stops
+  // paying for itself — it only adds staleness/timing bugs, three of
+  // which got live-found in a row this same afternoon (the gate never
+  // set; set but the fetch 401ing; set and fetched but still an early
+  // snapshot for a slow-registering package like uibuilder). The one
+  // thing still worth gating is genuinely knowing nothing yet: before
+  // Node-RED's own "flows:started" event (the non-deprecated alias of
+  // "nodes-started", confirmed emitted from
+  // @node-red/runtime/lib/flows/index.js right after every active flow's
+  // own start() resolves) has fired at least once,
+  // describeInstalledNodes() returns null — "don't know yet" instead of a
+  // false "confirmed absent."
   // ---------------------------------------------------------------------
-  let installedNodesCache = null;
-  let installedNodesCacheAt = 0;
-  const INSTALLED_NODES_CACHE_TTL_MS = 5 * 60 * 1000;
-  const INSTALLED_NODES_SETTLE_REFRESH_MS = 5000;
-  let installedNodesSettleTimeout = null;
-
-  // Found live (0.6.1): describeInstalledNodes() used to hand back
-  // installedNodesCache's current value unconditionally — including right
-  // after a restart, before Node-RED's own node registry had actually
-  // finished populating. refreshInstalledNodesCache() kicks off an async
-  // fetch but returns synchronously with whatever was cached before, so the
-  // FIRST request after a restart could snapshot (and then cache for the
-  // full TTL) an incomplete node list if it raced the registry. A model
-  // handed that incomplete list would confidently — and wrongly — tell a
-  // user an installed package isn't available.
-  //
-  // Fix: gate on Node-RED's own "flows:started" event (the non-deprecated
-  // alias of "nodes-started", emitted from @node-red/runtime/lib/flows/index.js
-  // right after activeFlows[id].start(diff) completes for each active flow)
-  // rather than trusting any fetch that merely succeeded. Until this fires at
-  // least once, describeInstalledNodes() returns null (no installed-packages
-  // system message at all) instead of whatever a possibly-premature cache
-  // holds — "don't know yet" instead of a false "confirmed absent."
-  //
-  // Found live (0.6.1, nodered-test): this event is still not a hard barrier
-  // for slow packages finishing their own follow-on startup work. Uibuilder's
-  // runtime plugin does additional async work from its own flows:started
-  // handler, and the same getNodeList() call that later shows its types can be
-  // too early if taken immediately at this boundary. Pragmatic refinement:
-  // keep the first synchronous snapshot here, then schedule exactly one bounded
-  // follow-up refresh a few seconds later to let slow packages settle. The
-  // TTL-based refresh below still exists as a backstop for later palette
-  // changes while running; this timeout only covers the immediate post-start
-  // window and never loops forever.
   let nodesRegistryReady = false;
-  RED.events.on("flows:started", function () {
-    nodesRegistryReady = true;
-    refreshInstalledNodesCache();
-    if (installedNodesSettleTimeout) { clearTimeout(installedNodesSettleTimeout); }
-    installedNodesSettleTimeout = setTimeout(function () {
-      installedNodesSettleTimeout = null;
-      refreshInstalledNodesCache();
-    }, INSTALLED_NODES_SETTLE_REFRESH_MS);
-  });
+  RED.events.on("flows:started", function () { nodesRegistryReady = true; });
 
   function buildInstalledNodesContent(list) {
     if (!Array.isArray(list)) { return null; }
@@ -821,20 +809,13 @@ module.exports = function flowPilotRuntime(RED) {
     return content;
   }
 
-  function refreshInstalledNodesCache() {
-    try {
-      const list = RED.nodes.getNodeList();
-      installedNodesCache = buildInstalledNodesContent(list);
-      installedNodesCacheAt = Date.now();
-    } catch (err) { /* leave previous cache value in place */ }
-  }
-
   function describeInstalledNodes() {
     if (!nodesRegistryReady) { return null; }
-    if (Date.now() - installedNodesCacheAt > INSTALLED_NODES_CACHE_TTL_MS) {
-      refreshInstalledNodesCache();
+    try {
+      return buildInstalledNodesContent(RED.nodes.getNodeList());
+    } catch (err) {
+      return null;
     }
-    return installedNodesCache;
   }
 
   // Chat-only: the user's base system prompt plus a freshly-generated
