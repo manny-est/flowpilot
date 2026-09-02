@@ -189,7 +189,37 @@ async function performUpdateCheck() {
   }
 }
 
+// Found live (0.6.1), while verifying the palette-cache fix below: Node-RED
+// loads flowpilot.js TWICE per process start, and always has — package.json
+// declares BOTH "nodes": {"flowpilot": "flowpilot-node-entry.js"} (itself a
+// shim added earlier this same release for a related but distinct bug — see
+// that shim's own comment) AND "plugins": {"flowpilot": "flowpilot.html"}.
+// @node-red/registry/lib/loader.js's loadPluginConfig derives a companion
+// runtime file for every "plugins" entry via the SAME basename-replace
+// pattern (file.replace(/\.[^.]+$/,".js")) that caused the earlier
+// flowpilot.html double-load — "flowpilot.html" -> "flowpilot.js", which
+// genuinely exists, so Node-RED loads and calls it a second time completely
+// independently of the "nodes" entry's shim. Confirmed live: a temporary
+// diagnostic showed flowPilotRuntime executing twice per restart, and a
+// registered RED.events.on("nodes-started", ...) listener firing twice.
+// Unlike the client-side html/script duplication, this one can't be closed
+// by renaming what "plugins" points to without duplicating flowpilot.html's
+// content under a second filename — not worth the maintenance burden for
+// what's fundamentally the same fix in spirit. Guard here instead: since
+// Node.js's require() cache means this file's own top-level code runs
+// exactly once regardless of how many callers require() it, a plain
+// module-level flag is a genuine, reliable one-time-only gate — whichever
+// caller (the "nodes" shim or the "plugins" auto-discovered companion)
+// invokes this function first does the real setup; the second invocation
+// is now a safe no-op instead of a second full, independent server-side
+// instance (its own storage, its own caches, its own event listeners,
+// registering the same httpAdmin routes a second time).
+let flowPilotRuntimeInitialized = false;
+
 module.exports = function flowPilotRuntime(RED) {
+  if (flowPilotRuntimeInitialized) { return; }
+  flowPilotRuntimeInitialized = true;
+
   const storage = createStorage(RED.settings.userDir);
 
   // ---------------------------------------------------------------------
@@ -715,6 +745,33 @@ module.exports = function flowPilotRuntime(RED) {
   let installedNodesRefreshInFlight = false;
   const INSTALLED_NODES_CACHE_TTL_MS = 5 * 60 * 1000;
 
+  // Found live (0.6.1): describeInstalledNodes() used to hand back
+  // installedNodesCache's current value unconditionally — including right
+  // after a restart, before Node-RED's own node registry had actually
+  // finished populating. refreshInstalledNodesCache() kicks off an async
+  // fetch but returns synchronously with whatever was cached before, so the
+  // FIRST request after a restart could snapshot (and then cache for the
+  // full TTL) an incomplete node list if it raced the registry. A model
+  // handed that incomplete list would confidently — and wrongly — tell a
+  // user an installed package isn't available.
+  //
+  // Fix: gate on Node-RED's own "nodes-started" event (fired from
+  // @node-red/runtime/lib/flows/index.js right after flows — and therefore
+  // every node type — have finished loading; confirmed against that source,
+  // not assumed) rather than trusting any fetch that merely succeeded.
+  // Until this fires at least once, describeInstalledNodes() returns null
+  // (no installed-packages system message at all) instead of whatever a
+  // possibly-premature cache holds — "don't know yet" instead of a false
+  // "confirmed absent." The TTL-based refresh below still exists and keeps
+  // firing as a backstop for palette changes after startup (installing a
+  // package while Node-RED is running, or a later deploy), but its results
+  // are only ever surfaced once nodesRegistryReady is true.
+  let nodesRegistryReady = false;
+  RED.events.on("nodes-started", function () {
+    nodesRegistryReady = true;
+    refreshInstalledNodesCache();
+  });
+
   function buildInstalledNodesContent(list) {
     if (!Array.isArray(list)) { return null; }
 
@@ -781,6 +838,7 @@ module.exports = function flowPilotRuntime(RED) {
   }
 
   function describeInstalledNodes() {
+    if (!nodesRegistryReady) { return null; }
     if (Date.now() - installedNodesCacheAt > INSTALLED_NODES_CACHE_TTL_MS) {
       refreshInstalledNodesCache();
     }
