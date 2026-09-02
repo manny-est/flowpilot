@@ -26,7 +26,9 @@ installation, the sidebar UI, and a chapter on every feature.
 - **User-initiated only** — FlowPilot never changes your flow without an
   explicit request.
 - **Complete visibility** — every proposed change is shown as a diff/review
-  before anything is applied.
+  before it's applied; in the opt-in agentic mode (below), each step is
+  gated by its own Proceed/Skip prompt instead, so you're still in control
+  of what actually lands on the canvas.
 - **Undo first** — every change goes through Node-RED's native undo
   (Ctrl+Z), including multi-part changes (insertions + rewires + new nodes)
   as a single step.
@@ -73,6 +75,13 @@ See the [User Guide](USER-GUIDE.md#privacy-and-safety) for the full details.
   Document, with a clear notice when older messages are truncated.
 - **Clarifying questions** — if an instruction is too vague to act on
   safely, FlowPilot asks ONE question instead of guessing.
+- **Agentic mode (opt-in, Settings)** — Generate and Modify can work
+  step by step instead of one big review-then-apply diff: each step
+  (insert, rewire, rename, remove, group) lands on the canvas as it's
+  proposed, gated by its own Proceed/Skip consent prompt for anything
+  beyond the safest node types. The summary you see when a run finishes
+  is built from what the tools actually reported happened, not just the
+  model's own retelling — if a step failed or was skipped, it says so.
 - **Streaming replies** — optional SSE streaming for chat responses.
 - **`/build`** — describe a goal and FlowPilot plans it, proposes a first
   flow, then walks an interactive build → deploy → debug → review → fix loop
