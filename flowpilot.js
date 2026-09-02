@@ -1802,7 +1802,7 @@ module.exports = function flowPilotRuntime(RED) {
                 r, (context && Array.isArray(context.nodes)) ? context.nodes : [], execution
               );
             }
-          : finalizeSimpleGeneration;
+          : function (r) { return finalizeSimpleGeneration(r, execution); };
         const { status, body } = finalize(generated);
         return res.status(status).json(body);
       }
@@ -2455,6 +2455,8 @@ module.exports = function flowPilotRuntime(RED) {
       throw err;
     }
 
+    enforceAgentContract(parsed, auditContext, false);
+
     storage.appendAudit(Object.assign({
       action: auditAction,
       providerName: activeProvider.providerName,
@@ -2471,6 +2473,9 @@ module.exports = function flowPilotRuntime(RED) {
       newNodes: Array.isArray(parsed.newNodes) ? parsed.newNodes : [],
       newWires: Array.isArray(parsed.newWires) ? parsed.newWires : []
     };
+    if (Array.isArray(parsed.strippedFields) && parsed.strippedFields.length) {
+      flowResult.strippedFields = parsed.strippedFields.slice();
+    }
     if (auditAction === "build") {
       const fpUidManifest = buildFpUidManifest(flow);
       if (fpUidManifest.length) { flowResult.fpUidManifest = fpUidManifest; }
