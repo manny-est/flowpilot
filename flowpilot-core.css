@@ -108,6 +108,21 @@
     border-color: rgba(80, 130, 255, 0.35);
 }
 
+/* Subordinate to the deterministic run summary above it (C1): same shape,
+   visibly de-emphasized so a model's free-text recap can't be mistaken for
+   the authoritative per-item outcome. */
+.fp-secondary {
+    padding: 8px 14px;
+    background: transparent;
+    border-style: dashed;
+    font-size: 12px;
+    color: var(--red-ui-secondary-text-color, #888);
+}
+
+.fp-secondary .fp-label {
+    opacity: 0.7;
+}
+
 /* Reasoning / thinking block — shown for models that emit reasoning_content
    (e.g. Nemotron, DeepSeek-R1). Sits above the assistant response bubble.
    Expanded while the model thinks; collapses automatically when content starts. */
