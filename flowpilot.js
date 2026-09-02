@@ -1,4 +1,3 @@
-const http = require("http");
 const https = require("https");
 const path = require("path");
 const PACKAGE_VERSION = require("./package.json").version;
@@ -733,16 +732,15 @@ module.exports = function flowPilotRuntime(RED) {
   // their node types when relevant and otherwise stick to core nodes
   // rather than proposing types that aren't installed.
   //
-  // The node-level RED API passed to this module has no direct registry
-  // lookup (no RED.nodes.getNodeList), so the node list is fetched via a
-  // loopback call to Node-RED's own admin API (the same data the palette
-  // sidebar uses) and cached briefly — the palette rarely changes, and
-  // every chat/generate/document/modify request goes through
-  // buildMessages, so this must stay cheap and synchronous.
+  // Node-RED's node-level RED API does expose the same registry list the
+  // admin GET /nodes route uses: @node-red/runtime/lib/api/nodes.js calls
+  // runtime.nodes.getNodeList(), and @node-red/registry/lib/util.js copies
+  // that method onto RED.nodes for node modules (it's not one of the six
+  // excluded names). Use that in-process API directly here: same data, no
+  // loopback HTTP request, no adminAuth 401, still cheap and synchronous.
   // ---------------------------------------------------------------------
   let installedNodesCache = null;
   let installedNodesCacheAt = 0;
-  let installedNodesRefreshInFlight = false;
   const INSTALLED_NODES_CACHE_TTL_MS = 5 * 60 * 1000;
 
   // Found live (0.6.1): describeInstalledNodes() used to hand back
@@ -810,31 +808,11 @@ module.exports = function flowPilotRuntime(RED) {
   }
 
   function refreshInstalledNodesCache() {
-    if (installedNodesRefreshInFlight) { return; }
-    installedNodesRefreshInFlight = true;
-
-    const root = String(RED.settings.httpAdminRoot || "/").replace(/\/+$/, "");
-    const req = http.get({
-      host: "127.0.0.1",
-      port: RED.settings.uiPort,
-      path: root + "/nodes",
-      headers: { Accept: "application/json" },
-      timeout: 5000
-    }, function (res) {
-      const chunks = [];
-      res.on("data", function (chunk) { chunks.push(chunk); });
-      res.on("end", function () {
-        installedNodesRefreshInFlight = false;
-        if (res.statusCode !== 200) { return; }
-        try {
-          const list = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-          installedNodesCache = buildInstalledNodesContent(list);
-          installedNodesCacheAt = Date.now();
-        } catch (err) { /* leave previous cache value in place */ }
-      });
-    });
-    req.on("error", function () { installedNodesRefreshInFlight = false; });
-    req.on("timeout", function () { req.destroy(); installedNodesRefreshInFlight = false; });
+    try {
+      const list = RED.nodes.getNodeList();
+      installedNodesCache = buildInstalledNodesContent(list);
+      installedNodesCacheAt = Date.now();
+    } catch (err) { /* leave previous cache value in place */ }
   }
 
   function describeInstalledNodes() {
