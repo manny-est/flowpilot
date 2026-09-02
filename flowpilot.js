@@ -1,5 +1,6 @@
 const https = require("https");
 const path = require("path");
+const nodeRedRegistry = require("@node-red/registry");
 const PACKAGE_VERSION = require("./package.json").version;
 const createStorage = require("./lib/storage");
 const openaiProvider = require("./lib/provider-openai-compatible");
@@ -742,11 +743,18 @@ module.exports = function flowPilotRuntime(RED) {
   // their node types when relevant and otherwise stick to core nodes
   // rather than proposing types that aren't installed.
   //
-  // Node-RED's node-level RED API exposes the same registry list the
-  // admin GET /nodes route uses: @node-red/runtime/lib/api/nodes.js calls
-  // runtime.nodes.getNodeList(), and @node-red/registry/lib/util.js copies
-  // that method onto RED.nodes for node modules (it's not one of the six
-  // excluded names). Call it fresh on every request — no caching at all.
+  // Node-RED's admin GET /nodes route ultimately reads the runtime registry's
+  // getNodeList(). A previous fix tried to reach that through RED.nodes, but
+  // Node-RED 5's @node-red/registry/lib/util.js createNodeApi only copies a
+  // small allow-list onto the node-level RED API (createNode/getNode/
+  // eachNode/addCredentials/getCredentials/deleteCredentials) —
+  // getNodeList is NOT one of them. Confirmed live: RED.nodes.getNodeList is
+  // undefined in this runtime, so describeInstalledNodes() quietly returned
+  // null from its catch on every request even after flows:started had fired.
+  //
+  // Use the registry module directly instead. FlowPilot already runs inside
+  // the same Node-RED process, and @node-red/registry is the exact source
+  // runtime.nodes.getNodeList() delegates to.
   //
   // Found live (0.6.1): this WAS a cached snapshot, through three
   // successive designs (a naive restart-seeded TTL timer; a
@@ -812,7 +820,7 @@ module.exports = function flowPilotRuntime(RED) {
   function describeInstalledNodes() {
     if (!nodesRegistryReady) { return null; }
     try {
-      return buildInstalledNodesContent(RED.nodes.getNodeList());
+      return buildInstalledNodesContent(nodeRedRegistry.getNodeList());
     } catch (err) {
       return null;
     }
