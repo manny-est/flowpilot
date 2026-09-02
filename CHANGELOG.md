@@ -2,9 +2,9 @@
 
 All notable changes to FlowPilot are documented here.
 
-## [0.6.0-beta.1] - 2026-08-31
+## [0.6.0] - 2026-09-01
 
-Prerelease — published to the `beta` npm tag only. `latest` stays on `0.5.2`.
+Promoted from `0.6.0-beta.1` to the stable `latest` npm tag.
 
 ### Added
 - **Agentic WRITE-tool loop for Modify** (behind the `enableAgentWrite`
