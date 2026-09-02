@@ -7,29 +7,56 @@ All notable changes to FlowPilot are documented here.
 Promoted from `0.6.0-beta.1` to the stable `latest` npm tag.
 
 ### Added
-- **Agentic WRITE-tool loop for Modify** (behind the `enableAgentWrite`
-  setting, default off): step-by-step tool calls against the live flow
-  (`apply_step`, `remove_step`, `rename_node`, `group_nodes`), each
-  write-gated by a per-step consent prompt (Proceed / Skip this step) before
-  it touches the canvas. Multi-item requests are tracked and executed as
-  separate, individually-verified steps rather than one all-or-nothing
-  envelope; an injected mid-run failure (e.g. a referenced node no longer
-  exists) fails only that item, with the rest completing normally.
+- **Agentic WRITE-tool loop for Modify and Generate** (behind the
+  `enableAgentWrite` setting, default off): step-by-step tool calls
+  against the live flow (`apply_step`, `remove_step`, `rename_node`,
+  `group_nodes`), each write-gated by a per-step consent prompt (Proceed
+  / Skip this step) before it touches the canvas. Multi-item requests are
+  tracked and executed as separate, individually-verified steps rather
+  than one all-or-nothing envelope; an injected mid-run failure (e.g. a
+  referenced node no longer exists) fails only that item, with the rest
+  completing normally. Generate joined the same agentic runtime Modify
+  already used, closing the last place a mutation could land through the
+  older, less-verified classic JSON path while write-tool mode is on.
 - **`ask_user` clarifying-question tool**: an agent-strategy turn can pause
   mid-run to ask a single focused question (with optional quick-reply
   buttons) instead of guessing, and resumes exactly where it left off once
   answered.
+- **Deterministic run summaries**: when a Modify or Generate run actually
+  applied WRITE-tool steps, the per-item outcome you see (✓ applied and
+  verified / ✗ failed, with why) now comes straight from what the tools
+  actually reported — not from the model's own retelling. The model's own
+  wrap-up explanation still shows, underneath, clearly secondary — useful
+  context, never the thing you have to trust to know what really
+  happened.
 - **Contract-exclusivity enforcement**: a server-side safety net
   (`enforceAgentContract`) strips any classic-style mutation fields
-  (`changes`/`newNodes`/`newWires`/`removeNodes`/`newGroups`) that
+  (`changes`/`newNodes`/`newWires`/`removeNodes`/`newGroups`/`flow`) that
   accidentally appear on an agent-strategy turn with no tool calls, before
   they ever reach the client — the two mutation paths (classic envelope vs.
-  agentic WRITE tools) stay mutually exclusive per turn.
+  agentic WRITE tools) stay mutually exclusive per turn, for every mode
+  that can run agentically.
 - **Run identity and honest interruption**: agent-strategy runs now carry a
   stable run/operation id so a duplicate tool-call delivery (a retry, or the
   model repeating itself) is applied at most once; a run that's stopped or
   hits its step/token ceiling reports an honest "interrupted after N steps"
-  instead of silently truncating.
+  instead of silently truncating. That step-by-step record is also now
+  visible to the server (previously client-side only), the foundation for
+  the deterministic run summaries above.
+
+### Fixed
+- **The FlowPilot sidebar's entire client script was loading twice on
+  every single editor page load** — a packaging issue present since the
+  plugin's first release, only now found and fixed. In practice this
+  meant a page reload silently lost the current conversation (a second,
+  redundant script execution would stomp the first one's restored state)
+  and, more subtly, any other one-time setup code in the client ran
+  twice per load. Reloading the Node-RED editor now correctly picks the
+  conversation back up where you left off.
+- Anthropic (Claude) responses now get the exact same deterministic
+  run-summary and contract-exclusivity treatment as every other
+  provider — verified directly against Claude Sonnet, not just the
+  OpenAI-compatible path.
 
 ### Security
 - **API keys are now write-only over HTTP** (previously exposed on
@@ -59,6 +86,59 @@ Promoted from `0.6.0-beta.1` to the stable `latest` npm tag.
   across the classic and agentic Modify paths. Full history in
   `dev-docs/current/Phase10-Build-Progress.md` and
   `dev-docs/current/Phase10-Gate-Closeout-Final.md`.
+
+## [0.5.2] - 2026-08-04
+
+This release continues the 0.5.x line. Phase 10's agentic Modify redesign
+(WRITE-tool loop, per-call consent gates, `ask_user`) is developed
+separately and is not included here — it ships under its own beta line
+until it's ready to replace this one.
+
+### Added
+- **Anthropic provider support**: FlowPilot can now talk directly to the
+  Anthropic API (Claude models) alongside any OpenAI-compatible endpoint.
+  A new Provider Type dropdown in Settings switches between them; message
+  format, tool-call translation, and streaming (SSE) are handled
+  transparently by a dedicated adapter. Leave Base URL blank to use
+  `api.anthropic.com`.
+- **Reasoning model support**: FlowPilot detects reasoning models
+  (Nemotron, DeepSeek, QwQ, and any model returning `reasoning_content` or
+  `<think>` blocks) and shows a live collapsing "Thinking…" block during
+  streaming, or a pre-collapsed one on the agent-loop path.
+- **Auto-preflight on model change**: switching models and sending a
+  message silently probes capabilities first — no more manual "Test
+  Provider" click after every model swap.
+- **`/refresh` command**: re-renders the message panel from the in-memory
+  record store without losing conversation history — restores interactive
+  Apply buttons and review panels that went stale after a long session.
+- **Build loop — consent gates for side-effecting steps, checkpoint
+  questions, context-aware start from a selection, and an explicit
+  done/fail confirmation** instead of silently stopping.
+- **Modify — todo/plan checklist rendering**: multi-item Modify requests
+  now show a checklist that resolves as verification confirms each item
+  landed, instead of a single opaque pass/fail.
+- **Config node support**: config nodes (MQTT brokers, TLS configs, etc.)
+  are now exposed in context and can be created/connected by Modify.
+- **Server-side validator/repair layer**: malformed model output is
+  caught and, where possible, automatically repaired before it reaches
+  the canvas.
+
+### Fixed
+- Redaction round-trip poisoning, token-credential redaction gaps, and
+  several redaction echo/false-positive fixes across Modify and the build
+  loop's review step.
+- Group data corruption from a stray `changes` patch touching a group's
+  membership array directly; mixed-membership group create/extend
+  corruption.
+- Invalid port wiring (wiring to/from a port index that doesn't exist)
+  now guarded instead of silently applied.
+- New-node insertion collision avoidance tuned for faster, more reliable
+  separation on dense flows.
+- Several build-loop review false positives (metadata-field echoes,
+  debug/function/mqtt node misclassification, stale in-progress status
+  read as a real error).
+- Partial id-validation no longer discards an entire valid Modify batch
+  over one bad node id.
 
 ## [0.5.1] - 2026-07-24
 
