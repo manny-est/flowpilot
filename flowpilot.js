@@ -87,6 +87,8 @@ const API_KEY_UNCHANGED = createStorage.API_KEY_UNCHANGED;
 const UPDATE_CHECK_URL = "https://registry.npmjs.org/-/package/@manny-est/node-red-flowpilot/dist-tags";
 const UPDATE_CHECK_SUCCESS_TTL_MS = 6 * 60 * 60 * 1000;
 const UPDATE_CHECK_FAILURE_TTL_MS = 15 * 60 * 1000;
+const RUN_EVENTS_MAX_STORED = 50;
+const runEventsStore = new Map();
 let updateCheckCache = null;
 
 function parseVersion(v) {
@@ -1387,6 +1389,11 @@ module.exports = function flowPilotRuntime(RED) {
     }
   });
 
+  RED.httpAdmin.get("/flowpilot/run-events/:runId", RED.auth.needsPermission("settings.read"), function (req, res) {
+    const runId = req.params.runId;
+    res.json({ runId: runId, events: runEventsStore.get(runId) || [] });
+  });
+
   // ---- Pop-out window (Phase 8.5 C1, v1 review-only) -------------------
   // Serves the shared renderer (flowpilot-core.js, the same script
   // flowpilot.html loads for the sidebar) plus its stylesheet and the
@@ -1714,6 +1721,17 @@ module.exports = function flowPilotRuntime(RED) {
     const activeProvider = storage.getActiveProvider(settings);
     const execution = requireExecutionContract(req, res, settings, activeProvider);
     if (!execution) { return; }
+    if (Array.isArray(req.body.events) && typeof execution.runId === "string" && execution.runId) {
+      runEventsStore.set(execution.runId, req.body.events);
+      if (runEventsStore.size > RUN_EVENTS_MAX_STORED) {
+        runEventsStore.delete(runEventsStore.keys().next().value);
+      }
+      maybeLogDebugEvent("run_events", {
+        mode: req.body.mode || "chat",
+        runId: execution.runId,
+        events: req.body.events
+      });
+    }
     if (!requireConfirmedProvider(res, activeProvider)) { return; }
 
     const messages = req.body && req.body.messages;
