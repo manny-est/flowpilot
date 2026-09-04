@@ -11,6 +11,7 @@ const NR_USER = process.env.NR_USER || "fp-test";
 const NR_PASS = process.env.NR_PASS || "Flowpilot!";
 const DELAY_MS = parseInt(process.env.DELAY_MS || "2000", 10);
 const OUTPUT_DIR = process.env.OUTPUT_DIR || __dirname;
+const RESULTS_DIR = path.join(__dirname, "results");
 const LABEL = process.env.RUN_LABEL || "routing";
 const AGENT_LOOP_MAX_STEPS = parseInt(process.env.AGENT_LOOP_MAX_STEPS || "8", 10);
 
@@ -297,12 +298,6 @@ function classify(body) {
   if (!message) {
     return { kind: "error", detail: body };
   }
-
-  const startsWithQuestion = /^(what|which|where|when|why|how|can you|could you|would you|do you|should I)\b/i.test(message);
-  const asksQuestion = /\?\s*$/.test(message) || /(?:clarify|which|what|where|when|how|could you tell me|do you mean)/i.test(message);
-  if (startsWithQuestion || asksQuestion) {
-    return { kind: "clarify", detail: message };
-  }
   return { kind: "answer", detail: message };
 }
 
@@ -382,15 +377,17 @@ async function runCase(testCase, token) {
     }, token);
     const resolved = await resolveAgentLoop(testCase, token, first, conversationId);
     const actual = classify(resolved.body);
+    const kind = resolved.body && resolved.body.loopExhausted ? "loop_exhausted" : actual.kind;
     return {
       id: testCase.id,
       expected: testCase.expected,
-      actual: actual.kind,
-      pass: actual.kind === testCase.expected,
+      actual: kind,
+      pass: kind === testCase.expected,
       status: resolved.status,
       note: testCase.note,
       durationMs: Date.now() - started,
       loopSteps: resolved.loopSteps,
+      loopExhausted: !!(resolved.body && resolved.body.loopExhausted),
       detail: actual.detail
     };
   } catch (err) {
@@ -467,8 +464,16 @@ async function main() {
     OUTPUT_DIR,
     "routing-results-" + LABEL + "-" + new Date().toISOString().replace(/[:.]/g, "-") + ".json"
   );
+  fs.mkdirSync(RESULTS_DIR, { recursive: true });
   fs.writeFileSync(outFile, JSON.stringify(payload, null, 2) + "\n", "utf8");
+  const durableFile = path.join(RESULTS_DIR, path.basename(outFile));
+  if (path.resolve(durableFile) !== path.resolve(outFile)) {
+    fs.copyFileSync(outFile, durableFile);
+  }
   console.log("Results written to " + outFile);
+  if (path.resolve(durableFile) !== path.resolve(outFile)) {
+    console.log("Results mirrored to " + durableFile);
+  }
 }
 
 main().catch(function (err) {
