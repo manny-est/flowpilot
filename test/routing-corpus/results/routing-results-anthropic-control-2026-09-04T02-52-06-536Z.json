@@ -1,0 +1,702 @@
+{
+  "label": "anthropic-control",
+  "generatedAt": "2026-09-04T02:52:06.536Z",
+  "nrUrl": "http://192.168.1.220:1850",
+  "summary": {
+    "total": 42,
+    "passed": 21,
+    "accuracy": 50,
+    "falsePositives": 0,
+    "falsePositiveRate": 0
+  },
+  "results": [
+    {
+      "id": "answer-how-add-switch",
+      "expected": "answer",
+      "actual": "answer",
+      "pass": true,
+      "status": 200,
+      "note": "Adversarial near-miss: asks for advice, not an action.",
+      "durationMs": 9395,
+      "loopSteps": 0,
+      "loopExhausted": false,
+      "detail": "To add a switch node after an inject node in Node-RED:\n\n1. **Drag a switch node from the palette** (under \"function\") onto the canvas\n2. **Wire the inject node's output** to the switch node's input by clicking and dragging from the inject node's output port to the switch node's input port\n3. **Configure the switch node** by double-clicking it:\n   - Choose what property to test (usually `msg.payload`)\n   - Add rules for each branch you want (e.g., \"== true\", \"> 10\", \"contains xyz\")\n   - Each rule creates a separate output port on the switch node\n4. **Wire each output** from the switch node to the appropriate downstream nodes based on your logic\n\nFor example, if you want to route messages based on a value:\n- Rule 1: `msg.payload > 50` → output 1\n- Rule 2: `msg.payload <= 50` → output 2\n\nThen wire output 1 to one set of nodes and output 2 to another.\n\nIf you'd like help adding a switch node to a specific flow you're working on, I can inspect your current setup and propose the exact changes needed!"
+    },
+    {
+      "id": "answer-explain-payload",
+      "expected": "answer",
+      "actual": "answer",
+      "pass": true,
+      "status": 200,
+      "note": "Plain factual question.",
+      "durationMs": 10568,
+      "loopSteps": 0,
+      "loopExhausted": false,
+      "detail": "In Node-RED, `msg.payload` is the **primary property** of the message object that flows between nodes. Here's what you need to know:\n\n## The Message Object\nEvery time data moves through a Node-RED flow, it travels as a JavaScript object called `msg`. This object can have many properties, but `msg.payload` is the most important one.\n\n## What msg.payload Contains\n`msg.payload` typically holds the **main data** being passed between nodes:\n- From an **inject node**: could be a timestamp, string, number, or JSON object you configured\n- From an **HTTP request node**: the response body from the API call\n- From an **MQTT node**: the message received from the MQTT broker\n- From a **function node**: whatever data you assign to it in your code\n\n## Why It Matters\nMost nodes in Node-RED automatically:\n- **Read** from `msg.payload` as their input\n- **Write** to `msg.payload` as their output\n\nFor example:\n- A **debug node** displays `msg.payload` by default\n- A **change node** often modifies `msg.payload`\n- A **switch node** typically routes based on `msg.payload` values\n\n## Other Message Properties\nWhile `msg.payload` is the star, the `msg` object can carry other useful properties:\n- `msg.topic` - often used for MQTT topics or to identify message sources\n- `msg.statusCode` - HTTP response codes\n- `msg.headers` - HTTP headers\n- Any custom properties you add in function or change nodes\n\nThink of `msg.payload` as the \"main cargo\" being transported through your flow, while other `msg` properties are like shipping labels and metadata attached to that cargo."
+    },
+    {
+      "id": "answer-review-if-needed",
+      "expected": "answer",
+      "actual": "answer",
+      "pass": true,
+      "status": 200,
+      "note": "Hypothetical explanation, not a request to modify.",
+      "durationMs": 8033,
+      "loopSteps": 2,
+      "loopExhausted": false,
+      "detail": "You have quite a few inject nodes! Which one are you asking about? Could you either:\n- Select the inject node you're interested in, or\n- Tell me its name (e.g., \"Get Dad Joke\", \"Every 10s\", \"Morning Message\", etc.)?\n\nOnce I know which inject node you mean, I can tell you exactly what would change if you set its repeat interval to 5 seconds."
+    },
+    {
+      "id": "answer-debug-advice",
+      "expected": "answer",
+      "actual": "answer",
+      "pass": true,
+      "status": 200,
+      "note": "Compare concepts only.",
+      "durationMs": 11208,
+      "loopSteps": 1,
+      "loopExhausted": false,
+      "detail": "Since nothing is selected, could you tell me a bit more about the context? Are you looking at a specific node or part of your flow? In the meantime, here's the key difference:\n\n**Debug node** is best when you want to:\n- **Inspect message payloads** in detail (the full `msg` object or specific properties)\n- See the actual data flowing through your flow in real-time\n- Troubleshoot what values are being passed between nodes\n- View output in the Debug sidebar with timestamps and message details\n- Temporarily monitor data during development\n\n**Status node** is best when you want to:\n- **React to node status changes** programmatically (like when an HTTP request fails, a file write completes, or a connection state changes)\n- Build error handling or monitoring logic that triggers other actions\n- Capture status events (success, error, connecting, etc.) from other nodes\n- Create custom dashboards or notifications based on node health\n\n**In short:** Use a **debug node** to *see* what's happening (passive observation). Use a **status node** to *do something* when a node's state changes (active response).\n\nIf you let me know which node or flow you're considering, I can give you more specific advice about which would work better for your use case!"
+    },
+    {
+      "id": "answer-build-loop-question",
+      "expected": "answer",
+      "actual": "answer",
+      "pass": true,
+      "status": 200,
+      "note": "Question about workflow, not execution.",
+      "durationMs": 8237,
+      "loopSteps": 0,
+      "loopExhausted": false,
+      "detail": "Great question! Here's when to use each mode:\n\n## **Modify Mode**\nUse this when you want to **change existing flows** in your workspace:\n- Add, remove, or reconfigure nodes in a flow\n- Rewire connections between nodes\n- Update node properties or settings\n- Refactor or reorganize existing logic\n- Fix bugs in flows that are already on the canvas\n\nModify mode works with what's already there and makes surgical changes to your existing graph.\n\n## **Build Mode**\nUse this when you want to **create something new from scratch**:\n- Generate a complete new flow for a specific use case\n- Create a new subflow definition\n- Build a standalone feature that doesn't yet exist\n- Prototype a new integration or workflow\n- Start a fresh implementation of an idea\n\nBuild mode is about creation rather than alteration—it gives you a new set of nodes rather than editing what you already have.\n\n---\n\n**The key distinction**: If you're pointing at something that already exists and saying \"change this,\" that's Modify. If you're saying \"make me a new flow that does X,\" that's Build.\n\nIn practice, you'll often use Build to create something new, then switch to Modify later to tune or extend it as your requirements evolve."
+    },
+    {
+      "id": "answer-document-near-miss",
+      "expected": "answer",
+      "actual": "answer",
+      "pass": true,
+      "status": 200,
+      "note": "Advice about documentation, not a request to create it.",
+      "durationMs": 10798,
+      "loopSteps": 0,
+      "loopExhausted": false,
+      "detail": "Great question! Here are the best practices for documenting a Node-RED flow for another developer:\n\n## Built-in Documentation Features\n\n1. **Node names** – Give every node a clear, descriptive name that explains its purpose (e.g., \"Parse customer JSON\" instead of \"function 1\")\n\n2. **Node descriptions** – Use the Description tab in each node's edit dialog to add detailed notes about:\n   - What the node does\n   - Expected input format\n   - What it outputs\n   - Any assumptions or edge cases\n   - Links to external APIs or documentation\n\n3. **Comment nodes** – Add comment nodes throughout the flow to:\n   - Explain sections or logical groupings\n   - Document the overall flow purpose at the top\n   - Call out tricky logic or workarounds\n   - Note TODOs or known issues\n\n4. **Group nodes** – Organize related nodes into groups with meaningful labels to show logical boundaries\n\n5. **Link nodes** – When flows span multiple tabs, use link nodes with clear names to show the connections\n\n## Additional Documentation\n\n6. **Subflows** – Extract reusable logic into subflows with good names and descriptions\n\n7. **Environment variables** – Document any required environment variables in a comment at the flow start\n\n8. **External README** – For complex projects, maintain a separate README that covers:\n   - Overall architecture\n   - Required node packages\n   - Configuration steps\n   - Deployment instructions\n\n## On-Canvas Documentation\n\nIf you want me to help add **on-canvas documentation** to a specific flow (using comment nodes, better naming, or group labels), I can do that. Just let me know which flow or nodes you'd like to document, and I'll inspect it and add helpful annotations.\n\nWould you like help documenting a specific flow you're working on?"
+    },
+    {
+      "id": "answer-safety-near-miss",
+      "expected": "answer",
+      "actual": "answer",
+      "pass": true,
+      "status": 200,
+      "note": "Opinion/advice only.",
+      "durationMs": 15820,
+      "loopSteps": 0,
+      "loopExhausted": false,
+      "detail": "It's not inherently a **bad** idea, but it does come with **significant security and reliability risks** that you need to carefully consider:\n\n## Security concerns\n- **Command injection**: If any part of the command comes from user input, external APIs, or device states, an attacker could potentially execute arbitrary commands on your system.\n- **Privilege escalation**: The exec node runs with the same permissions as Node-RED itself. If Node-RED runs as root or a privileged user, that's a major risk.\n- **Attack surface**: Home automation systems are often exposed to the internet (via webhooks, voice assistants, etc.), making them attractive targets.\n\n## Reliability concerns\n- **Blocking behavior**: Exec nodes can block Node-RED's event loop if commands take too long or hang, potentially affecting your entire automation system.\n- **Error handling**: Shell commands can fail in unpredictable ways (missing dependencies, permission issues, etc.), and these failures may not be obvious until something breaks at 3 AM.\n- **Platform dependencies**: Commands that work on Linux may not work on Windows or macOS, making your flow less portable.\n\n## When it might be acceptable\n- **Isolated, hardcoded commands**: If you're running a specific, fixed command with no external input (e.g., `vcgencmd measure_temp` on a Raspberry Pi), the risk is much lower.\n- **Non-critical automations**: For things like logging or optional features where failure won't leave you locked out or in the dark.\n- **Sandboxed environment**: If Node-RED runs in a container or VM with limited permissions and network isolation.\n\n## Better alternatives\n- **Native Node-RED nodes**: Many home automation platforms (Home Assistant, MQTT, Zigbee, Z-Wave) have dedicated nodes that are safer and more reliable.\n- **HTTP/API calls**: Most modern devices and services offer REST APIs that are easier to secure and debug.\n- **Dedicated integration nodes**: For specific tasks (GPIO control, system monitoring, etc.), look for purpose-built nodes in the palette.\n\n**Bottom line**: If you can achieve your goal without exec, do that. If you must use exec, treat it like you're opening a door to your system—validate everything, run with minimal privileges, and have good monitoring in place.\n\nWhat specific task were you considering using exec for? There might be a safer alternative."
+    },
+    {
+      "id": "generate-basic-flow",
+      "expected": "generate",
+      "actual": "generate",
+      "pass": true,
+      "status": 200,
+      "note": "Direct new-flow request.",
+      "durationMs": 4799,
+      "loopSteps": 0,
+      "loopExhausted": false,
+      "detail": {
+        "action": "generate",
+        "summary": "I will create a simple flow consisting of an inject node wired to a debug node. The inject node will trigger manually or on a schedule, and the debug node will display the output in the Debug sidebar.",
+        "targets": [],
+        "plan_items": [
+          "Create an inject node with default timestamp payload",
+          "Create a debug node to show msg.payload",
+          "Wire the inject node output to the debug node input"
+        ],
+        "deploy_verify": false,
+        "confidence": "high",
+        "needs_selection": false
+      }
+    },
+    {
+      "id": "generate-http-poll",
+      "expected": "generate",
+      "actual": "generate",
+      "pass": true,
+      "status": 200,
+      "note": "Standalone flow creation.",
+      "durationMs": 5792,
+      "loopSteps": 0,
+      "loopExhausted": false,
+      "detail": {
+        "action": "generate",
+        "summary": "I will create a new flow with three nodes: an inject node configured to trigger every minute, an HTTP request node to poll your endpoint, and a debug node to log the response. The inject node will fire automatically every 60 seconds, triggering the HTTP request, and the result will be displayed in the Debug sidebar.",
+        "targets": [],
+        "plan_items": [
+          "Add an inject node configured to repeat every 1 minute",
+          "Add an HTTP request node to call the endpoint",
+          "Add a debug node to log the response",
+          "Wire inject → HTTP request → debug"
+        ],
+        "deploy_verify": false,
+        "confidence": "high",
+        "needs_selection": false
+      }
+    },
+    {
+      "id": "generate-mqtt",
+      "expected": "generate",
+      "actual": "generate",
+      "pass": true,
+      "status": 200,
+      "note": "New feature with clear creation goal.",
+      "durationMs": 5251,
+      "loopSteps": 0,
+      "loopExhausted": false,
+      "detail": {
+        "action": "generate",
+        "summary": "I will create a new flow with an MQTT input node subscribed to \"sensors/temperature\", a JSON parser node to parse the incoming payload, and a debug node to display the parsed data in the Debug sidebar.",
+        "targets": [],
+        "plan_items": [
+          "Create a new flow tab",
+          "Add an MQTT in node configured to subscribe to sensors/temperature",
+          "Add a JSON node to parse the incoming payload",
+          "Add a debug node to output the parsed data",
+          "Wire the nodes together: MQTT in → JSON → Debug"
+        ],
+        "deploy_verify": false,
+        "confidence": "high",
+        "needs_selection": false
+      }
+    },
+    {
+      "id": "generate-transform",
+      "expected": "generate",
+      "actual": "generate",
+      "pass": true,
+      "status": 200,
+      "note": "Specific creation goal.",
+      "durationMs": 5536,
+      "loopSteps": 0,
+      "loopExhausted": false,
+      "detail": {
+        "action": "generate",
+        "summary": "I will create a simple flow with an inject node to trigger the flow, a function node that doubles msg.payload, and a debug node to display the result in the Debug sidebar.",
+        "targets": [],
+        "plan_items": [
+          "Create an inject node with a numeric payload",
+          "Add a function node that doubles msg.payload (msg.payload = msg.payload * 2)",
+          "Add a debug node to output the result",
+          "Wire inject → function → debug"
+        ],
+        "deploy_verify": false,
+        "confidence": "high",
+        "needs_selection": false
+      }
+    },
+    {
+      "id": "generate-permission-bait",
+      "expected": "generate",
+      "actual": "generate",
+      "pass": true,
+      "status": 200,
+      "note": "Permission phrasing should still propose generate.",
+      "durationMs": 4769,
+      "loopSteps": 0,
+      "loopExhausted": false,
+      "detail": {
+        "action": "generate",
+        "summary": "I will create a simple test flow with three nodes: an inject node to trigger the flow, a change node to modify the message payload, and a debug node to display the output in the Debug sidebar.",
+        "targets": [],
+        "plan_items": [
+          "Create an inject node configured to trigger manually or on a timestamp",
+          "Add a change node to set or modify msg.payload",
+          "Add a debug node to output the result",
+          "Wire the nodes together: inject → change → debug"
+        ],
+        "deploy_verify": false,
+        "confidence": "high",
+        "needs_selection": false
+      }
+    },
+    {
+      "id": "generate-webhook",
+      "expected": "generate",
+      "actual": "generate",
+      "pass": true,
+      "status": 200,
+      "note": "New flow with clear scope.",
+      "durationMs": 6589,
+      "loopSteps": 0,
+      "loopExhausted": false,
+      "detail": {
+        "action": "generate",
+        "summary": "I will create a new webhook flow with an HTTP In node configured to accept POST requests at a specified URL path, and an HTTP Response node that echoes back the received payload. This creates a simple echo endpoint that returns whatever JSON or data is sent to it.",
+        "targets": [],
+        "plan_items": [
+          "Create an HTTP In node configured for POST method",
+          "Add an HTTP Response node to return the payload",
+          "Wire the HTTP In directly to HTTP Response to echo the payload",
+          "Set appropriate status code (200) for successful response"
+        ],
+        "deploy_verify": false,
+        "confidence": "high",
+        "needs_selection": false
+      }
+    },
+    {
+      "id": "generate-dashboard",
+      "expected": "generate",
+      "actual": "generate",
+      "pass": true,
+      "status": 200,
+      "note": "Standalone automation.",
+      "durationMs": 6703,
+      "loopSteps": 0,
+      "loopExhausted": false,
+      "detail": {
+        "action": "generate",
+        "summary": "I will create a new flow that reads a temperature value (using an inject node to simulate the reading), checks if it exceeds 80 using a switch node, and publishes a warning message (using a debug node to display the warning). The flow will include: an inject node to provide temperature values, a switch node to test if temperature > 80, and a debug node to output the warning when the threshold is exceeded.",
+        "targets": [],
+        "plan_items": [
+          "Create an inject node to simulate temperature readings",
+          "Add a switch node to check if temperature > 80",
+          "Add a debug node on the 'over 80' output to publish the warning",
+          "Wire the nodes together: inject → switch → debug",
+          "Configure the switch rule to route messages where msg.payload > 80"
+        ],
+        "confidence": "high",
+        "deploy_verify": false,
+        "needs_selection": false
+      }
+    },
+    {
+      "id": "modify-rename-selected",
+      "expected": "modify",
+      "actual": "answer",
+      "pass": false,
+      "status": 200,
+      "note": "Specific existing-node change.",
+      "durationMs": 6137,
+      "loopSteps": 1,
+      "loopExhausted": false,
+      "detail": "It looks like there's no node currently selected. To rename an inject node to \"Timer\", you'll need to:\n\n1. First select the inject node you want to rename in the Node-RED editor\n2. Then I can help you rename it\n\nCould you please select the inject node you'd like to rename?"
+    },
+    {
+      "id": "modify-add-debug-after-current",
+      "expected": "modify",
+      "actual": "answer",
+      "pass": false,
+      "status": 200,
+      "note": "Specific change to existing graph.",
+      "durationMs": 8599,
+      "loopSteps": 2,
+      "loopExhausted": false,
+      "detail": "I found multiple HTTP request nodes in your flows. Since you said \"the current HTTP request node,\" could you clarify which one you're referring to? You can:\n\n1. Select the specific HTTP request node in the editor and I'll work with that selection, or\n2. Tell me which one by name (for example, \"Dad Joke API\", \"Fetch Weather\", \"GET example.com\", etc.)\n\nWhich HTTP request node would you like me to add the debug node after?"
+    },
+    {
+      "id": "modify-rewire",
+      "expected": "modify",
+      "actual": "clarify",
+      "pass": false,
+      "status": 200,
+      "note": "Existing-node rewiring.",
+      "durationMs": 8550,
+      "loopSteps": 2,
+      "loopExhausted": false,
+      "detail": {
+        "question": "Which switch node would you like to rewire: \"Check length\" or \"Even/Odd Router\"?",
+        "options": [
+          "Check length",
+          "Even/Odd Router"
+        ]
+      }
+    },
+    {
+      "id": "modify-remove-unused",
+      "expected": "modify",
+      "actual": "answer",
+      "pass": false,
+      "status": 200,
+      "note": "Concrete deletion request.",
+      "durationMs": 38387,
+      "loopSteps": 5,
+      "loopExhausted": false,
+      "detail": "I found many debug nodes with no incoming connections. Since you mentioned \"the unused debug node\" (singular), could you clarify which specific debug node you'd like removed? Here are the unused debug nodes I found:\n\n**Flow 1 has many unused debug nodes:**\n- \"Joke Output\" (2f9ef6dac0d9e064)\n- \"Weather Report\" (fc48ef3218c1dc5e)\n- \"RGB Log\" (d6a282b4bc6a3be9)\n- \"Output\" (e8f83a196803a194)\n- \"Morning Summary\" (44fd7f2fe34482be)\n- \"FP-UID004\" (b3d49ccd6f872d8e)\n- \"FP-UID001\" (ece863f106272f90)\n- \"FP-UID002\" (b50bb0b33ff5f78a)\n- \"Joke output\" (c44741a4d0e1cab7)\n- \"Dad Joke\" (2016a157aaa7ba04)\n- \"Debug\" (0b4bcf3706dc58de)\n- \"Weather Report\" (15c133f44e86a674)\n- \"Debug payload\" (442ead1552bff2d8)\n- Two \"Debug\" nodes at the same position (13211420d85e3569 and f482f81788648080)\n- \"Weather Log\" (ba02076e8316835e)\n- \"FP-UID001\" (dddfba4297e56b77)\n- \"Test Debug\" (9c2e31276fb560c2)\n- \"Cat-Fact Summary\" (dffa33021609f228)\n- \"Joke Output\" (fec164ede0b63835)\n\nCould you either select the specific debug node you want removed, or let me know which one by name or location?"
+    },
+    {
+      "id": "modify-function-code",
+      "expected": "modify",
+      "actual": "answer",
+      "pass": false,
+      "status": 200,
+      "note": "Property/code change.",
+      "durationMs": 4785,
+      "loopSteps": 1,
+      "loopExhausted": false,
+      "detail": "Since nothing is currently selected, I need you to select the function node you want to update first. Once you've selected it in the Node-RED editor, I'll be able to modify it to set `msg.topic = \"alerts\"` before returning.\n\nCould you please select the function node you'd like to update?"
+    },
+    {
+      "id": "modify-insert-delay",
+      "expected": "modify",
+      "actual": "clarify",
+      "pass": false,
+      "status": 200,
+      "note": "Existing flow modification.",
+      "durationMs": 5300,
+      "loopSteps": 1,
+      "loopExhausted": false,
+      "detail": {
+        "question": "Which function node should I insert the delay after? You can select it in the editor, or tell me its name so I can find it."
+      }
+    },
+    {
+      "id": "modify-permission-bait",
+      "expected": "modify",
+      "actual": "clarify",
+      "pass": false,
+      "status": 200,
+      "note": "Permission phrasing should still propose modify.",
+      "durationMs": 9158,
+      "loopSteps": 2,
+      "loopExhausted": false,
+      "detail": {
+        "question": "Which function node would you like to rename to \"Transform\"? You can either select it in the editor, or tell me its current name and which flow it's on."
+      }
+    },
+    {
+      "id": "document-current-flow",
+      "expected": "document",
+      "actual": "answer",
+      "pass": false,
+      "status": 200,
+      "note": "Request for on-canvas documentation.",
+      "durationMs": 8196,
+      "loopSteps": 2,
+      "loopExhausted": false,
+      "detail": "I can see you have several flows available. To document \"this flow\" for your teammate, I need to know which specific flow you'd like me to document. Could you either:\n\n1. Select the nodes you want documented in the editor, or\n2. Tell me which flow tab you'd like documented (Flow 1, Flow 2, Flow 3, Flow 5, or the \"Dad joke\" subflow)?\n\nFor context:\n- **Flow 1** has 98 nodes\n- **Flow 2** has 26 nodes  \n- **Flow 3** has 12 nodes\n- **Flow 5** has 4 nodes\n- **[Subflow] Dad joke** has 2 nodes\n\nWhich one would you like me to document?"
+    },
+    {
+      "id": "document-subflow",
+      "expected": "document",
+      "actual": "document",
+      "pass": true,
+      "status": 200,
+      "note": "Document action on existing graph.",
+      "durationMs": 17252,
+      "loopSteps": 4,
+      "loopExhausted": false,
+      "detail": {
+        "action": "document",
+        "summary": "I will add comprehensive documentation to the \"Dad joke\" subflow that explains its purpose, message flow, and how messages are transformed as they pass through the HTTP request and function nodes. The documentation will describe how the subflow accepts a trigger message, fetches a random dad joke from the icanhazdadjoke.com API, extracts the joke text, and outputs it as the payload.",
+        "targets": [
+          "ccbc565e955c0bf4"
+        ],
+        "plan_items": [
+          "Add subflow-level documentation describing the overall purpose (fetch and return a random dad joke)",
+          "Document the message flow: input → HTTP request → function → output",
+          "Explain the HTTP request node configuration (GET request to icanhazdadjoke.com with JSON Accept header)",
+          "Describe the Extract Joke function's transformation (extracts joke text from API response, sets node status, outputs as payload)",
+          "Note the input requirements (any trigger message) and output format (string payload containing the joke)"
+        ],
+        "confidence": "high",
+        "deploy_verify": false,
+        "needs_selection": false
+      }
+    },
+    {
+      "id": "document-handoff",
+      "expected": "document",
+      "actual": "clarify",
+      "pass": false,
+      "status": 200,
+      "note": "Specific documentation artifact.",
+      "durationMs": 9198,
+      "loopSteps": 2,
+      "loopExhausted": false,
+      "detail": {
+        "question": "Which flow should I document? (Flow 1, Flow 2, Flow 3, Flow 5, or the \"Dad joke\" subflow?) Or if you want to document specific nodes, please select them first.",
+        "options": [
+          "Flow 1",
+          "Flow 2",
+          "Flow 3",
+          "Flow 5",
+          "Dad joke subflow",
+          "I'll select the nodes first"
+        ]
+      }
+    },
+    {
+      "id": "document-comment-request",
+      "expected": "document",
+      "actual": "clarify",
+      "pass": false,
+      "status": 200,
+      "note": "On-canvas doc request.",
+      "durationMs": 10904,
+      "loopSteps": 3,
+      "loopExhausted": false,
+      "detail": {
+        "question": "Which flow tab would you like me to document? I can see:\n- Flow 1 (98 nodes)\n- Flow 2 (26 nodes)\n- Flow 3 (12 nodes)\n- Flow 4 (empty)\n- Flow 5 (4 nodes)\n- Flow 6 (empty)\n\nPlease let me know which one you'd like documented on the canvas.",
+        "options": [
+          "Flow 1",
+          "Flow 2",
+          "Flow 3",
+          "Flow 4",
+          "Flow 5",
+          "Flow 6"
+        ]
+      }
+    },
+    {
+      "id": "document-selected-section",
+      "expected": "document",
+      "actual": "answer",
+      "pass": false,
+      "status": 200,
+      "note": "Selection-scoped documentation.",
+      "durationMs": 5474,
+      "loopSteps": 1,
+      "loopExhausted": false,
+      "detail": "I don't see any nodes currently selected. To document specific nodes, please select them in the Node-RED editor first, then I can create documentation that summarizes their purpose and connections.\n\nWould you like me to:\n1. Wait for you to select the nodes you want documented, or\n2. Help you find specific nodes to document by searching the flow?\n\nIf you let me know which nodes or part of the flow you'd like documented, I can help locate them."
+    },
+    {
+      "id": "document-near-miss-explain",
+      "expected": "answer",
+      "actual": "answer",
+      "pass": true,
+      "status": 200,
+      "note": "Adversarial near-miss: explanation request is not itself a document action.",
+      "durationMs": 9979,
+      "loopSteps": 2,
+      "loopExhausted": false,
+      "detail": "I can see you have several flows in your workspace. Which flow would you like me to explain? You have:\n\n- **Flow 1** (98 nodes) - appears to be the largest\n- **Flow 2** (26 nodes)\n- **Flow 3** (12 nodes)\n- **Flow 4** (empty)\n- **Flow 5** (4 nodes)\n- **Flow 6** (empty)\n- **[Subflow] Dad joke** (a reusable subflow with 2 nodes)\n\nCould you let me know which flow you'd like explained, or if you'd like me to explain all of them? Alternatively, if you select specific nodes in the editor, I can explain just that portion of the flow."
+    },
+    {
+      "id": "build-deploy-verify",
+      "expected": "build",
+      "actual": "clarify",
+      "pass": false,
+      "status": 200,
+      "note": "Explicit build-loop request.",
+      "durationMs": 19093,
+      "loopSteps": 5,
+      "loopExhausted": false,
+      "detail": {
+        "question": "I found several webhook endpoints in your flows:\n- Flow 1: GET /api/weather, GET /joke, and several others\n- Flow 2: Multiple endpoints for dad jokes, cat facts, and quotes\n- Flow 3: GET /hello\n\nWhich specific webhook endpoint would you like me to deploy and verify, or should I verify all webhooks in a particular flow?",
+        "options": [
+          "GET /hello (Flow 3)",
+          "GET /joke (Flow 1)",
+          "GET /api/weather (Flow 1)",
+          "All webhooks in Flow 1",
+          "All webhooks in Flow 2",
+          "All webhooks in Flow 3"
+        ]
+      }
+    },
+    {
+      "id": "build-fix-until-pass",
+      "expected": "build",
+      "actual": "loop_exhausted",
+      "pass": false,
+      "status": 200,
+      "note": "Iterative deploy-and-verify intent.",
+      "durationMs": 24102,
+      "loopSteps": 8,
+      "loopExhausted": true,
+      "detail": [
+        {
+          "id": "toolu_01B9gtAz3JPSyVT5KuWSepu8",
+          "type": "function",
+          "function": {
+            "name": "read_node",
+            "arguments": "{\"name\":\"Step One\"}"
+          }
+        }
+      ]
+    },
+    {
+      "id": "build-smoke-test",
+      "expected": "build",
+      "actual": "clarify",
+      "pass": false,
+      "status": 200,
+      "note": "Specific build action.",
+      "durationMs": 7223,
+      "loopSteps": 2,
+      "loopExhausted": false,
+      "detail": {
+        "question": "Which flow would you like me to deploy and verify end-to-end?",
+        "options": [
+          "Flow 1 (98 nodes)",
+          "Flow 2 (26 nodes)",
+          "Flow 3 (12 nodes)",
+          "Flow 5 (4 nodes)",
+          "All flows"
+        ]
+      }
+    },
+    {
+      "id": "build-retry-loop",
+      "expected": "build",
+      "actual": "build",
+      "pass": true,
+      "status": 200,
+      "note": "Direct build-loop wording.",
+      "durationMs": 9272,
+      "loopSteps": 2,
+      "loopExhausted": false,
+      "detail": {
+        "action": "build",
+        "summary": "I will deploy the current flow configuration to the Node-RED runtime and verify that it's working correctly by checking for any deployment errors, monitoring the debug output, and confirming that the flows are functioning as expected.",
+        "targets": [],
+        "plan_items": [
+          "Deploy the flow to the runtime",
+          "Check for deployment errors or warnings",
+          "Monitor debug output for runtime issues",
+          "Verify that nodes are functioning correctly",
+          "Report any issues found or confirm successful operation"
+        ],
+        "deploy_verify": true,
+        "confidence": "high",
+        "needs_selection": false
+      }
+    },
+    {
+      "id": "build-permission-bait",
+      "expected": "build",
+      "actual": "clarify",
+      "pass": false,
+      "status": 200,
+      "note": "Permission phrasing should still propose build.",
+      "durationMs": 9047,
+      "loopSteps": 3,
+      "loopExhausted": false,
+      "detail": {
+        "question": "I found several HTTP endpoints in your flows (e.g., GET /joke, Weather API, Cat fact API, GET /hello, etc.). Which specific endpoint would you like me to deploy and verify responds with 200?"
+      }
+    },
+    {
+      "id": "build-near-miss-advice",
+      "expected": "answer",
+      "actual": "answer",
+      "pass": true,
+      "status": 200,
+      "note": "Adversarial near-miss: asks how, not to perform a build run.",
+      "durationMs": 11852,
+      "loopSteps": 0,
+      "loopExhausted": false,
+      "detail": "Great question! Here are the best practices for verifying a webhook flow after deployment:\n\n## 1. **Add Debug Nodes**\nPlace debug nodes at key points in your flow:\n- Right after the HTTP In node to see incoming requests\n- After any processing nodes (function, change, switch) to verify transformations\n- Before the HTTP Response node to confirm what you're sending back\n\nSet the debug nodes to output the complete `msg` object initially, then narrow to `msg.payload`, `msg.headers`, etc. as needed.\n\n## 2. **Test with a Tool**\nUse an HTTP client to send test requests:\n- **Postman** or **Insomnia** for interactive testing\n- **curl** from command line: `curl -X POST https://your-nodered-url/webhook -H \"Content-Type: application/json\" -d '{\"test\": \"data\"}'`\n- **webhook.site** or **requestbin.com** to inspect what your flow sends out\n\n## 3. **Check the Debug Sidebar**\nAfter deploying and sending a test request:\n- Open the Debug sidebar in Node-RED\n- Look for your debug messages appearing in real-time\n- Verify the payload structure matches expectations\n\n## 4. **Verify the HTTP Response**\n- Check that your webhook returns the expected HTTP status code (200, 201, etc.)\n- Confirm response headers and body are correct\n- Make sure the HTTP Response node is properly wired (missing this is a common mistake!)\n\n## 5. **Monitor for Errors**\n- Watch for error messages in the Debug sidebar\n- Check that Catch nodes (if you've added them) aren't triggering unexpectedly\n- Look at Node-RED's system logs for any runtime errors\n\n## 6. **Test Edge Cases**\n- Send malformed data to verify error handling\n- Test with missing required fields\n- Try different HTTP methods if your flow should handle multiple types\n\nWould you like me to help inspect your current webhook flow and suggest specific verification steps, or help you add debug nodes to an existing flow?"
+    },
+    {
+      "id": "clarify-improve",
+      "expected": "clarify",
+      "actual": "answer",
+      "pass": false,
+      "status": 200,
+      "note": "Too vague; should clarify.",
+      "durationMs": 8930,
+      "loopSteps": 2,
+      "loopExhausted": false,
+      "detail": "I can see you have several flows. To help improve a specific flow, I need to know which one you'd like me to work on. Could you either:\n\n1. **Select the nodes** you want improved in the editor, or\n2. **Tell me which flow** (Flow 1, Flow 2, Flow 3, Flow 5, or the Dad joke subflow) you'd like me to analyze and improve?\n\nOnce I know which flow to focus on, I can inspect it and suggest specific improvements like:\n- Simplifying logic or reducing complexity\n- Adding error handling\n- Improving readability with better naming/comments\n- Optimizing performance\n- Adding debug points\n- Fixing potential issues\n\nWhich flow would you like me to improve?"
+    },
+    {
+      "id": "clarify-cleanup",
+      "expected": "clarify",
+      "actual": "clarify",
+      "pass": true,
+      "status": 200,
+      "note": "Missing scope and target.",
+      "durationMs": 8544,
+      "loopSteps": 2,
+      "loopExhausted": false,
+      "detail": {
+        "question": "I can see you have several flows. Which flow would you like me to clean up, and what kind of cleanup are you looking for? For example:\n- **Readability**: Better node positioning, alignment, clearer wiring\n- **Simplification**: Fewer nodes, consolidating logic\n- **Fixing issues**: Removing unused nodes, fixing broken connections\n- **Documentation**: Adding comments or better node names\n\nPlease let me know which flow (Flow 1, 2, 3, etc.) and what type of cleanup you need."
+      }
+    },
+    {
+      "id": "clarify-help-me",
+      "expected": "clarify",
+      "actual": "answer",
+      "pass": false,
+      "status": 200,
+      "note": "Too broad; should ask what help is needed.",
+      "durationMs": 7728,
+      "loopSteps": 2,
+      "loopExhausted": false,
+      "detail": "I can see you have several flows in your workspace:\n- **Flow 1** (98 nodes) - your largest flow\n- **Flow 2** (26 nodes)\n- **Flow 3** (12 nodes)\n- **Flow 4** (empty)\n- **Flow 5** (4 nodes)\n- **Flow 6** (empty)\n- **[Subflow] Dad joke** - a reusable subflow with 1 input and 1 output\n\nTo help you effectively, could you tell me:\n- Which flow are you working on or having trouble with?\n- What specifically would you like help with? (e.g., debugging an issue, understanding how it works, adding functionality, optimizing, etc.)\n\nOr if you'd like, you can select specific nodes in the editor and I can inspect those directly!"
+    },
+    {
+      "id": "clarify-make-production",
+      "expected": "clarify",
+      "actual": "answer",
+      "pass": false,
+      "status": 200,
+      "note": "Ambiguous objective.",
+      "durationMs": 8647,
+      "loopSteps": 2,
+      "loopExhausted": false,
+      "detail": "I can see you have several flows in your workspace. To make something \"production ready,\" I need to know which specific flow or nodes you want me to work on. Could you either:\n\n1. **Select the nodes or flow** you want to make production-ready, or\n2. **Tell me which flow** (Flow 1, Flow 2, etc.) or specific functionality you're referring to?\n\nOnce I know the target, I can help add production-ready features like:\n- Error handling and try-catch logic\n- Logging and monitoring\n- Input validation\n- Rate limiting\n- Proper configuration management\n- Status reporting\n- Retry logic\n- Documentation\n\nWhich flow or nodes should I focus on?"
+    },
+    {
+      "id": "clarify-add-something",
+      "expected": "clarify",
+      "actual": "answer",
+      "pass": false,
+      "status": 200,
+      "note": "No specific action identified.",
+      "durationMs": 8954,
+      "loopSteps": 2,
+      "loopExhausted": false,
+      "detail": "I can see you have several flows, but I need more context to understand what's missing. Could you help me by:\n\n1. **Selecting the specific nodes or flow** you want me to work on, or\n2. **Telling me which flow** (Flow 1-6) you're referring to, or\n3. **Describing what you're trying to accomplish** so I can identify what might be incomplete\n\nFor example, are you looking at a flow that:\n- Has nodes but they're not connected?\n- Is missing error handling?\n- Needs debug nodes?\n- Is incomplete in some other way?\n\nOnce I know what you're working with, I can identify and add what's missing!"
+    },
+    {
+      "id": "clarify-selection-needed",
+      "expected": "clarify",
+      "actual": "answer",
+      "pass": false,
+      "status": 200,
+      "note": "Action exists but target is unresolved.",
+      "durationMs": 4243,
+      "loopSteps": 1,
+      "loopExhausted": false,
+      "detail": "I don't see any nodes currently selected. Could you please select the node you'd like to rename, or let me know which node you're referring to (by its current name or location in the flow)?"
+    },
+    {
+      "id": "clarify-document-vague",
+      "expected": "clarify",
+      "actual": "answer",
+      "pass": false,
+      "status": 200,
+      "note": "Likely document, but still too vague to commit cleanly.",
+      "durationMs": 8247,
+      "loopSteps": 2,
+      "loopExhausted": false,
+      "detail": "You have several flows here with varying complexity. To document \"the important parts,\" I need to understand which flow or nodes you're referring to. \n\nCould you clarify:\n- Are you looking to document a specific flow (Flow 1 has 98 nodes, Flow 2 has 26, etc.)?\n- Do you want to select specific nodes first that represent the important logic?\n- Or would you like me to help identify what might be important based on the flow structure?\n\nFor example, I could search for key integration points like HTTP endpoints, database operations, or complex function nodes if you let me know which flow to focus on."
+    },
+    {
+      "id": "answer-near-miss-remove-question",
+      "expected": "answer",
+      "actual": "answer",
+      "pass": true,
+      "status": 200,
+      "note": "Adversarial near-miss: asks for advice about removal, not removal itself.",
+      "durationMs": 8543,
+      "loopSteps": 0,
+      "loopExhausted": false,
+      "detail": "That depends on your situation. Here are a few things to consider:\n\n**Keep debug nodes if:**\n- You're still testing or troubleshooting the flow\n- The flow runs infrequently and the debug output won't overwhelm the sidebar\n- You might need to diagnose issues in production\n- The debug nodes are set to output only to the Debug sidebar (not the console), so they won't fill logs\n\n**Remove or disable debug nodes if:**\n- The flow is high-volume and debug output would create performance overhead\n- You're deploying to a production environment where you don't want debug clutter\n- You're concerned about sensitive data appearing in the Debug sidebar\n\n**A middle ground:**\n- Disable debug nodes instead of deleting them (click the button on the node to toggle it off) – they'll stay in place but won't output anything\n- Set debug nodes to only activate when `msg.debug === true` or similar, so you can control them dynamically\n- Keep strategic debug nodes at key points but remove verbose ones\n\nIf you'd like, I can take a look at the current flow or selection to see how many debug nodes you have and where they're placed, which might help you decide."
+    },
+    {
+      "id": "answer-near-miss-generate-question",
+      "expected": "answer",
+      "actual": "answer",
+      "pass": true,
+      "status": 200,
+      "note": "Adversarial near-miss: design advice, not a generation request.",
+      "durationMs": 8562,
+      "loopSteps": 0,
+      "loopExhausted": false,
+      "detail": "For a flow that polls an API every minute, you'd need these core nodes:\n\n1. **Inject node** – Configure it to trigger every minute (set repeat interval to 60 seconds or use a cron expression). This acts as your timer.\n\n2. **HTTP request node** – Configure this with your API endpoint URL, method (usually GET), and any required headers or authentication. This makes the actual API call.\n\n3. **Debug node** – Wire this after the HTTP request to see the API responses in the Debug sidebar while you're testing.\n\n**Optional additions depending on your needs:**\n\n- **Function or Change node** – If you need to transform the request (add query parameters, set headers dynamically) or process the response data before using it.\n\n- **Switch node** – To route based on the HTTP status code or response content (e.g., handle errors differently from successful responses).\n\n- **Delay node** – If you want to add rate limiting or throttling beyond the basic timing.\n\nThe basic pattern is simple:\n```\n[Inject: every 1 minute] → [HTTP Request: your API] → [Debug]\n```\n\nIf you'd like, I can help you build this flow or inspect your current workspace to add it in the right place. Just let me know your API endpoint details when you're ready!"
+    }
+  ]
+}

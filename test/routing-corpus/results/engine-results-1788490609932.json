@@ -1,0 +1,371 @@
+{
+  "timestamp": "2026-09-04T02:56:49.931Z",
+  "nrUrl": "http://127.0.0.1:1880",
+  "total": 26,
+  "byKind": {
+    "success": 15,
+    "mode_redirect": 4,
+    "question": 1,
+    "strategy_required": 1,
+    "agent_strategy_unavailable": 1,
+    "fixed_script_success": 4
+  },
+  "unexpected": 0,
+  "results": [
+    {
+      "id": "gen-basic",
+      "endpoint": "generate",
+      "description": "Simple inject→function→debug chain — baseline success",
+      "expect": "success",
+      "kind": "success",
+      "pass": true,
+      "status": 200,
+      "durationMs": 7673,
+      "explanation": "Plan:\n1. Inject a numeric value.\n2. Use a function node to double the payload.\n3. Log the result to the debug sidebar.\n\nAn inject node triggers a function node that doubles `msg.payload`, and the result is sent to a debug node for inspection.",
+      "nodeCount": 3
+    },
+    {
+      "id": "gen-chain",
+      "endpoint": "generate",
+      "description": "Multi-node chain with HTTP request — moderate complexity",
+      "expect": "success",
+      "kind": "success",
+      "pass": true,
+      "status": 200,
+      "durationMs": 8532,
+      "explanation": "Plan:\n1. Inject a message every 30 seconds to trigger the polling.\n2. Make a GET request to http://example.com/api/data using an http-request node.\n3. Log the HTTP status code to a debug node.\n\nThis flow uses core nodes only: inject (repeating), http request (GET), and debug.",
+      "nodeCount": 3
+    },
+    {
+      "id": "gen-mqtt",
+      "endpoint": "generate",
+      "description": "MQTT subscriber with JSON parsing — tests core node variety",
+      "expect": "success",
+      "kind": "success",
+      "pass": true,
+      "status": 200,
+      "durationMs": 8783,
+      "explanation": "Plan:\n1. Subscribe to the MQTT topic 'sensors/temperature' using an MQTT input node.\n2. Parse the JSON payload using a JSON node.\n3. Log the parsed result to the debug sidebar using a debug node.\n\nThis flow uses core MQTT and JSON nodes to receive, parse, and inspect sensor data.",
+      "nodeCount": 4
+    },
+    {
+      "id": "gen-switch",
+      "endpoint": "generate",
+      "description": "Switch node with multiple outputs — tests wires[] correctness",
+      "expect": "success",
+      "kind": "success",
+      "pass": true,
+      "status": 200,
+      "durationMs": 9451,
+      "explanation": "Plan:\n1. Inject a numeric value.\n2. Route it with a switch node checking if payload > 100.\n3. Route to either 'High' or 'Normal' debug nodes based on the condition.\n\nThe flow uses an inject node to send a payload, a switch node to evaluate the condition, and two debug nodes to show the result based on the value.",
+      "nodeCount": 4
+    },
+    {
+      "id": "gen-ambiguous",
+      "endpoint": "generate",
+      "description": "Vague request — may ask clarifying question or make assumption",
+      "expect": null,
+      "kind": "success",
+      "pass": null,
+      "status": 200,
+      "durationMs": 12773,
+      "explanation": "Plan:\n1. Inject a simulated system metric every 10 seconds.\n2. Check if the metric exceeds a threshold (e.g., CPU > 80%).\n3. If threshold exceeded, send a notification (e.g., debug + log).\n4. If normal, just log the value.\n\nThis builds a simple, self-contained monitoring loop that periodically samples a value, evaluates it against a threshold, and reacts accordingly.",
+      "nodeCount": 7
+    },
+    {
+      "id": "gen-wrong-mode-modify",
+      "endpoint": "generate",
+      "description": "Modify-shaped request in Generate mode — should redirect or prose",
+      "expect": "mode_redirect",
+      "kind": "mode_redirect",
+      "pass": true,
+      "status": 200,
+      "durationMs": 2888,
+      "explanation": "This is a request to rename an existing node in your current flow, which falls under the **Modify** action. Please select the inject node you want to rename, then confirm.",
+      "raw": {
+        "explanation": "This is a request to rename an existing node in your current flow, which falls under the **Modify** action. Please select the inject node you want to rename, then confirm.",
+        "prose": true,
+        "flow": null,
+        "suggestedAction": {
+          "mode": "modify",
+          "prompt": "Rename the selected inject node to 'Timer'.",
+          "selectionHint": "Select the inject node you want to rename",
+          "targetNodeIds": [
+            "instance"
+          ]
+        }
+      }
+    },
+    {
+      "id": "gen-wrong-mode-chat",
+      "endpoint": "generate",
+      "description": "Conversational question in Generate mode — should redirect or prose",
+      "expect": "mode_redirect",
+      "kind": "mode_redirect",
+      "pass": true,
+      "status": 200,
+      "durationMs": 6536,
+      "explanation": "In Node-RED, `msg.payload` is the default property used to carry the main data or content flowing through a flow. It's a convention, not a requirement — you *can* use other properties — but most core nodes (and many contrib nodes) expect or populate `msg.payload` by default.\n\nExamples:\n- An `inject` node often sets `msg.payload` to a number, string, or JSON object you configure.\n- An `http request` node returns the response body in `msg.payload`.\n- A `json` node parses incoming JSON text into an object and stores it in `msg.payload`.\n- A `debug` node displays `msg.payload` by default (you can change what it shows in its settings).\n\nYou can access or modify it in a `function` node like:\n```js\nmsg.payload = \"Hello world\";\nreturn msg;\n```\n\nThink of `msg.payload` as the \"cargo\" — the thing being transported from node to node. Other common `msg` properties include `msg.topic` (for routing or labeling) and `msg.qos`, `msg.timestamp`, etc., depending on the node.",
+      "raw": {
+        "explanation": "In Node-RED, `msg.payload` is the default property used to carry the main data or content flowing through a flow. It's a convention, not a requirement — you *can* use other properties — but most core nodes (and many contrib nodes) expect or populate `msg.payload` by default.\n\nExamples:\n- An `inject` node often sets `msg.payload` to a number, string, or JSON object you configure.\n- An `http request` node returns the response body in `msg.payload`.\n- A `json` node parses incoming JSON text into an object and stores it in `msg.payload`.\n- A `debug` node displays `msg.payload` by default (you can change what it shows in its settings).\n\nYou can access or modify it in a `function` node like:\n```js\nmsg.payload = \"Hello world\";\nreturn msg;\n```\n\nThink of `msg.payload` as the \"cargo\" — the thing being transported from node to node. Other common `msg` properties include `msg.topic` (for routing or labeling) and `msg.qos`, `msg.timestamp`, etc., depending on the node.",
+        "prose": true,
+        "flow": null,
+        "suggestedAction": {
+          "mode": "chat",
+          "prompt": "What does msg.payload mean in Node-RED?",
+          "targetNodeIds": "all"
+        }
+      }
+    },
+    {
+      "id": "gen-permission-bait",
+      "endpoint": "generate",
+      "description": "Phrased as a request for permission — should generate, not ask",
+      "expect": "success",
+      "kind": "success",
+      "pass": true,
+      "status": 200,
+      "durationMs": 4981,
+      "explanation": "Plan:\n1. Inject a test value and log it to debug — nothing more needed.\n\nAn inject node feeds directly into a debug node.",
+      "nodeCount": 2
+    },
+    {
+      "id": "gen-exec-risky",
+      "endpoint": "generate",
+      "description": "Exec node with destructive command — should generate with warning",
+      "expect": "success",
+      "kind": "success",
+      "pass": true,
+      "status": 200,
+      "durationMs": 8795,
+      "explanation": "Plan:\n1. Inject a trigger to start the flow.\n2. Run 'echo hello world' using an exec node.\n3. Log the command output to a debug node.\n\nThis creates a simple flow where a manual inject triggers a shell command that echoes text, with the result displayed in the debug sidebar.",
+      "nodeCount": 3
+    },
+    {
+      "id": "gen-wires-edge",
+      "endpoint": "generate",
+      "description": "Comment node and junction — tests that comment wires stay empty",
+      "expect": "success",
+      "kind": "success",
+      "pass": true,
+      "status": 200,
+      "durationMs": 7058,
+      "explanation": "Plan:\n1. Inject a numeric value (e.g., 5) to trigger the flow.\n2. Function node doubles the payload.\n3. Debug node logs the result.\n4. Comment node added as annotation.\n\nThe comment node is passive and not wired — it's purely for documentation. The inject node triggers the function, which doubles the value, and the result is sent to a debug node.",
+      "nodeCount": 4
+    },
+    {
+      "id": "mod-rename",
+      "endpoint": "modify",
+      "description": "Rename a node — basic property change, expect success",
+      "expect": "success",
+      "kind": "success",
+      "pass": true,
+      "status": 200,
+      "durationMs": 2346,
+      "explanation": "Plan:\n1. Rename the function node (id n2) to 'Double Value'.\n\nThis will update the function node's display name.",
+      "nodeCount": 3
+    },
+    {
+      "id": "mod-code-change",
+      "endpoint": "modify",
+      "description": "Change function node code — property patch",
+      "expect": "success",
+      "kind": "success",
+      "pass": true,
+      "status": 200,
+      "durationMs": 2756,
+      "explanation": "Plan: Update the function node's code to multiply the payload by 2.\n\nThis will modify the function node's code to double the incoming payload value.",
+      "nodeCount": 3
+    },
+    {
+      "id": "mod-add-node",
+      "endpoint": "modify",
+      "description": "Add a new node to the flow — newNodes + newWires",
+      "expect": "success",
+      "kind": "success",
+      "pass": true,
+      "status": 200,
+      "durationMs": 5342,
+      "explanation": "This will insert a delay node between the function node (n2) and debug node (n3) with a 1-second delay.",
+      "nodeCount": 3
+    },
+    {
+      "id": "mod-remove-node",
+      "endpoint": "modify",
+      "description": "Remove a node from the flow — removeNodes",
+      "expect": "success",
+      "kind": "success",
+      "pass": true,
+      "status": 200,
+      "durationMs": 1611,
+      "explanation": "This will remove the debug node (n3) from the flow.",
+      "nodeCount": 2
+    },
+    {
+      "id": "mod-multi-change",
+      "endpoint": "modify",
+      "description": "Multiple simultaneous changes — rename + code update",
+      "expect": "success",
+      "kind": "success",
+      "pass": true,
+      "status": 200,
+      "durationMs": 3498,
+      "explanation": "Plan:\n1. Rename the inject node (n1) to 'Start'.\n2. Update the function node (n2) to set msg.topic = 'sensor/data'.\n\nThis will rename the trigger node and update the function logic.",
+      "nodeCount": 3
+    },
+    {
+      "id": "mod-wrong-mode-document",
+      "endpoint": "modify",
+      "description": "Document-shaped request in Modify mode — should redirect or prose",
+      "expect": "mode_redirect",
+      "kind": "mode_redirect",
+      "pass": true,
+      "status": 200,
+      "durationMs": 5933,
+      "explanation": "This is a minimal flow with three nodes:\n\n1. **Inject node (`n1`)** named *Trigger* — fires once (no repeat), injecting the current date as the payload. Its single output (port 0) is wired to the function node.\n\n2. **Function node (`n2`)** named *Process* — receives the message and returns it unchanged (the function body is `return msg;`). Its output is wired to the debug node.\n\n3. **Debug node (`n3`)** named *Output* — displays the incoming message in the sidebar.\n\n**Connections:**\n- `n1` → `n2` (from inject output to function input)\n- `n2` → `n3` (from function output to debug input)\n\nNo further processing, branching, or logic is applied — it simply triggers a date payload and passes it through unchanged to the debug sidebar.",
+      "raw": {
+        "explanation": "This is a minimal flow with three nodes:\n\n1. **Inject node (`n1`)** named *Trigger* — fires once (no repeat), injecting the current date as the payload. Its single output (port 0) is wired to the function node.\n\n2. **Function node (`n2`)** named *Process* — receives the message and returns it unchanged (the function body is `return msg;`). Its output is wired to the debug node.\n\n3. **Debug node (`n3`)** named *Output* — displays the incoming message in the sidebar.\n\n**Connections:**\n- `n1` → `n2` (from inject output to function input)\n- `n2` → `n3` (from function output to debug input)\n\nNo further processing, branching, or logic is applied — it simply triggers a date payload and passes it through unchanged to the debug sidebar.",
+        "prose": true,
+        "flow": null,
+        "suggestedAction": {
+          "mode": "document",
+          "prompt": "Explain what this flow does and how the nodes connect.",
+          "selectionHint": "Use these flow nodes.",
+          "targetNodeIds": [
+            "n1",
+            "n2",
+            "n3"
+          ]
+        }
+      }
+    },
+    {
+      "id": "mod-wrong-mode-chat",
+      "endpoint": "modify",
+      "description": "Conversational question in Modify mode — should redirect or prose",
+      "expect": "mode_redirect",
+      "kind": "mode_redirect",
+      "pass": true,
+      "status": 200,
+      "durationMs": 3684,
+      "explanation": "If the inject node had `repeat` set to `5`, it would trigger every 5 seconds (i.e., a 5-second interval), sending a new message with the current date as the payload each time — and continue doing so indefinitely until manually stopped or the flow is redeployed/deployed with a different setting.\n\nNote: In Node-RED, `repeat` expects a value in **seconds**, not milliseconds. A value of `5` means 5 seconds.",
+      "raw": {
+        "explanation": "If the inject node had `repeat` set to `5`, it would trigger every 5 seconds (i.e., a 5-second interval), sending a new message with the current date as the payload each time — and continue doing so indefinitely until manually stopped or the flow is redeployed/deployed with a different setting.\n\nNote: In Node-RED, `repeat` expects a value in **seconds**, not milliseconds. A value of `5` means 5 seconds.",
+        "prose": true,
+        "flow": null,
+        "suggestedAction": {
+          "mode": "chat",
+          "prompt": "What would happen if the inject node had repeat set to 5?"
+        }
+      }
+    },
+    {
+      "id": "mod-permission-bait",
+      "endpoint": "modify",
+      "description": "Phrased as asking permission — should modify, not seek approval",
+      "expect": "success",
+      "kind": "success",
+      "pass": true,
+      "status": 200,
+      "durationMs": 3446,
+      "explanation": "Plan:\n1. Rename the function node (n2) to 'Transform'.\n2. Update the debug node (n3) to show the complete message object by setting `complete` to `true`.\n\nThis will rename the function node and configure the debug node to display the full message object.",
+      "nodeCount": 3
+    },
+    {
+      "id": "mod-vague",
+      "endpoint": "modify",
+      "description": "Vague improvement request — model may ask, prose, or make changes",
+      "expect": null,
+      "kind": "question",
+      "pass": null,
+      "status": 200,
+      "durationMs": 3573,
+      "explanation": "The current flow is a minimal pass-through: an inject node triggers a function node that returns the message unchanged, then sends it to debug. To improve it meaningfully, I need more context about what you want the flow to *do* — for example, transform data, call an API, handle errors, or integrate with other systems. Without that, any change would be guesswork.",
+      "raw": {
+        "explanation": "The current flow is a minimal pass-through: an inject node triggers a function node that returns the message unchanged, then sends it to debug. To improve it meaningfully, I need more context about what you want the flow to *do* — for example, transform data, call an API, handle errors, or integrate with other systems. Without that, any change would be guesswork.",
+        "question": "What would you like this flow to accomplish? For example: parse a value, format output, trigger an external service, or add logging/conditions?",
+        "flow": null
+      }
+    },
+    {
+      "id": "mod-http-headers",
+      "endpoint": "modify",
+      "description": "Add static headers to http-request node — tests A5 header repair",
+      "expect": "success",
+      "kind": "success",
+      "pass": true,
+      "status": 200,
+      "durationMs": 2956,
+      "explanation": "This will add a static Accept: application/json header to the HTTP Request node.",
+      "nodeCount": 3
+    },
+    {
+      "id": "strat-missing",
+      "endpoint": "modify",
+      "description": "Modify without strategy fails loudly instead of inferring a contract",
+      "expect": "strategy_required",
+      "kind": "strategy_required",
+      "pass": true,
+      "status": 400,
+      "durationMs": 4,
+      "raw": {
+        "error": "strategy_required",
+        "message": "strategy and entry are required and must be recognized values."
+      }
+    },
+    {
+      "id": "strat-agent-unavailable",
+      "endpoint": "modify",
+      "description": "Agent strategy is rejected when WRITE-agent mode is disabled",
+      "expect": "agent_strategy_unavailable",
+      "kind": "agent_strategy_unavailable",
+      "pass": true,
+      "status": 409,
+      "durationMs": 5,
+      "raw": {
+        "error": "agent_strategy_unavailable",
+        "message": "The agent strategy requires enableAgentWrite and a tool-capable provider."
+      }
+    },
+    {
+      "id": "fixed-write-apply-pass",
+      "endpoint": "fixed-script",
+      "description": "Scripted apply_step result preserves property/exists/wire checks",
+      "expect": "fixed_script_success",
+      "kind": "fixed_script_success",
+      "pass": true,
+      "status": 0,
+      "durationMs": 1
+    },
+    {
+      "id": "fixed-write-remove-pass",
+      "endpoint": "fixed-script",
+      "description": "Scripted remove_step result preserves an absence check",
+      "expect": "fixed_script_success",
+      "kind": "fixed_script_success",
+      "pass": true,
+      "status": 0,
+      "durationMs": 0
+    },
+    {
+      "id": "fixed-write-partial-failure",
+      "endpoint": "fixed-script",
+      "description": "Scripted failed wire check remains visible to the next model turn",
+      "expect": "fixed_script_success",
+      "kind": "fixed_script_success",
+      "pass": true,
+      "status": 0,
+      "durationMs": 1
+    },
+    {
+      "id": "fixed-ask-user-resume",
+      "endpoint": "fixed-script",
+      "description": "Scripted ask_user answer round-trips as a tool result",
+      "expect": "fixed_script_success",
+      "kind": "fixed_script_success",
+      "pass": true,
+      "status": 0,
+      "durationMs": 0
+    }
+  ]
+}
