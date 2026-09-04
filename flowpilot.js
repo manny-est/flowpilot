@@ -583,10 +583,16 @@ module.exports = function flowPilotRuntime(RED) {
     function: {
       name: PROPOSE_ACTION_NAME,
       description: "Capture a specific, actionable Node-RED intent as a " +
-        "proposal for the user. Call this only when the user's intent has " +
+        "proposal for the user. Call this when the user's intent has " +
         "become a concrete generate, modify, document, or build action with " +
-        "identifiable targets or a clear creation goal. Do not call this " +
-        "for general questions, explanations, advice, or vague exploration.",
+        "a clear creation goal, or with an existing-node target that is " +
+        "either identifiable from context or only implied by phrases like " +
+        "\"the selected node,\" \"the current HTTP request node,\" or " +
+        "\"this function node.\" If the action is specific but no node id " +
+        "is resolvable from the current context, still call this tool with " +
+        "targets: [] and needs_selection: true instead of declining to act. " +
+        "Do not call this for general questions, explanations, advice, or " +
+        "vague exploration.",
       parameters: {
         type: "object",
         properties: {
