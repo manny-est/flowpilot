@@ -93,7 +93,6 @@ const runEventsStore = new Map();
 let updateCheckCache = null;
 const PROPOSE_ACTION_NAME = "propose_action";
 const PROPOSE_ACTIONS = new Set(["generate", "modify", "document", "build"]);
-const PROPOSE_CONFIDENCE = new Set(["high", "medium", "low"]);
 
 function parseVersion(v) {
   var parts = String(v).split("-");
@@ -586,11 +585,7 @@ module.exports = function flowPilotRuntime(RED) {
         "proposal for the user. Call this when the user's intent has " +
         "become a concrete generate, modify, document, or build action with " +
         "a clear creation goal, or with an existing-node target that is " +
-        "either identifiable from context or only implied by phrases like " +
-        "\"the selected node,\" \"the current HTTP request node,\" or " +
-        "\"this function node.\" If the action is specific but no node id " +
-        "is resolvable from the current context, still call this tool with " +
-        "targets: [] and needs_selection: true instead of declining to act. " +
+        "identifiable from context or implied by the user's wording. " +
         "Do not call this for general questions, explanations, advice, or " +
         "vague exploration.",
       parameters: {
@@ -611,15 +606,9 @@ module.exports = function flowPilotRuntime(RED) {
           plan_items: {
             type: "array",
             items: { type: "string" }
-          },
-          deploy_verify: { type: "boolean" },
-          confidence: {
-            type: "string",
-            enum: ["high", "medium", "low"]
-          },
-          needs_selection: { type: "boolean" }
+          }
         },
-        required: ["action", "summary", "confidence"],
+        required: ["action", "summary"],
         additionalProperties: false
       }
     }
@@ -916,6 +905,24 @@ module.exports = function flowPilotRuntime(RED) {
     if (described) {
       messages.push({ role: "system", content: described.content });
     }
+    messages.push({ role: "user", content: userPrompt });
+    return messages;
+  }
+
+  function selectionStateSystemMessage(context) {
+    const nodeCount = context && Array.isArray(context.nodes) ? context.nodes.length : 0;
+    return nodeCount > 0
+      ? nodeCount + " node" + (nodeCount === 1 ? "" : "s") + " selected."
+      : "Nothing is currently selected.";
+  }
+
+  function buildPlanRoutingMessages(systemPrompt, history, historyTruncated, context, userPrompt) {
+    const messages = [{ role: "system", content: systemPrompt }];
+    if (historyTruncated) {
+      messages.push({ role: "system", content: HISTORY_TRUNCATION_NOTICE });
+    }
+    (history || []).forEach(function (m) { messages.push(m); });
+    messages.push({ role: "system", content: selectionStateSystemMessage(context) });
     messages.push({ role: "user", content: userPrompt });
     return messages;
   }
@@ -1253,8 +1260,8 @@ module.exports = function flowPilotRuntime(RED) {
     if (typeof args.summary !== "string" || !args.summary.trim()) {
       return "summary must be a non-empty string.";
     }
-    if (!PROPOSE_CONFIDENCE.has(args.confidence)) {
-      return "confidence must be one of high, medium, low (got: " + String(args.confidence) + ")";
+    if (Object.prototype.hasOwnProperty.call(args, "plan_items") && !Array.isArray(args.plan_items)) {
+      return "plan_items must be an array when provided.";
     }
     return null;
   }
@@ -1305,7 +1312,50 @@ module.exports = function flowPilotRuntime(RED) {
       error);
   }
 
-  async function validateProposeActionToolCalls(activeProvider, messages, result, mode, resend) {
+  function normalizeProposeActionArguments(args, context) {
+    const selectionNodes = context && Array.isArray(context.nodes) ? context.nodes : [];
+    const selectionIsEmpty = selectionNodes.length === 0;
+    const targets = selectionIsEmpty
+      ? []
+      : selectionNodes
+        .map(function (node) { return node && node.id; })
+        .filter(function (id) { return typeof id === "string" && id; });
+    const action = args.action;
+    const needsSelection = action === "modify" && selectionIsEmpty;
+    const deployVerify = action === "build";
+    // Temporary heuristic until the deterministic pre-router lands: use
+    // "high" when the route is fully actionable from known context, and
+    // "medium" when the route depends on missing selection state.
+    const confidence = (!selectionIsEmpty || !needsSelection) ? "high" : "medium";
+    const normalized = {
+      action: action,
+      summary: String(args.summary || "").trim(),
+      targets: targets,
+      deploy_verify: deployVerify,
+      confidence: confidence,
+      needs_selection: needsSelection
+    };
+    if (Array.isArray(args.plan_items)) {
+      normalized.plan_items = args.plan_items;
+    }
+    return normalized;
+  }
+
+  function normalizeProposeActionToolCalls(toolCalls, context) {
+    if (!Array.isArray(toolCalls) || toolCalls.length === 0) { return toolCalls; }
+    return toolCalls.map(function (call) {
+      if (!call || !call.function || call.function.name !== PROPOSE_ACTION_NAME) { return call; }
+      const args = parseToolArguments(call);
+      if (!args || invalidProposeActionError(args)) { return call; }
+      return Object.assign({}, call, {
+        function: Object.assign({}, call.function, {
+          arguments: JSON.stringify(normalizeProposeActionArguments(args, context))
+        })
+      });
+    });
+  }
+
+  async function validateProposeActionToolCalls(activeProvider, messages, result, mode, context, resend) {
     if (!result || !Array.isArray(result.toolCalls) || result.toolCalls.length === 0) {
       return { result: result, messages: messages };
     }
@@ -1315,7 +1365,12 @@ module.exports = function flowPilotRuntime(RED) {
       return !!invalidProposeActionError(parseToolArguments(call));
     });
     if (!invalidCall) {
-      return { result: result, messages: messages };
+      return {
+        result: Object.assign({}, result, {
+          toolCalls: normalizeProposeActionToolCalls(result.toolCalls, context)
+        }),
+        messages: messages
+      };
     }
 
     const invalidError = invalidProposeActionError(parseToolArguments(invalidCall));
@@ -1333,14 +1388,21 @@ module.exports = function flowPilotRuntime(RED) {
       return !!invalidProposeActionError(parseToolArguments(call));
     });
     if (!retryInvalidCall) {
-      return { result: retried, messages: retryMessages };
+      return {
+        result: Object.assign({}, retried, {
+          toolCalls: normalizeProposeActionToolCalls(retried.toolCalls, context)
+        }),
+        messages: retryMessages
+      };
     }
 
     const retryError = invalidProposeActionError(parseToolArguments(retryInvalidCall));
     const cleanedToolCalls = stripProposeActionCalls(retried.toolCalls);
     logInvalidProposeAction(mode, activeProvider, retryMessages, retried.toolCalls, retried.content, retryError, true);
     return {
-      result: Object.assign({}, retried, { toolCalls: cleanedToolCalls.length ? cleanedToolCalls : null }),
+      result: Object.assign({}, retried, {
+        toolCalls: cleanedToolCalls.length ? normalizeProposeActionToolCalls(cleanedToolCalls, context) : null
+      }),
       messages: retryMessages
     };
   }
@@ -1368,11 +1430,11 @@ module.exports = function flowPilotRuntime(RED) {
       throw providerUnconfirmedError();
     }
 
-    const described = describeSelectionContext(context, settings);
-    const messages = buildMessages(
-      buildChatSystemPrompt(settings, { strategy: strategy }),
-      history, historyTruncated, described, prompt
-    );
+    const described = strategy === "agent" ? null : describeSelectionContext(context, settings);
+    const systemPrompt = buildChatSystemPrompt(settings, { strategy: strategy });
+    const messages = strategy === "agent"
+      ? buildPlanRoutingMessages(systemPrompt, history, historyTruncated, context, prompt)
+      : buildMessages(systemPrompt, history, historyTruncated, described, prompt);
     let finalMessages = messages;
     warnNumCtxOverflow(messages, activeProvider, "chat");
 
@@ -1386,7 +1448,7 @@ module.exports = function flowPilotRuntime(RED) {
       chatOptions = agentTurnOptions(settings, chatOptions);
       result = await chatWithAgentCap(provider, activeProvider, messages, chatOptions);
       const validated = await validateProposeActionToolCalls(
-        activeProvider, messages, result, "chat",
+        activeProvider, messages, result, "chat", context,
         function (retryMessages) {
           return chatWithAgentCap(provider, activeProvider, retryMessages, chatOptions);
         }
@@ -1957,6 +2019,7 @@ module.exports = function flowPilotRuntime(RED) {
       return res.status(400).json({ error: "messages array is required." });
     }
     const mode = req.body.mode || "chat";
+    const context = req.body && req.body.context;
 
     try {
       let finalMessages = messages;
@@ -1980,7 +2043,7 @@ module.exports = function flowPilotRuntime(RED) {
         : await provider.chat(activeProvider, messages, chatOptions);
       if (execution.strategy === "agent") {
         const validated = await validateProposeActionToolCalls(
-          activeProvider, messages, result, mode,
+          activeProvider, messages, result, mode, context,
           function (retryMessages) {
             return chatWithAgentCap(provider, activeProvider, retryMessages, chatOptions);
           }
@@ -2036,7 +2099,6 @@ module.exports = function flowPilotRuntime(RED) {
       });
 
       if (mode !== "chat") {
-        const context = req.body.context;
         const described = describeSelectionContext(context, settings);
         const generated = processGenerationContent(
           result.content || "", result, finalMessages, mode, described, activeProvider,
