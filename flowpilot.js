@@ -72,6 +72,7 @@ const generationSystemPrompt = require("./lib/generation-system-prompt");
 const documentSystemPrompt = require("./lib/document-system-prompt");
 const modifySystemPrompt = require("./lib/modify-system-prompt");
 const buildSystemPrompt = require("./lib/build-system-prompt");
+const planSystemPrompt = require("./lib/plan-system-prompt");
 const personaPrompt = require("./lib/persona-prompt");
 const { buildCoreScript } = require("./lib/build-core-script");
 const {
@@ -90,6 +91,9 @@ const UPDATE_CHECK_FAILURE_TTL_MS = 15 * 60 * 1000;
 const RUN_EVENTS_MAX_STORED = 50;
 const runEventsStore = new Map();
 let updateCheckCache = null;
+const PROPOSE_ACTION_NAME = "propose_action";
+const PROPOSE_ACTIONS = new Set(["generate", "modify", "document", "build"]);
+const PROPOSE_CONFIDENCE = new Set(["high", "medium", "low"]);
 
 function parseVersion(v) {
   var parts = String(v).split("-");
@@ -573,6 +577,53 @@ module.exports = function flowPilotRuntime(RED) {
     }
   ];
 
+  const PROPOSE_ACTION_TOOL = {
+    tier: "write-safe",
+    type: "function",
+    function: {
+      name: PROPOSE_ACTION_NAME,
+      description: "Capture a specific, actionable Node-RED intent as a " +
+        "proposal for the user. Call this only when the user's intent has " +
+        "become a concrete generate, modify, document, or build action with " +
+        "identifiable targets or a clear creation goal. Do not call this " +
+        "for general questions, explanations, advice, or vague exploration.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["generate", "modify", "document", "build"]
+          },
+          summary: {
+            type: "string",
+            description: "One-paragraph, user-facing summary of what will be done."
+          },
+          targets: {
+            type: "array",
+            items: { type: "string" }
+          },
+          plan_items: {
+            type: "array",
+            items: { type: "string" }
+          },
+          deploy_verify: { type: "boolean" },
+          confidence: {
+            type: "string",
+            enum: ["high", "medium", "low"]
+          },
+          needs_selection: { type: "boolean" }
+        },
+        required: ["action", "summary", "confidence"],
+        additionalProperties: false
+      }
+    }
+  };
+
+  const ASK_USER_TOOL = WRITE_TOOLS.find(function (tool) {
+    return tool && tool.function && tool.function.name === "ask_user";
+  });
+  const PLAN_CHAT_TOOLS = [ASK_USER_TOOL, PROPOSE_ACTION_TOOL].filter(Boolean);
+
   function providerToolDefinitions(tools) {
     return tools.map(function (tool) {
       return { type: tool.type, function: tool.function };
@@ -580,6 +631,9 @@ module.exports = function flowPilotRuntime(RED) {
   }
 
   function agentToolsFor(settings, activeProvider, mode, writesAllowed) {
+    if (mode === "chat" && activeProvider && activeProvider.supportsTools === true) {
+      return providerToolDefinitions(AGENT_READ_TOOLS.concat(PLAN_CHAT_TOOLS));
+    }
     const writesEnabled = settings.enableAgentWrite === true &&
       (mode === "modify" || mode === "generate") && writesAllowed !== false &&
       activeProvider && activeProvider.supportsTools === true;
@@ -589,7 +643,7 @@ module.exports = function flowPilotRuntime(RED) {
   function toolTierMap(toolCalls) {
     if (!Array.isArray(toolCalls) || !toolCalls.length) { return null; }
     const tiersByName = {};
-    WRITE_TOOLS.forEach(function (tool) {
+    WRITE_TOOLS.concat([PROPOSE_ACTION_TOOL]).forEach(function (tool) {
       tiersByName[tool.function.name] = tool.tier;
     });
     const byCallId = {};
@@ -831,7 +885,10 @@ module.exports = function flowPilotRuntime(RED) {
   // it always reflects the current personaIntensity slider value).
   // Generate/Document/Modify use their own mode-specific prompts and don't
   // call this — aviation flavor has no place in a structured JSON envelope.
-  function buildChatSystemPrompt(settings) {
+  function buildChatSystemPrompt(settings, options) {
+    if (options && options.strategy === "agent") {
+      return planSystemPrompt;
+    }
     const base = settings.systemPrompt || "You are FlowPilot, a Node-RED development assistant.";
     return base + "\n\n" + personaPrompt.buildPersonaInstruction(settings.personaIntensity);
   }
@@ -1180,6 +1237,108 @@ module.exports = function flowPilotRuntime(RED) {
     return retry;
   }
 
+  function invalidProposeActionError(args) {
+    if (!args || typeof args !== "object") {
+      return "propose_action arguments must be a JSON object.";
+    }
+    if (!PROPOSE_ACTIONS.has(args.action)) {
+      return "action must be one of generate, modify, document, build (got: " + String(args.action) + ")";
+    }
+    if (typeof args.summary !== "string" || !args.summary.trim()) {
+      return "summary must be a non-empty string.";
+    }
+    if (!PROPOSE_CONFIDENCE.has(args.confidence)) {
+      return "confidence must be one of high, medium, low (got: " + String(args.confidence) + ")";
+    }
+    return null;
+  }
+
+  function parseToolArguments(call) {
+    const raw = call && call.function && call.function.arguments;
+    if (raw && typeof raw === "object") { return raw; }
+    if (typeof raw !== "string" || !raw.trim()) { return null; }
+    try {
+      return JSON.parse(raw);
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function assistantToolCallMessage(result) {
+    return {
+      role: "assistant",
+      content: result && Object.prototype.hasOwnProperty.call(result, "content") ? result.content : null,
+      tool_calls: Array.isArray(result && result.toolCalls) ? result.toolCalls : []
+    };
+  }
+
+  function stripProposeActionCalls(toolCalls) {
+    return (Array.isArray(toolCalls) ? toolCalls : []).filter(function (call) {
+      const name = call && call.function && call.function.name;
+      return name !== PROPOSE_ACTION_NAME;
+    });
+  }
+
+  function logInvalidProposeAction(mode, activeProvider, messages, toolCalls, responseContent, error, retryAttempted) {
+    maybeLogDebugEvent("warn", {
+      mode: mode,
+      providerBaseUrl: activeProvider && activeProvider.baseUrl,
+      model: activeProvider && activeProvider.model,
+      messages: messages,
+      toolCalls: toolCalls,
+      responseContent: responseContent || null,
+      warning: error,
+      warnType: "invalid_propose_action",
+      retryAttempted: !!retryAttempted
+    });
+    console.warn("[FlowPilot] stripped invalid propose_action: mode=%s provider=%s model=%s retryAttempted=%s error=%s",
+      mode,
+      activeProvider && activeProvider.providerName,
+      activeProvider && activeProvider.model,
+      retryAttempted ? "yes" : "no",
+      error);
+  }
+
+  async function validateProposeActionToolCalls(activeProvider, messages, result, mode, resend) {
+    if (!result || !Array.isArray(result.toolCalls) || result.toolCalls.length === 0) {
+      return { result: result, messages: messages };
+    }
+
+    const invalidCall = result.toolCalls.find(function (call) {
+      if (!call || !call.function || call.function.name !== PROPOSE_ACTION_NAME) { return false; }
+      return !!invalidProposeActionError(parseToolArguments(call));
+    });
+    if (!invalidCall) {
+      return { result: result, messages: messages };
+    }
+
+    const invalidError = invalidProposeActionError(parseToolArguments(invalidCall));
+    const retryMessages = messages.concat([
+      assistantToolCallMessage(result),
+      { role: "tool", tool_call_id: invalidCall.id, content: JSON.stringify({ error: invalidError }) }
+    ]);
+    const retried = await resend(retryMessages);
+    if (!Array.isArray(retried.toolCalls) || retried.toolCalls.length === 0) {
+      return { result: retried, messages: retryMessages };
+    }
+
+    const retryInvalidCall = retried.toolCalls.find(function (call) {
+      if (!call || !call.function || call.function.name !== PROPOSE_ACTION_NAME) { return false; }
+      return !!invalidProposeActionError(parseToolArguments(call));
+    });
+    if (!retryInvalidCall) {
+      return { result: retried, messages: retryMessages };
+    }
+
+    const retryError = invalidProposeActionError(parseToolArguments(retryInvalidCall));
+    const cleanedToolCalls = stripProposeActionCalls(retried.toolCalls);
+    logInvalidProposeAction(mode, activeProvider, retryMessages, retried.toolCalls, retried.content, retryError, true);
+    return {
+      result: Object.assign({}, retried, { toolCalls: cleanedToolCalls.length ? cleanedToolCalls : null }),
+      messages: retryMessages
+    };
+  }
+
   // ---------------------------------------------------------------------
   // Shared helper: run a single-turn chat against the configured provider,
   // log it, and return the result. Used by both /chat and /test so the two
@@ -1205,9 +1364,10 @@ module.exports = function flowPilotRuntime(RED) {
 
     const described = describeSelectionContext(context, settings);
     const messages = buildMessages(
-      buildChatSystemPrompt(settings),
+      buildChatSystemPrompt(settings, { strategy: strategy }),
       history, historyTruncated, described, prompt
     );
+    let finalMessages = messages;
     warnNumCtxOverflow(messages, activeProvider, "chat");
 
     const toolsEnabled = !!useTools && activeProvider.supportsTools === true;
@@ -1219,23 +1379,31 @@ module.exports = function flowPilotRuntime(RED) {
     if (strategy === "agent") {
       chatOptions = agentTurnOptions(settings, chatOptions);
       result = await chatWithAgentCap(provider, activeProvider, messages, chatOptions);
+      const validated = await validateProposeActionToolCalls(
+        activeProvider, messages, result, "chat",
+        function (retryMessages) {
+          return chatWithAgentCap(provider, activeProvider, retryMessages, chatOptions);
+        }
+      );
+      result = validated.result;
+      finalMessages = validated.messages;
     } else {
       result = await provider.chat(activeProvider, messages, chatOptions);
     }
 
     if (result.toolCalls || result.fallbackToClassic) {
-      const perf = performanceAuditFields(messages, result.content, result);
+      const perf = performanceAuditFields(finalMessages, result.content, result);
       if (result.toolCalls) {
         maybeLogDebugEvent("tool_call", {
           mode: "chat",
           providerBaseUrl: activeProvider.baseUrl,
           model: activeProvider.model,
-          messages: messages,
+          messages: finalMessages,
           toolCalls: result.toolCalls,
           responseContent: result.content || null
         });
       }
-      return { settings, activeProvider, result, perf, messages, toolCalls: result.toolCalls };
+      return { settings, activeProvider, result, perf, messages: finalMessages, toolCalls: result.toolCalls };
     }
 
     // The visible reply may end with a hidden <<<FLOWPILOT_DATA>>> block
@@ -1248,15 +1416,15 @@ module.exports = function flowPilotRuntime(RED) {
       mode: "chat",
       providerBaseUrl: activeProvider.baseUrl,
       model: activeProvider.model,
-      messages: messages,
+      messages: finalMessages,
       responseChars: typeof result.content === "string" ? result.content.length : 0,
       responseContent: result.content || "",
       parseOutcome: "received"
     });
 
-    const perf = performanceAuditFields(messages, result.content, result);
+    const perf = performanceAuditFields(finalMessages, result.content, result);
 
-    return { settings, activeProvider, result, perf, chatMessage: split.message, chatData: split.data, messages };
+    return { settings, activeProvider, result, perf, chatMessage: split.message, chatData: split.data, messages: finalMessages };
   }
 
   // ---------------------------------------------------------------------
@@ -1733,11 +1901,16 @@ module.exports = function flowPilotRuntime(RED) {
       });
       return null;
     }
+    const chatAgentAllowed = body.entry === "chat" &&
+      activeProvider && activeProvider.supportsTools === true;
     if (body.strategy === "agent" &&
-        !(settings.enableAgentWrite === true && activeProvider && activeProvider.supportsTools === true)) {
+        !(chatAgentAllowed || (settings.enableAgentWrite === true &&
+          activeProvider && activeProvider.supportsTools === true))) {
       res.status(409).json({
         error: "agent_strategy_unavailable",
-        message: "The agent strategy requires enableAgentWrite and a tool-capable provider."
+        message: body.entry === "chat"
+          ? "The agent strategy for chat requires a tool-capable provider."
+          : "The agent strategy requires enableAgentWrite and a tool-capable provider."
       });
       return null;
     }
@@ -1780,6 +1953,7 @@ module.exports = function flowPilotRuntime(RED) {
     const mode = req.body.mode || "chat";
 
     try {
+      let finalMessages = messages;
       const toolsEnabled = activeProvider.supportsTools === true;
       const offeredTools = toolsEnabled
         ? agentToolsFor(settings, activeProvider, mode, execution.strategy === "agent")
@@ -1795,9 +1969,19 @@ module.exports = function flowPilotRuntime(RED) {
       // unchanged and Anthropic converts only the outer message envelope to
       // native tool_result blocks.
       const provider = getProvider(activeProvider);
-      const result = execution.strategy === "agent"
+      let result = execution.strategy === "agent"
         ? await chatWithAgentCap(provider, activeProvider, messages, chatOptions)
         : await provider.chat(activeProvider, messages, chatOptions);
+      if (execution.strategy === "agent") {
+        const validated = await validateProposeActionToolCalls(
+          activeProvider, messages, result, mode,
+          function (retryMessages) {
+            return chatWithAgentCap(provider, activeProvider, retryMessages, chatOptions);
+          }
+        );
+        result = validated.result;
+        finalMessages = validated.messages;
+      }
 
       if (result.fallbackToClassic) {
         return res.json({ fallbackToClassic: true, usage: result.usage || null });
@@ -1814,14 +1998,14 @@ module.exports = function flowPilotRuntime(RED) {
         baseUrl: activeProvider.baseUrl,
         model: activeProvider.model,
         toolCallCount: result.toolCalls ? result.toolCalls.length : 0
-      }, performanceAuditFields(messages, result.content, result)));
+      }, performanceAuditFields(finalMessages, result.content, result)));
 
       if (result.toolCalls) {
         maybeLogDebugEvent("tool_call", {
           mode: mode,
           providerBaseUrl: activeProvider.baseUrl,
           model: activeProvider.model,
-          messages: messages,
+          messages: finalMessages,
           toolCalls: result.toolCalls,
           responseContent: result.content || null,
           debugNote: execution.debugNote || undefined
@@ -1838,7 +2022,7 @@ module.exports = function flowPilotRuntime(RED) {
         mode: mode,
         providerBaseUrl: activeProvider.baseUrl,
         model: activeProvider.model,
-        messages: messages,
+        messages: finalMessages,
         responseChars: typeof result.content === "string" ? result.content.length : 0,
         responseContent: result.content || "",
         parseOutcome: "received",
@@ -1849,7 +2033,7 @@ module.exports = function flowPilotRuntime(RED) {
         const context = req.body.context;
         const described = describeSelectionContext(context, settings);
         const generated = processGenerationContent(
-          result.content || "", result, messages, mode, described, activeProvider,
+          result.content || "", result, finalMessages, mode, described, activeProvider,
           req.body.prompt, execution
         );
         recordTranscriptTurn(req.body.conversationId, mode, req.body.prompt || null, transcriptTextFromGenerationResult(generated));

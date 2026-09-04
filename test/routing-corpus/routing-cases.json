@@ -1,0 +1,254 @@
+[
+  {
+    "id": "answer-how-add-switch",
+    "prompt": "How would I add a switch node after an inject in Node-RED?",
+    "expected": "answer",
+    "note": "Adversarial near-miss: asks for advice, not an action."
+  },
+  {
+    "id": "answer-explain-payload",
+    "prompt": "What does msg.payload mean in Node-RED?",
+    "expected": "answer",
+    "note": "Plain factual question."
+  },
+  {
+    "id": "answer-review-if-needed",
+    "prompt": "What would happen if I changed the inject repeat to 5 seconds?",
+    "expected": "answer",
+    "note": "Hypothetical explanation, not a request to modify."
+  },
+  {
+    "id": "answer-debug-advice",
+    "prompt": "Why would I use a debug node instead of a status node here?",
+    "expected": "answer",
+    "note": "Compare concepts only."
+  },
+  {
+    "id": "answer-build-loop-question",
+    "prompt": "When should I use Build mode instead of Modify mode?",
+    "expected": "answer",
+    "note": "Question about workflow, not execution."
+  },
+  {
+    "id": "answer-document-near-miss",
+    "prompt": "How should I document a flow for another developer?",
+    "expected": "answer",
+    "note": "Advice about documentation, not a request to create it."
+  },
+  {
+    "id": "answer-safety-near-miss",
+    "prompt": "Is it a bad idea to put an exec node in a home automation flow?",
+    "expected": "answer",
+    "note": "Opinion/advice only."
+  },
+  {
+    "id": "generate-basic-flow",
+    "prompt": "Create a simple flow with an inject node feeding a debug node.",
+    "expected": "generate",
+    "note": "Direct new-flow request."
+  },
+  {
+    "id": "generate-http-poll",
+    "prompt": "Build a flow that polls an HTTP endpoint every minute and logs the result.",
+    "expected": "generate",
+    "note": "Standalone flow creation."
+  },
+  {
+    "id": "generate-mqtt",
+    "prompt": "Make a new flow that subscribes to sensors/temperature over MQTT and shows the parsed JSON in debug.",
+    "expected": "generate",
+    "note": "New feature with clear creation goal."
+  },
+  {
+    "id": "generate-transform",
+    "prompt": "Generate a flow that doubles msg.payload in a function node and sends it to debug.",
+    "expected": "generate",
+    "note": "Specific creation goal."
+  },
+  {
+    "id": "generate-permission-bait",
+    "prompt": "Can you create a quick test flow with inject, change, and debug nodes for me?",
+    "expected": "generate",
+    "note": "Permission phrasing should still propose generate."
+  },
+  {
+    "id": "generate-webhook",
+    "prompt": "Set up a new webhook flow that accepts a POST request and echoes the payload back.",
+    "expected": "generate",
+    "note": "New flow with clear scope."
+  },
+  {
+    "id": "generate-dashboard",
+    "prompt": "Create a fresh flow that reads a temperature value and publishes a warning when it is over 80.",
+    "expected": "generate",
+    "note": "Standalone automation."
+  },
+  {
+    "id": "modify-rename-selected",
+    "prompt": "Rename the selected inject node to Timer.",
+    "expected": "modify",
+    "note": "Specific existing-node change."
+  },
+  {
+    "id": "modify-add-debug-after-current",
+    "prompt": "Add a debug node after the current HTTP request node so I can inspect its response.",
+    "expected": "modify",
+    "note": "Specific change to existing graph."
+  },
+  {
+    "id": "modify-rewire",
+    "prompt": "Rewire the selected switch so the error branch goes to the second debug node instead.",
+    "expected": "modify",
+    "note": "Existing-node rewiring."
+  },
+  {
+    "id": "modify-remove-unused",
+    "prompt": "Remove the unused debug node from this flow.",
+    "expected": "modify",
+    "note": "Concrete deletion request."
+  },
+  {
+    "id": "modify-function-code",
+    "prompt": "Update the selected function node so it sets msg.topic to alerts before returning.",
+    "expected": "modify",
+    "note": "Property/code change."
+  },
+  {
+    "id": "modify-insert-delay",
+    "prompt": "Insert a 1 second delay node between the selected function node and its debug output.",
+    "expected": "modify",
+    "note": "Existing flow modification."
+  },
+  {
+    "id": "modify-permission-bait",
+    "prompt": "Would you be able to rename this function node to Transform and show the full message in debug?",
+    "expected": "modify",
+    "note": "Permission phrasing should still propose modify."
+  },
+  {
+    "id": "document-current-flow",
+    "prompt": "Document this flow so a teammate can understand what each node does.",
+    "expected": "document",
+    "note": "Request for on-canvas documentation."
+  },
+  {
+    "id": "document-subflow",
+    "prompt": "Add documentation for the selected subflow, including how messages move through it.",
+    "expected": "document",
+    "note": "Document action on existing graph."
+  },
+  {
+    "id": "document-handoff",
+    "prompt": "Create canvas documentation for this automation before I hand it off.",
+    "expected": "document",
+    "note": "Specific documentation artifact."
+  },
+  {
+    "id": "document-comment-request",
+    "prompt": "Write documentation onto the canvas for the current flow tab.",
+    "expected": "document",
+    "note": "On-canvas doc request."
+  },
+  {
+    "id": "document-selected-section",
+    "prompt": "Document the selected nodes with a summary of their purpose and connections.",
+    "expected": "document",
+    "note": "Selection-scoped documentation."
+  },
+  {
+    "id": "document-near-miss-explain",
+    "prompt": "Explain what this flow does in plain English.",
+    "expected": "answer",
+    "note": "Adversarial near-miss: explanation request is not itself a document action."
+  },
+  {
+    "id": "build-deploy-verify",
+    "prompt": "Run a build loop to deploy this flow and verify the webhook works.",
+    "expected": "build",
+    "note": "Explicit build-loop request."
+  },
+  {
+    "id": "build-fix-until-pass",
+    "prompt": "Deploy this and keep fixing it until the test message reaches the debug node.",
+    "expected": "build",
+    "note": "Iterative deploy-and-verify intent."
+  },
+  {
+    "id": "build-smoke-test",
+    "prompt": "Use a build-style run to deploy and verify this flow end to end.",
+    "expected": "build",
+    "note": "Specific build action."
+  },
+  {
+    "id": "build-retry-loop",
+    "prompt": "Please run the deploy and verify loop on this flow.",
+    "expected": "build",
+    "note": "Direct build-loop wording."
+  },
+  {
+    "id": "build-permission-bait",
+    "prompt": "Could you deploy this flow and verify the HTTP endpoint responds with 200?",
+    "expected": "build",
+    "note": "Permission phrasing should still propose build."
+  },
+  {
+    "id": "build-near-miss-advice",
+    "prompt": "How would I verify that a webhook flow is working after deployment?",
+    "expected": "answer",
+    "note": "Adversarial near-miss: asks how, not to perform a build run."
+  },
+  {
+    "id": "clarify-improve",
+    "prompt": "Can you improve this flow?",
+    "expected": "clarify",
+    "note": "Too vague; should clarify."
+  },
+  {
+    "id": "clarify-cleanup",
+    "prompt": "Clean this up.",
+    "expected": "clarify",
+    "note": "Missing scope and target."
+  },
+  {
+    "id": "clarify-help-me",
+    "prompt": "Help me with this flow.",
+    "expected": "clarify",
+    "note": "Too broad; should ask what help is needed."
+  },
+  {
+    "id": "clarify-make-production",
+    "prompt": "Make this production ready.",
+    "expected": "clarify",
+    "note": "Ambiguous objective."
+  },
+  {
+    "id": "clarify-add-something",
+    "prompt": "Add whatever is missing here.",
+    "expected": "clarify",
+    "note": "No specific action identified."
+  },
+  {
+    "id": "clarify-selection-needed",
+    "prompt": "Rename the right node for me.",
+    "expected": "clarify",
+    "note": "Action exists but target is unresolved."
+  },
+  {
+    "id": "clarify-document-vague",
+    "prompt": "Document the important parts.",
+    "expected": "clarify",
+    "note": "Likely document, but still too vague to commit cleanly."
+  },
+  {
+    "id": "answer-near-miss-remove-question",
+    "prompt": "Should I remove the debug nodes before deploying this flow?",
+    "expected": "answer",
+    "note": "Adversarial near-miss: asks for advice about removal, not removal itself."
+  },
+  {
+    "id": "answer-near-miss-generate-question",
+    "prompt": "What nodes would I need for a flow that polls an API every minute?",
+    "expected": "answer",
+    "note": "Adversarial near-miss: design advice, not a generation request."
+  }
+]
