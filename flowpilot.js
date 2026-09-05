@@ -93,6 +93,111 @@ const runEventsStore = new Map();
 let updateCheckCache = null;
 const PROPOSE_ACTION_NAME = "propose_action";
 const PROPOSE_ACTIONS = new Set(["generate", "modify", "document", "build"]);
+const PRE_ROUTER_TOOL_CALL_ID_PREFIX = "prerouter-";
+const PRE_ROUTER_CHANGE_VERBS = ["rename", "rewire", "remove", "update", "insert", "add", "delete"];
+const PRE_ROUTER_VAGUE_PHRASES = [
+  "whatever", "anything", "something", "the right node", "the right one", "somehow"
+];
+
+function wordPattern(word) {
+  return new RegExp("(^|[^a-z0-9_])" + word.replace(/\s+/g, "\\s+") + "([^a-z0-9_]|$)", "i");
+}
+
+function firstMatchingPreRouterChangeVerb(prompt) {
+  const text = String(prompt || "");
+  for (let i = 0; i < PRE_ROUTER_CHANGE_VERBS.length; i++) {
+    const verb = PRE_ROUTER_CHANGE_VERBS[i];
+    if (wordPattern(verb).test(text)) { return verb; }
+  }
+  return null;
+}
+
+function firstMatchingPreRouterCreationVerb(prompt) {
+  const text = String(prompt || "");
+  const patterns = [
+    { verb: "create", pattern: wordPattern("create") },
+    { verb: "generate", pattern: wordPattern("generate") },
+    { verb: "set up", pattern: wordPattern("set up") },
+    { verb: "build", pattern: /(^|[^a-z0-9_])build\s+(a|an|the|new|fresh)\b/i },
+    { verb: "make", pattern: /(^|[^a-z0-9_])make\s+(a|an|the|new|fresh)\b/i }
+  ];
+  for (let i = 0; i < patterns.length; i++) {
+    if (patterns[i].pattern.test(text)) { return patterns[i].verb; }
+  }
+  return null;
+}
+
+function isPreRouterInterrogative(prompt) {
+  const text = String(prompt || "");
+  const trimmed = text.trim();
+  return /^(how|what|why|can|could|would|should|is|does|do)\b/i.test(text) || /\?$/.test(trimmed);
+}
+
+function hasPreRouterVagueness(prompt) {
+  const text = String(prompt || "").toLowerCase();
+  return PRE_ROUTER_VAGUE_PHRASES.some(function (phrase) {
+    return text.indexOf(phrase) !== -1;
+  });
+}
+
+function hasPreRouterDocumentationTerm(prompt) {
+  return /\b(document|documentation|comment)\b/i.test(String(prompt || ""));
+}
+
+function makePreRouterResult(action, verb, prompt, context, needsSelection) {
+  const nodes = context && Array.isArray(context.nodes) ? context.nodes : [];
+  const targets = needsSelection ? [] : nodes.map(function (node) {
+    return node && node.id;
+  }).filter(function (id) {
+    return typeof id === "string" && id;
+  });
+  const summary = needsSelection
+    ? "Select the node(s) you want FlowPilot to work on, then press Act - I'll " + verb + " them as described."
+    : "I will " + verb + " as requested: " + String(prompt || "").trim();
+  return {
+    toolCalls: [{
+      index: 0,
+      id: PRE_ROUTER_TOOL_CALL_ID_PREFIX + Date.now(),
+      type: "function",
+      function: {
+        name: PROPOSE_ACTION_NAME,
+        arguments: JSON.stringify({
+          action: action,
+          summary: summary,
+          targets: targets,
+          plan_items: [],
+          deploy_verify: false,
+          confidence: "high",
+          needs_selection: !!needsSelection
+        })
+      }
+    }]
+  };
+}
+
+function runDeterministicPreRouter(prompt, context) {
+  if (isPreRouterInterrogative(prompt) || hasPreRouterVagueness(prompt)) {
+    return null;
+  }
+
+  const hasSelection = !!(context && Array.isArray(context.nodes) && context.nodes.length > 0);
+  const changeVerb = firstMatchingPreRouterChangeVerb(prompt);
+  if (changeVerb && !hasPreRouterDocumentationTerm(prompt)) {
+    return makePreRouterResult("modify", changeVerb, prompt, context, !hasSelection);
+  }
+
+  const creationVerb = firstMatchingPreRouterCreationVerb(prompt);
+  if (!hasSelection && creationVerb && !hasPreRouterDocumentationTerm(prompt)) {
+    return makePreRouterResult("generate", creationVerb, prompt, context, false);
+  }
+
+  return null;
+}
+
+function isDeterministicPreRouterToolCall(call) {
+  return !!(call && typeof call.id === "string" &&
+    call.id.indexOf(PRE_ROUTER_TOOL_CALL_ID_PREFIX) === 0);
+}
 
 function parseVersion(v) {
   var parts = String(v).split("-");
@@ -229,7 +334,7 @@ async function performUpdateCheck() {
 // true process-wide singleton — unaffected by which loader/module-cache
 // reached this file — so it's a reliable gate regardless of how many
 // separate module realms this file's code ends up evaluated in.
-module.exports = function flowPilotRuntime(RED) {
+function flowPilotRuntime(RED) {
   if (global.__flowPilotRuntimeInitialized) { return; }
   global.__flowPilotRuntimeInitialized = true;
 
@@ -1345,6 +1450,7 @@ module.exports = function flowPilotRuntime(RED) {
     if (!Array.isArray(toolCalls) || toolCalls.length === 0) { return toolCalls; }
     return toolCalls.map(function (call) {
       if (!call || !call.function || call.function.name !== PROPOSE_ACTION_NAME) { return call; }
+      if (isDeterministicPreRouterToolCall(call)) { return call; }
       const args = parseToolArguments(call);
       if (!args || invalidProposeActionError(args)) { return call; }
       return Object.assign({}, call, {
@@ -1446,7 +1552,10 @@ module.exports = function flowPilotRuntime(RED) {
     let result;
     if (strategy === "agent") {
       chatOptions = agentTurnOptions(settings, chatOptions);
-      result = await chatWithAgentCap(provider, activeProvider, messages, chatOptions);
+      result = runDeterministicPreRouter(prompt, context);
+      if (!result) {
+        result = await chatWithAgentCap(provider, activeProvider, messages, chatOptions);
+      }
       const validated = await validateProposeActionToolCalls(
         activeProvider, messages, result, "chat", context,
         function (retryMessages) {
@@ -3551,4 +3660,7 @@ module.exports = function flowPilotRuntime(RED) {
       sendGenerationError(res, "modify", err, execution);
     }
   });
-};
+}
+
+flowPilotRuntime.runDeterministicPreRouter = runDeterministicPreRouter;
+module.exports = flowPilotRuntime;
