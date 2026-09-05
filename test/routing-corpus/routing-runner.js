@@ -178,7 +178,7 @@ function buildConnections(nodes, allNodes) {
   };
 }
 
-async function executeReadTool(call, token) {
+async function executeReadTool(call, token, testCase) {
   const name = call && call.function && call.function.name;
   const args = safeJsonParse(call && call.function && call.function.arguments) || {};
   const flows = await fetchFlows(token);
@@ -264,10 +264,20 @@ async function executeReadTool(call, token) {
   }
 
   if (name === "get_selection") {
+    const context = caseContext(testCase);
+    if (context && Array.isArray(context.nodes) && context.nodes.length > 0) {
+      return { selected: true, nodes: context.nodes.map(sanitizedNode) };
+    }
     return { selected: false, message: "Nothing is currently selected in headless corpus mode." };
   }
 
   return { error: "Unsupported tool in routing corpus: " + name };
+}
+
+function caseContext(testCase) {
+  return testCase && testCase.context && typeof testCase.context === "object"
+    ? JSON.parse(JSON.stringify(testCase.context))
+    : undefined;
 }
 
 function classify(body) {
@@ -301,6 +311,17 @@ function classify(body) {
   return { kind: "answer", detail: message };
 }
 
+function decidedBy(body) {
+  const calls = Array.isArray(body && body.toolCalls) ? body.toolCalls : [];
+  const propose = calls.find(function (call) {
+    return call && call.function && call.function.name === "propose_action";
+  });
+  if (propose && typeof propose.id === "string" && propose.id.indexOf("prerouter-") === 0) {
+    return "prerouter";
+  }
+  return "model";
+}
+
 function appendAssistantToolCall(messages, body) {
   const next = Array.isArray(messages) ? messages.slice() : [];
   next.push({
@@ -330,7 +351,7 @@ async function resolveAgentLoop(testCase, token, initialResponse, conversationId
 
     messages = appendAssistantToolCall(messages, body);
     for (let i = 0; i < toolCalls.length; i++) {
-      const result = await executeReadTool(toolCalls[i], token);
+      const result = await executeReadTool(toolCalls[i], token, testCase);
       messages.push({
         role: "tool",
         tool_call_id: toolCalls[i].id,
@@ -342,6 +363,7 @@ async function resolveAgentLoop(testCase, token, initialResponse, conversationId
       messages: messages,
       mode: "chat",
       prompt: testCase.prompt,
+      context: caseContext(testCase),
       strategy: "agent",
       entry: "chat",
       conversationId: conversationId
@@ -368,6 +390,7 @@ async function runCase(testCase, token) {
   try {
     const first = await post(NR_URL + "/flowpilot/chat", {
       prompt: testCase.prompt,
+      context: caseContext(testCase),
       stream: false,
       history: [],
       strategy: "agent",
@@ -387,6 +410,7 @@ async function runCase(testCase, token) {
       note: testCase.note,
       durationMs: Date.now() - started,
       loopSteps: resolved.loopSteps,
+      decidedBy: decidedBy(resolved.body),
       loopExhausted: !!(resolved.body && resolved.body.loopExhausted),
       detail: actual.detail
     };
@@ -399,6 +423,7 @@ async function runCase(testCase, token) {
       status: 0,
       note: testCase.note,
       durationMs: Date.now() - started,
+      decidedBy: "model",
       detail: err.message
     };
   }
@@ -415,13 +440,19 @@ function summarize(results) {
     return ["generate", "modify", "document", "build", "propose_action"].indexOf(r.actual) !== -1;
   }).length;
   const falsePositiveRate = negativeCases.length ? (falsePositives / negativeCases.length) * 100 : 0;
+  const prerouterDecided = results.filter(function (r) { return r.decidedBy === "prerouter"; }).length;
+  const modelDecided = results.filter(function (r) { return r.decidedBy === "model"; }).length;
 
   return {
     total: total,
     passed: passed,
     accuracy: Number(accuracy.toFixed(1)),
     falsePositives: falsePositives,
-    falsePositiveRate: Number(falsePositiveRate.toFixed(1))
+    falsePositiveRate: Number(falsePositiveRate.toFixed(1)),
+    decidedBy: {
+      prerouter: prerouterDecided,
+      model: modelDecided
+    }
   };
 }
 
@@ -452,6 +483,8 @@ async function main() {
   console.log("False-positive proposal rate: " + summary.falsePositives + "/" +
     results.filter(function (r) { return r.expected === "answer" || r.expected === "clarify"; }).length +
     " (" + summary.falsePositiveRate + "%)");
+  console.log("Decided by pre-router: " + summary.decidedBy.prerouter + "/" + summary.total);
+  console.log("Reached model path: " + summary.decidedBy.model + "/" + summary.total);
 
   const payload = {
     label: LABEL,

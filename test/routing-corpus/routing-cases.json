@@ -84,10 +84,40 @@
     "note": "Standalone automation."
   },
   {
+    "id": "generate-new-debug-with-selection",
+    "prompt": "Create a new debug node somewhere in this flow.",
+    "expected": "generate",
+    "context": {
+      "nodes": [
+        {
+          "id": "test-node-1",
+          "type": "inject",
+          "name": "Timer Seed"
+        }
+      ]
+    },
+    "note": "Selection-present creation request should reach the model, not the pre-router."
+  },
+  {
     "id": "modify-rename-selected",
     "prompt": "Rename the selected inject node to Timer.",
     "expected": "modify",
     "note": "Specific existing-node change."
+  },
+  {
+    "id": "modify-rename-selected-with-selection",
+    "prompt": "Rename the selected inject node to Timer.",
+    "expected": "modify",
+    "context": {
+      "nodes": [
+        {
+          "id": "test-node-1",
+          "type": "inject",
+          "name": "Timer Seed"
+        }
+      ]
+    },
+    "note": "Selection-present sibling of modify-rename-selected."
   },
   {
     "id": "modify-add-debug-after-current",
@@ -208,6 +238,21 @@
     "prompt": "Clean this up.",
     "expected": "clarify",
     "note": "Missing scope and target."
+  },
+  {
+    "id": "clarify-cleanup-with-selection",
+    "prompt": "Clean this up.",
+    "expected": "clarify",
+    "context": {
+      "nodes": [
+        {
+          "id": "test-node-1",
+          "type": "inject",
+          "name": "Timer Seed"
+        }
+      ]
+    },
+    "note": "Selection-present vague request should still clarify."
   },
   {
     "id": "clarify-help-me",
