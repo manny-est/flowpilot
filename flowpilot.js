@@ -73,6 +73,7 @@ const documentSystemPrompt = require("./lib/document-system-prompt");
 const modifySystemPrompt = require("./lib/modify-system-prompt");
 const buildSystemPrompt = require("./lib/build-system-prompt");
 const planSystemPrompt = require("./lib/plan-system-prompt");
+const tierCClassificationPrompt = require("./lib/tier-c-classification-prompt");
 const personaPrompt = require("./lib/persona-prompt");
 const { buildCoreScript } = require("./lib/build-core-script");
 const {
@@ -93,7 +94,9 @@ const runEventsStore = new Map();
 let updateCheckCache = null;
 const PROPOSE_ACTION_NAME = "propose_action";
 const PROPOSE_ACTIONS = new Set(["generate", "modify", "document", "build"]);
+const ROUTING_TIERS = new Set(["A", "B", "C"]);
 const PRE_ROUTER_TOOL_CALL_ID_PREFIX = "prerouter-";
+const TIER_C_TOOL_CALL_ID_PREFIX = "tier-c-";
 const PRE_ROUTER_CHANGE_VERBS = ["rename", "rewire", "remove", "update", "insert", "add", "delete"];
 const PRE_ROUTER_VAGUE_PHRASES = [
   "whatever", "anything", "something", "the right node", "the right one", "somehow"
@@ -197,6 +200,134 @@ function runDeterministicPreRouter(prompt, context) {
 function isDeterministicPreRouterToolCall(call) {
   return !!(call && typeof call.id === "string" &&
     call.id.indexOf(PRE_ROUTER_TOOL_CALL_ID_PREFIX) === 0);
+}
+
+function normalizedRoutingTier(provider) {
+  const tier = provider && typeof provider.routingTier === "string"
+    ? provider.routingTier.trim().toUpperCase()
+    : "";
+  return ROUTING_TIERS.has(tier) ? tier : "A";
+}
+
+function normalizeProposeActionArguments(args, context) {
+  const selectionNodes = context && Array.isArray(context.nodes) ? context.nodes : [];
+  const selectionIsEmpty = selectionNodes.length === 0;
+  const targets = selectionIsEmpty
+    ? []
+    : selectionNodes
+      .map(function (node) { return node && node.id; })
+      .filter(function (id) { return typeof id === "string" && id; });
+  const action = args.action;
+  const needsSelection = action === "modify" && selectionIsEmpty;
+  const deployVerify = action === "build";
+  // Temporary heuristic until the deterministic pre-router lands: use
+  // "high" when the route is fully actionable from known context, and
+  // "medium" when the route depends on missing selection state.
+  const confidence = (!selectionIsEmpty || !needsSelection) ? "high" : "medium";
+  const normalized = {
+    action: action,
+    summary: String(args.summary || "").trim(),
+    targets: targets,
+    deploy_verify: deployVerify,
+    confidence: confidence,
+    needs_selection: needsSelection
+  };
+  if (Array.isArray(args.plan_items)) {
+    normalized.plan_items = args.plan_items;
+  }
+  return normalized;
+}
+
+function parseTierCClassification(content) {
+  const text = String(content || "");
+  const matches = [];
+  const re = /(^|[^A-Za-z0-9])([A-F])([^A-Za-z0-9]|$)/g;
+  let match;
+  while ((match = re.exec(text)) !== null) {
+    matches.push(match[2]);
+  }
+  const distinct = Array.from(new Set(matches));
+  if (distinct.length === 1) {
+    return { letter: distinct[0], ambiguous: false, unparseable: false };
+  }
+  return {
+    letter: "F",
+    ambiguous: distinct.length > 1,
+    unparseable: distinct.length === 0
+  };
+}
+
+function stripTierCAnswerPrefix(content) {
+  return String(content || "")
+    .replace(/^\s*(?:answer\s*[:\-]?\s*)?[A-F](?:[\).:\-]|\s|$)/i, "")
+    .trim();
+}
+
+function makeTierCAskUserToolCall(prompt, reason) {
+  const question = reason === "classification_failed"
+    ? "I could not confidently classify that request. What would you like FlowPilot to do?"
+    : "What would you like FlowPilot to do with this flow?";
+  return {
+    index: 0,
+    id: TIER_C_TOOL_CALL_ID_PREFIX + Date.now(),
+    type: "function",
+    function: {
+      name: "ask_user",
+      arguments: JSON.stringify({
+        question: question,
+        options: ["Answer a question", "Create nodes", "Change nodes", "Document nodes", "Build and verify"]
+      })
+    }
+  };
+}
+
+function makeTierCProposeActionToolCall(letter, prompt, content, context) {
+  const actionByLetter = { B: "generate", C: "modify", D: "document", E: "build" };
+  const action = actionByLetter[letter];
+  const prose = stripTierCAnswerPrefix(content);
+  const prefix = action === "generate" ? "I will create new Node-RED nodes for this request: " :
+    action === "modify" ? "I will change the existing Node-RED flow as requested: " :
+    action === "document" ? "I will add canvas documentation for this request: " :
+    "I will run a build-and-verify pass for this request: ";
+  const summary = prose || (prefix + String(prompt || "").trim());
+  return {
+    index: 0,
+    id: TIER_C_TOOL_CALL_ID_PREFIX + Date.now(),
+    type: "function",
+    function: {
+      name: PROPOSE_ACTION_NAME,
+      arguments: JSON.stringify(normalizeProposeActionArguments({
+        action: action,
+        summary: summary,
+        plan_items: []
+      }, context))
+    }
+  };
+}
+
+function tierCClassificationToResult(content, prompt, context) {
+  const parsed = parseTierCClassification(content);
+  if (parsed.ambiguous || parsed.unparseable || parsed.letter === "F") {
+    return {
+      result: {
+        content: "",
+        toolCalls: [makeTierCAskUserToolCall(prompt, parsed.unparseable ? "classification_failed" : "unclear")]
+      },
+      parsed: parsed
+    };
+  }
+  if (parsed.letter === "A") {
+    const answer = stripTierCAnswerPrefix(content) ||
+      "This looks like a question or explanation request, not an action to run.";
+    return { result: { content: answer, toolCalls: null }, parsed: parsed };
+  }
+  return {
+    result: {
+      content: "",
+      toolCalls: [makeTierCProposeActionToolCall(parsed.letter, prompt, content, context)]
+    },
+    parsed: parsed
+  };
 }
 
 function parseVersion(v) {
@@ -718,11 +849,31 @@ function flowPilotRuntime(RED) {
       }
     }
   };
+  const TIER_B_PROPOSE_ACTION_TOOL = Object.assign({}, PROPOSE_ACTION_TOOL, {
+    function: Object.assign({}, PROPOSE_ACTION_TOOL.function, {
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["generate", "modify", "document", "build"]
+          },
+          summary: {
+            type: "string",
+            description: "One-paragraph, user-facing summary of what will be done."
+          }
+        },
+        required: ["action", "summary"],
+        additionalProperties: false
+      }
+    })
+  });
 
   const ASK_USER_TOOL = WRITE_TOOLS.find(function (tool) {
     return tool && tool.function && tool.function.name === "ask_user";
   });
   const PLAN_CHAT_TOOLS = [ASK_USER_TOOL, PROPOSE_ACTION_TOOL].filter(Boolean);
+  const TIER_B_PLAN_CHAT_TOOLS = [ASK_USER_TOOL, TIER_B_PROPOSE_ACTION_TOOL].filter(Boolean);
 
   function providerToolDefinitions(tools) {
     return tools.map(function (tool) {
@@ -731,7 +882,13 @@ function flowPilotRuntime(RED) {
   }
 
   function agentToolsFor(settings, activeProvider, mode, writesAllowed) {
+    const routingTier = normalizedRoutingTier(activeProvider);
     if (mode === "chat" && activeProvider && activeProvider.supportsTools === true) {
+      // Tier B is intentionally only a narrowed, unexercised stub in this
+      // ticket: same contract shape as Tier A, minus read tools.
+      if (routingTier === "B") {
+        return providerToolDefinitions(TIER_B_PLAN_CHAT_TOOLS);
+      }
       return providerToolDefinitions(AGENT_READ_TOOLS.concat(PLAN_CHAT_TOOLS));
     }
     const writesEnabled = settings.enableAgentWrite === true &&
@@ -1417,33 +1574,48 @@ function flowPilotRuntime(RED) {
       error);
   }
 
-  function normalizeProposeActionArguments(args, context) {
-    const selectionNodes = context && Array.isArray(context.nodes) ? context.nodes : [];
-    const selectionIsEmpty = selectionNodes.length === 0;
-    const targets = selectionIsEmpty
-      ? []
-      : selectionNodes
-        .map(function (node) { return node && node.id; })
-        .filter(function (id) { return typeof id === "string" && id; });
-    const action = args.action;
-    const needsSelection = action === "modify" && selectionIsEmpty;
-    const deployVerify = action === "build";
-    // Temporary heuristic until the deterministic pre-router lands: use
-    // "high" when the route is fully actionable from known context, and
-    // "medium" when the route depends on missing selection state.
-    const confidence = (!selectionIsEmpty || !needsSelection) ? "high" : "medium";
-    const normalized = {
-      action: action,
-      summary: String(args.summary || "").trim(),
-      targets: targets,
-      deploy_verify: deployVerify,
-      confidence: confidence,
-      needs_selection: needsSelection
-    };
-    if (Array.isArray(args.plan_items)) {
-      normalized.plan_items = args.plan_items;
+  async function runTierCClassification(provider, activeProvider, settings, messages, prompt, context) {
+    const options = agentTurnOptions(settings, undefined);
+    const first = await chatWithAgentCap(provider, activeProvider, messages, options);
+    let mapped = tierCClassificationToResult(first.content, prompt, context);
+    let finalMessages = messages;
+    let rawResult = first;
+
+    if (mapped.parsed.unparseable) {
+      const retryMessages = messages.concat([
+        { role: "assistant", content: first.content || "" },
+        { role: "system", content: "Reply with one standalone capital letter: A, B, C, D, E, or F." }
+      ]);
+      const retry = await chatWithAgentCap(provider, activeProvider, retryMessages, options);
+      mapped = tierCClassificationToResult(retry.content, prompt, context);
+      finalMessages = retryMessages;
+      rawResult = retry;
+      if (mapped.parsed.unparseable) {
+        mapped = {
+          result: {
+            content: "",
+            toolCalls: [makeTierCAskUserToolCall(prompt, "classification_failed")]
+          },
+          parsed: mapped.parsed
+        };
+      }
     }
-    return normalized;
+
+    maybeLogDebugEvent("tier_c_classification", {
+      mode: "chat",
+      providerBaseUrl: activeProvider && activeProvider.baseUrl,
+      model: activeProvider && activeProvider.model,
+      messages: finalMessages,
+      responseContent: rawResult && rawResult.content || "",
+      classification: mapped.parsed,
+      toolsOff: true
+    });
+
+    return {
+      result: Object.assign({}, rawResult, mapped.result),
+      messages: finalMessages,
+      parsed: mapped.parsed
+    };
   }
 
   function normalizeProposeActionToolCalls(toolCalls, context) {
@@ -1554,10 +1726,27 @@ function flowPilotRuntime(RED) {
       chatOptions = agentTurnOptions(settings, chatOptions);
       result = runDeterministicPreRouter(prompt, context);
       if (!result) {
-        result = await chatWithAgentCap(provider, activeProvider, messages, chatOptions);
+        const routingTier = normalizedRoutingTier(activeProvider);
+        if (routingTier === "C") {
+          const classificationMessages = buildPlanRoutingMessages(
+            tierCClassificationPrompt,
+            history,
+            historyTruncated,
+            context,
+            prompt
+          );
+          warnNumCtxOverflow(classificationMessages, activeProvider, "chat-tier-c");
+          const classified = await runTierCClassification(
+            provider, activeProvider, settings, classificationMessages, prompt, context
+          );
+          result = classified.result;
+          finalMessages = classified.messages;
+        } else {
+          result = await chatWithAgentCap(provider, activeProvider, messages, chatOptions);
+        }
       }
       const validated = await validateProposeActionToolCalls(
-        activeProvider, messages, result, "chat", context,
+        activeProvider, finalMessages, result, "chat", context,
         function (retryMessages) {
           return chatWithAgentCap(provider, activeProvider, retryMessages, chatOptions);
         }
@@ -1908,6 +2097,12 @@ function flowPilotRuntime(RED) {
     }
     if (!body.activeProviderId || !String(body.activeProviderId).trim()) {
       return "Settings payload must include an activeProviderId.";
+    }
+    const badRoutingTier = body.providers.find(function (p) {
+      return p && p.routingTier !== undefined && !ROUTING_TIERS.has(String(p.routingTier).trim().toUpperCase());
+    });
+    if (badRoutingTier) {
+      return "Provider routingTier must be A, B, or C.";
     }
     return null;
   }
@@ -3663,4 +3858,7 @@ function flowPilotRuntime(RED) {
 }
 
 flowPilotRuntime.runDeterministicPreRouter = runDeterministicPreRouter;
+flowPilotRuntime.normalizedRoutingTier = normalizedRoutingTier;
+flowPilotRuntime.parseTierCClassification = parseTierCClassification;
+flowPilotRuntime.tierCClassificationToResult = tierCClassificationToResult;
 module.exports = flowPilotRuntime;
