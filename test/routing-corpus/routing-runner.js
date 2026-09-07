@@ -319,6 +319,11 @@ function decidedBy(body) {
   if (propose && typeof propose.id === "string" && propose.id.indexOf("prerouter-") === 0) {
     return "prerouter";
   }
+  if (calls.some(function (call) {
+    return call && typeof call.id === "string" && call.id.indexOf("tier-c-") === 0;
+  })) {
+    return "tier-c";
+  }
   return "model";
 }
 
@@ -441,6 +446,7 @@ function summarize(results) {
   }).length;
   const falsePositiveRate = negativeCases.length ? (falsePositives / negativeCases.length) * 100 : 0;
   const prerouterDecided = results.filter(function (r) { return r.decidedBy === "prerouter"; }).length;
+  const tierCDecided = results.filter(function (r) { return r.decidedBy === "tier-c"; }).length;
   const modelDecided = results.filter(function (r) { return r.decidedBy === "model"; }).length;
 
   return {
@@ -451,6 +457,7 @@ function summarize(results) {
     falsePositiveRate: Number(falsePositiveRate.toFixed(1)),
     decidedBy: {
       prerouter: prerouterDecided,
+      "tier-c": tierCDecided,
       model: modelDecided
     }
   };
