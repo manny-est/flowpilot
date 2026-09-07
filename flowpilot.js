@@ -997,7 +997,7 @@ function flowPilotRuntime(RED) {
   // generate/modify/document endpoints use: system prompt, optional
   // installed-node-package note, optional truncation notice, history,
   // optional selection-context note, then the new user turn.
-  function buildMessages(systemPrompt, history, historyTruncated, described, userPrompt) {
+  function buildMessages(systemPrompt, history, historyTruncated, described, userPrompt, modeNotice) {
     const messages = [{ role: "system", content: systemPrompt }];
     const installedNodes = describeInstalledNodes();
     if (installedNodes) {
@@ -1009,6 +1009,12 @@ function flowPilotRuntime(RED) {
     (history || []).forEach(function (m) { messages.push(m); });
     if (described) {
       messages.push({ role: "system", content: described.content });
+    }
+    // CLAUDE-001b (R11-3 §3 point 4, the Cline pattern): only present when
+    // buildGenerationContext's own fromAct flag was explicitly true — never
+    // inferred here from anything else in this assembly.
+    if (modeNotice) {
+      messages.push({ role: "system", content: modeNotice });
     }
     messages.push({ role: "user", content: userPrompt });
     return messages;
@@ -2510,7 +2516,15 @@ function flowPilotRuntime(RED) {
   // out from runFlowGeneration so the streaming variant can build the
   // same request and swap provider.chat for provider.chatStream.
   // ---------------------------------------------------------------------
-  function buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction) {
+  // fromAct: CLAUDE-001b (R11-3) — true only when the client's Act click
+  // explicitly set it (see lib/core/modes.js's dispatchProposedAction /
+  // payload.fromAct); never inferred from execution/entry/strategy here.
+  // Builds the Cline-pattern transition notice — "the user approved this
+  // plan, you are now executing, do not re-plan" — using userPrompt (the
+  // user's own, possibly-edited approved summary, since that's exactly what
+  // the client set the compose box to before dispatching) and auditAction
+  // (the mode actually being entered).
+  function buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction, fromAct) {
     const settings = storage.getSettings();
     const activeProvider = storage.getActiveProvider(settings);
     const described = describeSelectionContext(context, settings);
@@ -2519,7 +2533,11 @@ function flowPilotRuntime(RED) {
     // node names, ids, or any structural JSON, which stays exactly as each
     // mode's own system prompt above already specifies.
     const personaInstruction = personaPrompt.buildPersonaInstruction(settings.personaIntensity, { scope: "explanation" });
-    const messages = buildMessages(systemPrompt + "\n\n" + personaInstruction, history, historyTruncated, described, userPrompt);
+    const modeNotice = fromAct
+      ? "The user approved this plan: \"" + userPrompt + "\". You are now executing in " +
+        auditAction + " mode. Do not re-plan; execute the approved items."
+      : null;
+    const messages = buildMessages(systemPrompt + "\n\n" + personaInstruction, history, historyTruncated, described, userPrompt, modeNotice);
     warnNumCtxOverflow(messages, activeProvider, auditAction);
     return { activeProvider, described, messages };
   }
@@ -2919,8 +2937,8 @@ function flowPilotRuntime(RED) {
   // early with { toolCalls, messages, content, usage } — same shape as
   // runChat's early return — so the route can hand it to the frontend
   // without running processGenerationContent yet.
-  async function runFlowGeneration(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, useTools, execution) {
-    const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction);
+  async function runFlowGeneration(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, useTools, execution, fromAct) {
+    const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction, fromAct);
     if (!isProviderConfirmed(activeProvider)) { throw providerUnconfirmedError(); }
     const settings = storage.getSettings();
     const toolsEnabled = !!useTools && activeProvider.supportsTools === true;
@@ -3017,8 +3035,8 @@ function flowPilotRuntime(RED) {
   // while the rest of the JSON (the "flow" array etc.) is buffered until
   // this resolves.
   // ---------------------------------------------------------------------
-  async function runFlowGenerationStream(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, onDelta, auditContext) {
-    const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction);
+  async function runFlowGenerationStream(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, onDelta, auditContext, fromAct) {
+    const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction, fromAct);
     if (!isProviderConfirmed(activeProvider)) { throw providerUnconfirmedError(); }
     const responseFormat = directCompletionResponseFormat(activeProvider, auditAction, false);
     const streamOptions = responseFormat ? { responseFormat: responseFormat } : undefined;
@@ -3428,11 +3446,12 @@ function flowPilotRuntime(RED) {
     });
     if (typeof res.flushHeaders === "function") { res.flushHeaders(); }
 
+    const fromAct = !!(req.body && req.body.fromAct === true);
     let result;
     try {
       result = await runFlowGenerationStream(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, function (delta) {
         res.write("data: " + JSON.stringify({ delta: delta }) + "\n\n");
-      }, auditContext);
+      }, auditContext, fromAct);
     } catch (err) {
       const status = err && err.status ? err.status : 500;
       const body = { error: err.message };
@@ -3483,9 +3502,10 @@ function flowPilotRuntime(RED) {
 
     try {
       const useTools = !!req.body.tools;
+      const fromAct = !!(req.body && req.body.fromAct === true);
       const generated = await runFlowGeneration(
         generationSystemPrompt, "generate", prompt, req.body && req.body.context,
-        history, historyTruncated, useTools, execution
+        history, historyTruncated, useTools, execution, fromAct
       );
       if (generated.toolCalls) {
         return res.json({
@@ -3529,9 +3549,10 @@ function flowPilotRuntime(RED) {
 
     try {
       const useTools = !!req.body.tools;
+      const fromAct = !!(req.body && req.body.fromAct === true);
       const built = await runFlowGeneration(
         buildSystemPrompt, "build", prompt, req.body && req.body.context,
-        history, historyTruncated, useTools
+        history, historyTruncated, useTools, undefined, fromAct
       );
       if (built.toolCalls) {
         return res.json({
@@ -3575,9 +3596,10 @@ function flowPilotRuntime(RED) {
 
     try {
       const useTools = !!req.body.tools;
+      const fromAct = !!(req.body && req.body.fromAct === true);
       const documented = await runFlowGeneration(
         documentSystemPrompt, "document", userPrompt, context,
-        history, historyTruncated, useTools
+        history, historyTruncated, useTools, undefined, fromAct
       );
       if (documented.toolCalls) {
         return res.json({
@@ -3640,9 +3662,10 @@ function flowPilotRuntime(RED) {
 
     try {
       const useTools = !!req.body.tools;
+      const fromAct = !!(req.body && req.body.fromAct === true);
       const result = await runFlowGeneration(
         modifyPrompt, "modify", String(prompt).trim(), context,
-        history, historyTruncated, useTools, execution
+        history, historyTruncated, useTools, execution, fromAct
       );
       if (result.toolCalls) {
         return res.json({
