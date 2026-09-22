@@ -2,6 +2,40 @@
 
 All notable changes to FlowPilot are documented here.
 
+## [0.6.2] - 2026-09-22
+
+### Fixed
+- **Newer Anthropic models (Sonnet 5, Fable 5.1) didn't work at all —
+  every request failed with a 400 error.** ([#9](https://github.com/manny-est/flowpilot/issues/9))
+  Models released after Claude Opus 4.6 reject any `temperature` value
+  other than 1.0; FlowPilot's default of 0.2 meant every single chat,
+  generate, modify, document, and provider-capability-probe request
+  against a newer model failed outright with "temperature is deprecated
+  for this model." Older models (confirmed: `claude-sonnet-4-5`) were
+  unaffected. Fixed reactively — no model-name list to maintain: FlowPilot
+  now detects that exact error live, retries once with `temperature`
+  omitted, and remembers the model needs that treatment so it's a
+  one-time cost. Live-verified against Sonnet 5, Fable 5.1, and an older
+  model to confirm no regression there.
+- **A multi-section plan could silently lose most of its steps from the
+  todo checklist.** A model's own explanation can legitimately structure
+  a larger plan as several numbered sections under short labels (e.g. a
+  Dashboard 2.0 build broken into "Widgets to add:" / "Final steps:")
+  rather than one unbroken numbered list. The checklist parser stopped
+  reading at the first blank line, so only the first section's items
+  ever made it onto the checklist — a 5-step plan could show as a
+  1-item checklist, which read as "the numbering is wrong" but was
+  actually silent data loss. Now keeps reading across section breaks and
+  only stops at the real closing explanation paragraph.
+- **No way to clear a pinned node selection without losing your place.**
+  Once a mode (Generate/Modify/Document/Build) is armed with a
+  selection, that selection intentionally stays attached across
+  follow-up turns so you don't have to reselect every time — but there
+  was no way to just drop it if you no longer wanted those nodes
+  attached, short of fully re-arming the mode or clearing the whole
+  chat. The status line now shows a small ✕ next to a pinned selection
+  that clears just the pin, leaving the mode itself armed.
+
 ## [0.6.1] - 2026-09-02
 
 ### Fixed
