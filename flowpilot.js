@@ -85,6 +85,7 @@ const { extractJsonObject } = require("./lib/envelope");
 const { repairEnvelope } = require("./lib/validator");
 const { enforceAgentContract } = require("./lib/agent-contract");
 const { isProviderShapedResponse } = require("./lib/provider-shape-check");
+const providerPresets = require("./lib/provider-presets");
 const API_KEY_UNCHANGED = createStorage.API_KEY_UNCHANGED;
 const UPDATE_CHECK_URL = "https://registry.npmjs.org/-/package/@manny-est/node-red-flowpilot/dist-tags";
 const UPDATE_CHECK_SUCCESS_TTL_MS = 6 * 60 * 60 * 1000;
@@ -1966,6 +1967,16 @@ function flowPilotRuntime(RED) {
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // 0.6.3 §2C: presets are DATA, one source of truth (lib/provider-presets.js
+  // — see ADR-012). The client can't require() a server module directly (the
+  // lib/core/*.js fragments concatenate into a plain browser script, not
+  // CommonJS), so it fetches this list once when the Settings panel loads
+  // rather than duplicating the array client-side. Nothing here is secret —
+  // labels, documented base URLs, and doc links only.
+  RED.httpAdmin.get("/flowpilot/provider-presets", RED.auth.needsPermission("settings.read"), function (req, res) {
+    res.json({ presets: providerPresets.PROVIDER_PRESETS });
   });
 
   RED.httpAdmin.get("/flowpilot/run-events/:runId", RED.auth.needsPermission("settings.read"), function (req, res) {

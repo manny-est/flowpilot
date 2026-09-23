@@ -2,6 +2,37 @@
 
 All notable changes to FlowPilot are documented here.
 
+## [0.6.3] - 2026-09-23
+
+### Fixed
+- **OpenRouter (and other OpenAI-compatible providers documented with a
+  base URL that already includes `/v1`) couldn't connect at all —
+  following the provider's own docs produced a doubled
+  `.../v1/v1/chat/completions` 404.** FlowPilot was unconditionally
+  appending `/v1/chat/completions` to whatever base URL was saved,
+  after only trimming a trailing slash. Every OpenAI-compatible
+  provider this affects (OpenAI, OpenRouter, Ollama, LM Studio,
+  LocalAI, llama.cpp server, vLLM) documents its own base URL as
+  already including `/v1` — now recovered and normalized correctly at
+  request time, whether you paste the plain base URL or a full
+  endpoint URL. Your saved base URL itself is never rewritten, so an
+  already-confirmed provider stays confirmed after upgrading.
+
+### Added
+- **Provider presets.** A new "Provider" dropdown in Settings offers
+  OpenAI, Anthropic, OpenRouter, Ollama, LM Studio, LocalAI, llama.cpp
+  server, vLLM, or Custom — picking one fills in the right base URL and
+  shows or hides the API key field depending on whether that provider
+  needs one. Base URL, context window, temperature, and OpenRouter's
+  own extra options are now tucked into a collapsed "Advanced" section
+  so the everyday path stays simple. Every provider you already had
+  configured keeps working exactly as before — nothing about your
+  existing setup changes on upgrade.
+- **OpenRouter support**, including its own two extra options in
+  Advanced: enforcing zero-data-retention (ZDR) per request, and
+  optionally sending attribution headers identifying FlowPilot to
+  OpenRouter (off by default).
+
 ## [0.6.2] - 2026-09-22
 
 ### Fixed
