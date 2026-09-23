@@ -1,0 +1,888 @@
+{
+  "label": "post-adr013-amended-local-cloud-rule",
+  "generatedAt": "2026-09-23T17:03:46.917Z",
+  "nrUrl": "http://192.168.1.220:1850",
+  "summary": {
+    "total": 45,
+    "passed": 45,
+    "accuracy": 100,
+    "falsePositives": 0,
+    "falsePositiveRate": 0,
+    "decidedBy": {
+      "prerouter": 13,
+      "tier-c": 21,
+      "model": 11
+    }
+  },
+  "results": [
+    {
+      "id": "answer-how-add-switch",
+      "expected": "answer",
+      "actual": "answer",
+      "pass": true,
+      "status": 200,
+      "note": "Adversarial near-miss: asks for advice, not an action.",
+      "durationMs": 1597,
+      "loopSteps": 0,
+      "decidedBy": "model",
+      "loopExhausted": false,
+      "detail": "Add a switch node after the inject node by dragging it from the node palette, connecting the inject's output to the switch's input, then configure the switch's rules (e.g., based on payload, topic, or property) and wire each output to downstream nodes."
+    },
+    {
+      "id": "answer-explain-payload",
+      "expected": "answer",
+      "actual": "answer",
+      "pass": true,
+      "status": 200,
+      "note": "Plain factual question.",
+      "durationMs": 1307,
+      "loopSteps": 0,
+      "decidedBy": "model",
+      "loopExhausted": false,
+      "detail": "msg.payload is the main message field most Node-RED nodes read from and write to as data moves through a flow. It typically holds the core data being processed, such as sensor readings, HTTP response bodies, or computed results."
+    },
+    {
+      "id": "answer-review-if-needed",
+      "expected": "answer",
+      "actual": "answer",
+      "pass": true,
+      "status": 200,
+      "note": "Hypothetical explanation, not a request to modify.",
+      "durationMs": 577,
+      "loopSteps": 0,
+      "decidedBy": "model",
+      "loopExhausted": false,
+      "detail": "This looks like a question or explanation request, not an action to run."
+    },
+    {
+      "id": "answer-debug-advice",
+      "expected": "answer",
+      "actual": "answer",
+      "pass": true,
+      "status": 200,
+      "note": "Compare concepts only.",
+      "durationMs": 1588,
+      "loopSteps": 0,
+      "decidedBy": "model",
+      "loopExhausted": false,
+      "detail": "The debug node shows full message content (including payload, topic, etc.) in the sidebar for inspection and troubleshooting, while the status node only displays brief status text (e.g., \"connected\", \"error\") in the flow view. Use debug to inspect message structure; use status for high-level flow health."
+    },
+    {
+      "id": "answer-build-loop-question",
+      "expected": "answer",
+      "actual": "answer",
+      "pass": true,
+      "status": 200,
+      "note": "Question about workflow, not execution.",
+      "durationMs": 1155,
+      "loopSteps": 0,
+      "decidedBy": "model",
+      "loopExhausted": false,
+      "detail": "Use Build mode when creating a new flow or adding entirely new nodes, and Modify mode when editing or adjusting existing nodes (e.g., changing properties, wiring, or code)."
+    },
+    {
+      "id": "answer-document-near-miss",
+      "expected": "answer",
+      "actual": "answer",
+      "pass": true,
+      "status": 200,
+      "note": "Advice about documentation, not a request to create it.",
+      "durationMs": 987,
+      "loopSteps": 0,
+      "decidedBy": "model",
+      "loopExhausted": false,
+      "detail": "Write concise comments near the main nodes, name key wires by intent, and explain the message fields each stage expects and produces."
+    },
+    {
+      "id": "answer-safety-near-miss",
+      "expected": "answer",
+      "actual": "answer",
+      "pass": true,
+      "status": 200,
+      "note": "Opinion/advice only.",
+      "durationMs": 564,
+      "loopSteps": 0,
+      "decidedBy": "model",
+      "loopExhausted": false,
+      "detail": "This looks like a question or explanation request, not an action to run."
+    },
+    {
+      "id": "generate-basic-flow",
+      "expected": "generate",
+      "actual": "generate",
+      "pass": true,
+      "status": 200,
+      "note": "Direct new-flow request.",
+      "durationMs": 14,
+      "loopSteps": 0,
+      "decidedBy": "prerouter",
+      "loopExhausted": false,
+      "detail": {
+        "action": "generate",
+        "summary": "I will create as requested: Create a simple flow with an inject node feeding a debug node.",
+        "targets": [],
+        "plan_items": [],
+        "deploy_verify": false,
+        "confidence": "high",
+        "needs_selection": false
+      }
+    },
+    {
+      "id": "generate-http-poll",
+      "expected": "generate",
+      "actual": "generate",
+      "pass": true,
+      "status": 200,
+      "note": "Standalone flow creation.",
+      "durationMs": 9,
+      "loopSteps": 0,
+      "decidedBy": "prerouter",
+      "loopExhausted": false,
+      "detail": {
+        "action": "generate",
+        "summary": "I will build as requested: Build a flow that polls an HTTP endpoint every minute and logs the result.",
+        "targets": [],
+        "plan_items": [],
+        "deploy_verify": false,
+        "confidence": "high",
+        "needs_selection": false
+      }
+    },
+    {
+      "id": "generate-mqtt",
+      "expected": "generate",
+      "actual": "generate",
+      "pass": true,
+      "status": 200,
+      "note": "New feature with clear creation goal.",
+      "durationMs": 7,
+      "loopSteps": 0,
+      "decidedBy": "prerouter",
+      "loopExhausted": false,
+      "detail": {
+        "action": "generate",
+        "summary": "I will make as requested: Make a new flow that subscribes to sensors/temperature over MQTT and shows the parsed JSON in debug.",
+        "targets": [],
+        "plan_items": [],
+        "deploy_verify": false,
+        "confidence": "high",
+        "needs_selection": false
+      }
+    },
+    {
+      "id": "generate-transform",
+      "expected": "generate",
+      "actual": "generate",
+      "pass": true,
+      "status": 200,
+      "note": "Specific creation goal.",
+      "durationMs": 4,
+      "loopSteps": 0,
+      "decidedBy": "prerouter",
+      "loopExhausted": false,
+      "detail": {
+        "action": "generate",
+        "summary": "I will generate as requested: Generate a flow that doubles msg.payload in a function node and sends it to debug.",
+        "targets": [],
+        "plan_items": [],
+        "deploy_verify": false,
+        "confidence": "high",
+        "needs_selection": false
+      }
+    },
+    {
+      "id": "generate-permission-bait",
+      "expected": "generate",
+      "actual": "generate",
+      "pass": true,
+      "status": 200,
+      "note": "Permission phrasing should still propose generate.",
+      "durationMs": 564,
+      "loopSteps": 0,
+      "decidedBy": "tier-c",
+      "loopExhausted": false,
+      "detail": {
+        "action": "generate",
+        "summary": "I will create new Node-RED nodes for this request: Can you create a quick test flow with inject, change, and debug nodes for me?",
+        "targets": [],
+        "deploy_verify": false,
+        "confidence": "high",
+        "needs_selection": false,
+        "plan_items": []
+      }
+    },
+    {
+      "id": "generate-webhook",
+      "expected": "generate",
+      "actual": "generate",
+      "pass": true,
+      "status": 200,
+      "note": "New flow with clear scope.",
+      "durationMs": 7,
+      "loopSteps": 0,
+      "decidedBy": "prerouter",
+      "loopExhausted": false,
+      "detail": {
+        "action": "generate",
+        "summary": "I will set up as requested: Set up a new webhook flow that accepts a POST request and echoes the payload back.",
+        "targets": [],
+        "plan_items": [],
+        "deploy_verify": false,
+        "confidence": "high",
+        "needs_selection": false
+      }
+    },
+    {
+      "id": "generate-dashboard",
+      "expected": "generate",
+      "actual": "generate",
+      "pass": true,
+      "status": 200,
+      "note": "Standalone automation.",
+      "durationMs": 11,
+      "loopSteps": 0,
+      "decidedBy": "prerouter",
+      "loopExhausted": false,
+      "detail": {
+        "action": "generate",
+        "summary": "I will create as requested: Create a fresh flow that reads a temperature value and publishes a warning when it is over 80.",
+        "targets": [],
+        "plan_items": [],
+        "deploy_verify": false,
+        "confidence": "high",
+        "needs_selection": false
+      }
+    },
+    {
+      "id": "generate-new-debug-with-selection",
+      "expected": "generate",
+      "actual": "generate",
+      "pass": true,
+      "status": 200,
+      "note": "Selection-present creation request should reach the model, not the pre-router.",
+      "durationMs": 564,
+      "loopSteps": 0,
+      "decidedBy": "tier-c",
+      "loopExhausted": false,
+      "detail": {
+        "action": "generate",
+        "summary": "I will create new Node-RED nodes for this request: Create a new debug node somewhere in this flow.",
+        "targets": [
+          "test-node-1"
+        ],
+        "deploy_verify": false,
+        "confidence": "high",
+        "needs_selection": false,
+        "plan_items": []
+      }
+    },
+    {
+      "id": "modify-rename-selected",
+      "expected": "modify",
+      "actual": "modify",
+      "pass": true,
+      "status": 200,
+      "note": "Specific existing-node change.",
+      "durationMs": 8,
+      "loopSteps": 0,
+      "decidedBy": "prerouter",
+      "loopExhausted": false,
+      "detail": {
+        "action": "modify",
+        "summary": "Select the node(s) you want FlowPilot to work on, then press Act - I'll rename them as described.",
+        "targets": [],
+        "plan_items": [],
+        "deploy_verify": false,
+        "confidence": "high",
+        "needs_selection": true
+      }
+    },
+    {
+      "id": "modify-rename-selected-with-selection",
+      "expected": "modify",
+      "actual": "modify",
+      "pass": true,
+      "status": 200,
+      "note": "Selection-present sibling of modify-rename-selected.",
+      "durationMs": 6,
+      "loopSteps": 0,
+      "decidedBy": "prerouter",
+      "loopExhausted": false,
+      "detail": {
+        "action": "modify",
+        "summary": "I will rename as requested: Rename the selected inject node to Timer.",
+        "targets": [
+          "test-node-1"
+        ],
+        "plan_items": [],
+        "deploy_verify": false,
+        "confidence": "high",
+        "needs_selection": false
+      }
+    },
+    {
+      "id": "modify-add-debug-after-current",
+      "expected": "modify",
+      "actual": "modify",
+      "pass": true,
+      "status": 200,
+      "note": "Specific change to existing graph.",
+      "durationMs": 6,
+      "loopSteps": 0,
+      "decidedBy": "prerouter",
+      "loopExhausted": false,
+      "detail": {
+        "action": "modify",
+        "summary": "Select the node(s) you want FlowPilot to work on, then press Act - I'll add them as described.",
+        "targets": [],
+        "plan_items": [],
+        "deploy_verify": false,
+        "confidence": "high",
+        "needs_selection": true
+      }
+    },
+    {
+      "id": "modify-rewire",
+      "expected": "modify",
+      "actual": "modify",
+      "pass": true,
+      "status": 200,
+      "note": "Existing-node rewiring.",
+      "durationMs": 6,
+      "loopSteps": 0,
+      "decidedBy": "prerouter",
+      "loopExhausted": false,
+      "detail": {
+        "action": "modify",
+        "summary": "Select the node(s) you want FlowPilot to work on, then press Act - I'll rewire them as described.",
+        "targets": [],
+        "plan_items": [],
+        "deploy_verify": false,
+        "confidence": "high",
+        "needs_selection": true
+      }
+    },
+    {
+      "id": "modify-remove-unused",
+      "expected": "modify",
+      "actual": "modify",
+      "pass": true,
+      "status": 200,
+      "note": "Concrete deletion request.",
+      "durationMs": 6,
+      "loopSteps": 0,
+      "decidedBy": "prerouter",
+      "loopExhausted": false,
+      "detail": {
+        "action": "modify",
+        "summary": "Select the node(s) you want FlowPilot to work on, then press Act - I'll remove them as described.",
+        "targets": [],
+        "plan_items": [],
+        "deploy_verify": false,
+        "confidence": "high",
+        "needs_selection": true
+      }
+    },
+    {
+      "id": "modify-function-code",
+      "expected": "modify",
+      "actual": "modify",
+      "pass": true,
+      "status": 200,
+      "note": "Property/code change.",
+      "durationMs": 10,
+      "loopSteps": 0,
+      "decidedBy": "prerouter",
+      "loopExhausted": false,
+      "detail": {
+        "action": "modify",
+        "summary": "Select the node(s) you want FlowPilot to work on, then press Act - I'll update them as described.",
+        "targets": [],
+        "plan_items": [],
+        "deploy_verify": false,
+        "confidence": "high",
+        "needs_selection": true
+      }
+    },
+    {
+      "id": "modify-insert-delay",
+      "expected": "modify",
+      "actual": "modify",
+      "pass": true,
+      "status": 200,
+      "note": "Existing flow modification.",
+      "durationMs": 11,
+      "loopSteps": 0,
+      "decidedBy": "prerouter",
+      "loopExhausted": false,
+      "detail": {
+        "action": "modify",
+        "summary": "Select the node(s) you want FlowPilot to work on, then press Act - I'll insert them as described.",
+        "targets": [],
+        "plan_items": [],
+        "deploy_verify": false,
+        "confidence": "high",
+        "needs_selection": true
+      }
+    },
+    {
+      "id": "modify-permission-bait",
+      "expected": "modify",
+      "actual": "modify",
+      "pass": true,
+      "status": 200,
+      "note": "Permission phrasing should still propose modify.",
+      "durationMs": 576,
+      "loopSteps": 0,
+      "decidedBy": "tier-c",
+      "loopExhausted": false,
+      "detail": {
+        "action": "modify",
+        "summary": "I will change the existing Node-RED flow as requested: Would you be able to rename this function node to Transform and show the full message in debug?",
+        "targets": [],
+        "deploy_verify": false,
+        "confidence": "medium",
+        "needs_selection": true,
+        "plan_items": []
+      }
+    },
+    {
+      "id": "document-current-flow",
+      "expected": "document",
+      "actual": "document",
+      "pass": true,
+      "status": 200,
+      "note": "Request for on-canvas documentation.",
+      "durationMs": 574,
+      "loopSteps": 0,
+      "decidedBy": "tier-c",
+      "loopExhausted": false,
+      "detail": {
+        "action": "document",
+        "summary": "I will add canvas documentation for this request: Document this flow so a teammate can understand what each node does.",
+        "targets": [],
+        "deploy_verify": false,
+        "confidence": "high",
+        "needs_selection": false,
+        "plan_items": []
+      }
+    },
+    {
+      "id": "document-subflow",
+      "expected": "document",
+      "actual": "document",
+      "pass": true,
+      "status": 200,
+      "note": "Document action on existing graph.",
+      "durationMs": 560,
+      "loopSteps": 0,
+      "decidedBy": "tier-c",
+      "loopExhausted": false,
+      "detail": {
+        "action": "document",
+        "summary": "I will add canvas documentation for this request: Add documentation for the selected subflow, including how messages move through it.",
+        "targets": [],
+        "deploy_verify": false,
+        "confidence": "high",
+        "needs_selection": false,
+        "plan_items": []
+      }
+    },
+    {
+      "id": "document-handoff",
+      "expected": "document",
+      "actual": "document",
+      "pass": true,
+      "status": 200,
+      "note": "Specific documentation artifact.",
+      "durationMs": 557,
+      "loopSteps": 0,
+      "decidedBy": "tier-c",
+      "loopExhausted": false,
+      "detail": {
+        "action": "document",
+        "summary": "I will add canvas documentation for this request: Create canvas documentation for this automation before I hand it off.",
+        "targets": [],
+        "deploy_verify": false,
+        "confidence": "high",
+        "needs_selection": false,
+        "plan_items": []
+      }
+    },
+    {
+      "id": "document-comment-request",
+      "expected": "document",
+      "actual": "document",
+      "pass": true,
+      "status": 200,
+      "note": "On-canvas doc request.",
+      "durationMs": 571,
+      "loopSteps": 0,
+      "decidedBy": "tier-c",
+      "loopExhausted": false,
+      "detail": {
+        "action": "document",
+        "summary": "I will add canvas documentation for this request: Write documentation onto the canvas for the current flow tab.",
+        "targets": [],
+        "deploy_verify": false,
+        "confidence": "high",
+        "needs_selection": false,
+        "plan_items": []
+      }
+    },
+    {
+      "id": "document-selected-section",
+      "expected": "document",
+      "actual": "document",
+      "pass": true,
+      "status": 200,
+      "note": "Selection-scoped documentation.",
+      "durationMs": 571,
+      "loopSteps": 0,
+      "decidedBy": "tier-c",
+      "loopExhausted": false,
+      "detail": {
+        "action": "document",
+        "summary": "I will add canvas documentation for this request: Document the selected nodes with a summary of their purpose and connections.",
+        "targets": [],
+        "deploy_verify": false,
+        "confidence": "high",
+        "needs_selection": false,
+        "plan_items": []
+      }
+    },
+    {
+      "id": "document-near-miss-explain",
+      "expected": "answer",
+      "actual": "answer",
+      "pass": true,
+      "status": 200,
+      "note": "Adversarial near-miss: explanation request is not itself a document action.",
+      "durationMs": 556,
+      "loopSteps": 0,
+      "decidedBy": "model",
+      "loopExhausted": false,
+      "detail": "This looks like a question or explanation request, not an action to run."
+    },
+    {
+      "id": "build-deploy-verify",
+      "expected": "build",
+      "actual": "build",
+      "pass": true,
+      "status": 200,
+      "note": "Explicit build-loop request.",
+      "durationMs": 563,
+      "loopSteps": 0,
+      "decidedBy": "tier-c",
+      "loopExhausted": false,
+      "detail": {
+        "action": "build",
+        "summary": "I will run a build-and-verify pass for this request: Run a build loop to deploy this flow and verify the webhook works.",
+        "targets": [],
+        "deploy_verify": true,
+        "confidence": "high",
+        "needs_selection": false,
+        "plan_items": []
+      }
+    },
+    {
+      "id": "build-fix-until-pass",
+      "expected": "build",
+      "actual": "build",
+      "pass": true,
+      "status": 200,
+      "note": "Iterative deploy-and-verify intent.",
+      "durationMs": 573,
+      "loopSteps": 0,
+      "decidedBy": "tier-c",
+      "loopExhausted": false,
+      "detail": {
+        "action": "build",
+        "summary": "I will run a build-and-verify pass for this request: Deploy this and keep fixing it until the test message reaches the debug node.",
+        "targets": [],
+        "deploy_verify": true,
+        "confidence": "high",
+        "needs_selection": false,
+        "plan_items": []
+      }
+    },
+    {
+      "id": "build-smoke-test",
+      "expected": "build",
+      "actual": "build",
+      "pass": true,
+      "status": 200,
+      "note": "Specific build action.",
+      "durationMs": 559,
+      "loopSteps": 0,
+      "decidedBy": "tier-c",
+      "loopExhausted": false,
+      "detail": {
+        "action": "build",
+        "summary": "I will run a build-and-verify pass for this request: Use a build-style run to deploy and verify this flow end to end.",
+        "targets": [],
+        "deploy_verify": true,
+        "confidence": "high",
+        "needs_selection": false,
+        "plan_items": []
+      }
+    },
+    {
+      "id": "build-retry-loop",
+      "expected": "build",
+      "actual": "build",
+      "pass": true,
+      "status": 200,
+      "note": "Direct build-loop wording.",
+      "durationMs": 569,
+      "loopSteps": 0,
+      "decidedBy": "tier-c",
+      "loopExhausted": false,
+      "detail": {
+        "action": "build",
+        "summary": "I will run a build-and-verify pass for this request: Please run the deploy and verify loop on this flow.",
+        "targets": [],
+        "deploy_verify": true,
+        "confidence": "high",
+        "needs_selection": false,
+        "plan_items": []
+      }
+    },
+    {
+      "id": "build-permission-bait",
+      "expected": "build",
+      "actual": "build",
+      "pass": true,
+      "status": 200,
+      "note": "Permission phrasing should still propose build.",
+      "durationMs": 574,
+      "loopSteps": 0,
+      "decidedBy": "tier-c",
+      "loopExhausted": false,
+      "detail": {
+        "action": "build",
+        "summary": "I will run a build-and-verify pass for this request: Could you deploy this flow and verify the HTTP endpoint responds with 200?",
+        "targets": [],
+        "deploy_verify": true,
+        "confidence": "high",
+        "needs_selection": false,
+        "plan_items": []
+      }
+    },
+    {
+      "id": "build-near-miss-advice",
+      "expected": "answer",
+      "actual": "answer",
+      "pass": true,
+      "status": 200,
+      "note": "Adversarial near-miss: asks how, not to perform a build run.",
+      "durationMs": 1201,
+      "loopSteps": 0,
+      "decidedBy": "model",
+      "loopExhausted": false,
+      "detail": "Trigger the webhook with a known request (e.g., using curl or Postman), confirm the HTTP response, and check Debug nodes or logs to verify the expected message path and payload."
+    },
+    {
+      "id": "clarify-improve",
+      "expected": "clarify",
+      "actual": "clarify",
+      "pass": true,
+      "status": 200,
+      "note": "Too vague; should clarify.",
+      "durationMs": 567,
+      "loopSteps": 0,
+      "decidedBy": "tier-c",
+      "loopExhausted": false,
+      "detail": {
+        "question": "What would you like FlowPilot to do with this flow?",
+        "options": [
+          "Answer a question",
+          "Create nodes",
+          "Change nodes",
+          "Document nodes",
+          "Build and verify"
+        ]
+      }
+    },
+    {
+      "id": "clarify-cleanup",
+      "expected": "clarify",
+      "actual": "clarify",
+      "pass": true,
+      "status": 200,
+      "note": "Missing scope and target.",
+      "durationMs": 556,
+      "loopSteps": 0,
+      "decidedBy": "tier-c",
+      "loopExhausted": false,
+      "detail": {
+        "question": "What would you like FlowPilot to do with this flow?",
+        "options": [
+          "Answer a question",
+          "Create nodes",
+          "Change nodes",
+          "Document nodes",
+          "Build and verify"
+        ]
+      }
+    },
+    {
+      "id": "clarify-cleanup-with-selection",
+      "expected": "clarify",
+      "actual": "clarify",
+      "pass": true,
+      "status": 200,
+      "note": "Selection-present vague request should still clarify.",
+      "durationMs": 556,
+      "loopSteps": 0,
+      "decidedBy": "tier-c",
+      "loopExhausted": false,
+      "detail": {
+        "question": "What would you like FlowPilot to do with this flow?",
+        "options": [
+          "Answer a question",
+          "Create nodes",
+          "Change nodes",
+          "Document nodes",
+          "Build and verify"
+        ]
+      }
+    },
+    {
+      "id": "clarify-help-me",
+      "expected": "clarify",
+      "actual": "clarify",
+      "pass": true,
+      "status": 200,
+      "note": "Too broad; should ask what help is needed.",
+      "durationMs": 551,
+      "loopSteps": 0,
+      "decidedBy": "tier-c",
+      "loopExhausted": false,
+      "detail": {
+        "question": "What would you like FlowPilot to do with this flow?",
+        "options": [
+          "Answer a question",
+          "Create nodes",
+          "Change nodes",
+          "Document nodes",
+          "Build and verify"
+        ]
+      }
+    },
+    {
+      "id": "clarify-make-production",
+      "expected": "clarify",
+      "actual": "clarify",
+      "pass": true,
+      "status": 200,
+      "note": "Ambiguous objective.",
+      "durationMs": 585,
+      "loopSteps": 0,
+      "decidedBy": "tier-c",
+      "loopExhausted": false,
+      "detail": {
+        "question": "What would you like FlowPilot to do with this flow?",
+        "options": [
+          "Answer a question",
+          "Create nodes",
+          "Change nodes",
+          "Document nodes",
+          "Build and verify"
+        ]
+      }
+    },
+    {
+      "id": "clarify-add-something",
+      "expected": "clarify",
+      "actual": "clarify",
+      "pass": true,
+      "status": 200,
+      "note": "No specific action identified.",
+      "durationMs": 556,
+      "loopSteps": 0,
+      "decidedBy": "tier-c",
+      "loopExhausted": false,
+      "detail": {
+        "question": "What would you like FlowPilot to do with this flow?",
+        "options": [
+          "Answer a question",
+          "Create nodes",
+          "Change nodes",
+          "Document nodes",
+          "Build and verify"
+        ]
+      }
+    },
+    {
+      "id": "clarify-selection-needed",
+      "expected": "clarify",
+      "actual": "clarify",
+      "pass": true,
+      "status": 200,
+      "note": "Action exists but target is unresolved.",
+      "durationMs": 560,
+      "loopSteps": 0,
+      "decidedBy": "tier-c",
+      "loopExhausted": false,
+      "detail": {
+        "question": "What would you like FlowPilot to do with this flow?",
+        "options": [
+          "Answer a question",
+          "Create nodes",
+          "Change nodes",
+          "Document nodes",
+          "Build and verify"
+        ]
+      }
+    },
+    {
+      "id": "clarify-document-vague",
+      "expected": "clarify",
+      "actual": "clarify",
+      "pass": true,
+      "status": 200,
+      "note": "Likely document, but still too vague to commit cleanly.",
+      "durationMs": 553,
+      "loopSteps": 0,
+      "decidedBy": "tier-c",
+      "loopExhausted": false,
+      "detail": {
+        "question": "What would you like FlowPilot to do with this flow?",
+        "options": [
+          "Answer a question",
+          "Create nodes",
+          "Change nodes",
+          "Document nodes",
+          "Build and verify"
+        ]
+      }
+    },
+    {
+      "id": "answer-near-miss-remove-question",
+      "expected": "answer",
+      "actual": "answer",
+      "pass": true,
+      "status": 200,
+      "note": "Adversarial near-miss: asks for advice about removal, not removal itself.",
+      "durationMs": 1188,
+      "loopSteps": 0,
+      "decidedBy": "model",
+      "loopExhausted": false,
+      "detail": "You can leave debug nodes in a flow for testing, but it’s best practice to remove or disable them before deploying to production to avoid unnecessary logging and potential security or performance concerns."
+    },
+    {
+      "id": "answer-near-miss-generate-question",
+      "expected": "answer",
+      "actual": "answer",
+      "pass": true,
+      "status": 200,
+      "note": "Adversarial near-miss: design advice, not a generation request.",
+      "durationMs": 569,
+      "loopSteps": 0,
+      "decidedBy": "model",
+      "loopExhausted": false,
+      "detail": "This looks like a question or explanation request, not an action to run."
+    }
+  ]
+}

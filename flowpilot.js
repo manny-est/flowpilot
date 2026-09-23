@@ -203,15 +203,62 @@ function isDeterministicPreRouterToolCall(call) {
     call.id.indexOf(PRE_ROUTER_TOOL_CALL_ID_PREFIX) === 0);
 }
 
-// ADR-013 ("Auto capability routing"): most users never touch this. In
-// "auto" mode (the default) the effective tier is derived from the live
-// tool-calling probe already run by Pre-flight check / the silent re-probe
-// (provider.supportsTools) — Tier A when the model can call tools, Tier C
-// (classify first, then act) when it can't. Tier B is a narrowed,
-// unexercised stub (see agentToolsFor) and is deliberately never chosen
-// automatically — it's reachable only via an explicit manual override.
-// "manual" mode uses the hand-picked routingTier as-is, exactly like
-// pre-0.6.4 behavior, for anyone who already knew what they were doing.
+// ADR-013 (amended per the architect's 2026-09-23 review): tool-calling
+// capability is not the same axis as routing reliability. Gate P1 (see
+// Phase11-Build-Progress.md, CODEX-041) measured spark — a local,
+// tool-capable model — at 100% on document/build/clarify under Tier C
+// (classify first, then act) vs. 68.9% under Tier A (native tool call),
+// on the full 45-case corpus. A rule that sends every tool-capable model to
+// Tier A assigns exactly the measured-worse shape to any local deployment.
+// isLocalDeployment classifies by DEPLOYMENT (cloud-frontier vs.
+// self-hosted), not by raw model size — ADR-011 explicitly warned off
+// trying to auto-detect true model size from an arbitrary endpoint, and
+// this doesn't attempt that; it uses the preset the user themselves picked
+// (ADR-012), falling back to the provider's own baseUrl only for "custom"
+// (ADR-012: the deliberately ambiguous escape hatch preset).
+function isPrivateNetworkHost(rawBaseUrl) {
+  let hostname;
+  try {
+    hostname = new URL(String(rawBaseUrl || "")).hostname.toLowerCase();
+  } catch (err) {
+    return false;
+  }
+  if (!hostname) { return false; }
+  if (hostname === "localhost" || hostname.endsWith(".localhost")) { return true; }
+  if (hostname === "::1") { return true; }
+  if (hostname.startsWith("fe80:") || hostname.startsWith("fc") || hostname.startsWith("fd")) {
+    return true; // IPv6 link-local / unique-local
+  }
+  const ipv4 = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!ipv4) { return false; }
+  const octets = ipv4.slice(1).map(Number);
+  if (octets.some(function (n) { return n > 255; })) { return false; }
+  const [a, b] = octets;
+  if (a === 127) { return true; } // loopback
+  if (a === 10) { return true; } // 10.0.0.0/8
+  if (a === 172 && b >= 16 && b <= 31) { return true; } // 172.16.0.0/12
+  if (a === 192 && b === 168) { return true; } // 192.168.0.0/16
+  if (a === 169 && b === 254) { return true; } // link-local
+  return false;
+}
+
+function isLocalDeployment(provider) {
+  const preset = providerPresets.getPreset(provider && provider.presetId);
+  if (preset && preset.deploymentClass) { return preset.deploymentClass === "local"; }
+  return isPrivateNetworkHost(provider && provider.baseUrl);
+}
+
+// "auto" mode (the default) derives the effective tier from two live
+// signals: the tool-calling probe already run by Pre-flight check / the
+// silent re-probe (provider.supportsTools), and deployment class (above).
+// No tools -> Tier C. Tools on a cloud/frontier provider -> Tier A. Tools
+// on a local/self-hosted provider -> Tier C too, per the Gate P1 evidence
+// above -- capability to emit a tool call isn't the same as routing
+// reliably with one. Tier B is a narrowed, unexercised stub (see
+// agentToolsFor) and is deliberately never chosen automatically -- it's
+// reachable only via an explicit manual override. "manual" mode uses the
+// hand-picked routingTier as-is, exactly like pre-0.6.4 behavior, for
+// anyone who already knew what they were doing.
 function normalizedRoutingTier(provider) {
   const mode = provider && provider.routingTierMode === "manual" ? "manual" : "auto";
   if (mode === "manual") {
@@ -220,7 +267,8 @@ function normalizedRoutingTier(provider) {
       : "";
     return ROUTING_TIERS.has(tier) ? tier : "A";
   }
-  return provider && provider.supportsTools === true ? "A" : "C";
+  if (!(provider && provider.supportsTools === true)) { return "C"; }
+  return isLocalDeployment(provider) ? "C" : "A";
 }
 
 function normalizeProposeActionArguments(args, context) {
@@ -3912,6 +3960,8 @@ function flowPilotRuntime(RED) {
 
 flowPilotRuntime.runDeterministicPreRouter = runDeterministicPreRouter;
 flowPilotRuntime.normalizedRoutingTier = normalizedRoutingTier;
+flowPilotRuntime.isLocalDeployment = isLocalDeployment;
+flowPilotRuntime.isPrivateNetworkHost = isPrivateNetworkHost;
 flowPilotRuntime.parseTierCClassification = parseTierCClassification;
 flowPilotRuntime.tierCClassificationToResult = tierCClassificationToResult;
 module.exports = flowPilotRuntime;
