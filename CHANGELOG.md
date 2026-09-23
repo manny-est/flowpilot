@@ -2,7 +2,14 @@
 
 All notable changes to FlowPilot are documented here.
 
-## [0.6.3] - 2026-09-23
+## [0.6.3-beta.1] - 2026-09-23
+
+**Beta release** — shipped on npm's `beta` dist-tag for the OpenRouter
+forum requester (and anyone else who wants it early) to test ahead of
+general availability. Install with
+`npm install @manny-est/node-red-flowpilot@beta`. If you hit a problem,
+please report it — a stable `0.6.3` follows once this beta is
+confirmed working, or after roughly a week with no reported issues.
 
 ### Fixed
 - **OpenRouter (and other OpenAI-compatible providers documented with a
