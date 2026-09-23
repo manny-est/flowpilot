@@ -203,11 +203,24 @@ function isDeterministicPreRouterToolCall(call) {
     call.id.indexOf(PRE_ROUTER_TOOL_CALL_ID_PREFIX) === 0);
 }
 
+// ADR-013 ("Auto capability routing"): most users never touch this. In
+// "auto" mode (the default) the effective tier is derived from the live
+// tool-calling probe already run by Pre-flight check / the silent re-probe
+// (provider.supportsTools) — Tier A when the model can call tools, Tier C
+// (classify first, then act) when it can't. Tier B is a narrowed,
+// unexercised stub (see agentToolsFor) and is deliberately never chosen
+// automatically — it's reachable only via an explicit manual override.
+// "manual" mode uses the hand-picked routingTier as-is, exactly like
+// pre-0.6.4 behavior, for anyone who already knew what they were doing.
 function normalizedRoutingTier(provider) {
-  const tier = provider && typeof provider.routingTier === "string"
-    ? provider.routingTier.trim().toUpperCase()
-    : "";
-  return ROUTING_TIERS.has(tier) ? tier : "A";
+  const mode = provider && provider.routingTierMode === "manual" ? "manual" : "auto";
+  if (mode === "manual") {
+    const tier = provider && typeof provider.routingTier === "string"
+      ? provider.routingTier.trim().toUpperCase()
+      : "";
+    return ROUTING_TIERS.has(tier) ? tier : "A";
+  }
+  return provider && provider.supportsTools === true ? "A" : "C";
 }
 
 function normalizeProposeActionArguments(args, context) {
@@ -2120,6 +2133,12 @@ function flowPilotRuntime(RED) {
     });
     if (badRoutingTier) {
       return "Provider routingTier must be A, B, or C.";
+    }
+    const badRoutingTierMode = body.providers.find(function (p) {
+      return p && p.routingTierMode !== undefined && p.routingTierMode !== "auto" && p.routingTierMode !== "manual";
+    });
+    if (badRoutingTierMode) {
+      return "Provider routingTierMode must be auto or manual.";
     }
     return null;
   }

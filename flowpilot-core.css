@@ -1208,6 +1208,18 @@
     line-height: 1.4;
 }
 
+/* Plain-language "Assistant capability" readout (ADR-013) — a status line,
+   not a control, so it's styled like a small inline badge rather than a
+   form field. */
+.fp-tier-status {
+    font-size: 13px;
+    padding: 6px 10px;
+    margin: 4px 0;
+    border-radius: 4px;
+    background: var(--red-ui-tertiary-background, #f4f4f4);
+    border: 1px solid var(--red-ui-secondary-border-color, #ddd);
+}
+
 .fp-agent-stats {
     margin: -4px 0 8px 4px;
     font-size: 11px;
