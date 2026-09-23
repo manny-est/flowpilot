@@ -1140,14 +1140,23 @@
     color: var(--red-ui-secondary-text-color, #777);
 }
 
-.fp-settings-group {
+/* .fp-provider-advanced (0.6.3) shares this look but is DELIBERATELY a
+   separate class from .fp-settings-group: the Settings accordion (see
+   init.js, "only one section expanded at a time") selects on
+   ".fp-settings-group > summary" and closes every OTHER .fp-settings-group
+   when one opens. Advanced lives NESTED inside the Providers group — if it
+   carried the same class, opening it would make the accordion close its
+   own parent (Providers), hiding Advanced along with everything else in
+   that section. Giving it its own class keeps the identical visual style
+   without opting into that top-level, siblings-only behavior. */
+.fp-settings-group, .fp-provider-advanced {
     margin-top: 14px;
     padding: 0 12px 12px 12px;
     border: 1px solid var(--red-ui-secondary-border-color, #ddd);
     border-radius: 6px;
 }
 
-.fp-settings-group > summary {
+.fp-settings-group > summary, .fp-provider-advanced > summary {
     margin: 0 -12px;
     cursor: pointer;
     padding: 10px 12px;
@@ -1159,22 +1168,22 @@
     user-select: none;
 }
 
-.fp-settings-group > summary::-webkit-details-marker {
+.fp-settings-group > summary::-webkit-details-marker, .fp-provider-advanced > summary::-webkit-details-marker {
     display: none;
 }
 
-.fp-settings-group > summary::before {
+.fp-settings-group > summary::before, .fp-provider-advanced > summary::before {
     content: "▸";
     display: inline-block;
     width: 1em;
     color: var(--red-ui-secondary-text-color, #888);
 }
 
-.fp-settings-group[open] > summary::before {
+.fp-settings-group[open] > summary::before, .fp-provider-advanced[open] > summary::before {
     content: "▾";
 }
 
-.fp-settings-group > .fp-settings-section:first-of-type {
+.fp-settings-group > .fp-settings-section:first-of-type, .fp-provider-advanced > .fp-settings-section:first-of-type {
     margin-top: 0;
     padding-top: 0;
     border-top: none;
