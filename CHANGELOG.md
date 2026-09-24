@@ -2,6 +2,32 @@
 
 All notable changes to FlowPilot are documented here.
 
+## [0.6.3-beta.2] - 2026-09-23
+
+**Beta release** — same beta window as 0.6.3-beta.1, fixing issues
+found during testing. Install/update with
+`npm install @manny-est/node-red-flowpilot@beta`.
+
+### Fixed
+- **The "Advanced" section in Settings couldn't be expanded** — clicking
+  it collapsed its own parent section (Providers) along with it, hiding
+  both. Advanced now opens independently.
+- **Saving or testing one provider could be blocked by a problem with a
+  completely different, unrelated provider** — a single provider with
+  incomplete or bad data (e.g. a cleared Base URL) could prevent saving
+  or testing every other configured provider. Save/Test validation now
+  only checks the provider you're actively working with. Related: unsaved
+  edits to a provider are now discarded when you switch to a different
+  one without saving, instead of silently carrying forward.
+
+### Added
+- **`/bug`** — a quick command for reporting a bug, with a link to the
+  GitHub issues page.
+- **`/feedback`** — revised for feature requests and general feedback:
+  the same issues page (put "feedback" in the title), or a direct DM on
+  the [Node-RED forum](https://discourse.nodered.org/u?name=manny-est)
+  for anything you'd rather send privately.
+
 ## [0.6.3-beta.1] - 2026-09-23
 
 **Beta release** — shipped on npm's `beta` dist-tag for the OpenRouter
