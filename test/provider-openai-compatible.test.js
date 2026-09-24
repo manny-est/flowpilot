@@ -4,7 +4,7 @@ const assert = require("assert");
 const EventEmitter = require("events");
 const http = require("http");
 const https = require("https");
-const { chatStream, normalizeApiBase, chatCompletionsUrl, modelsUrl } = require("../lib/provider-openai-compatible");
+const { chat, chatStream, probeTools, normalizeApiBase, chatCompletionsUrl, modelsUrl } = require("../lib/provider-openai-compatible");
 
 // 0.6.3 §2A / §4: table-driven — every shape named in the sprint scope,
 // plus the actual saved configs on the dev containers as of 2026-09-23
@@ -85,6 +85,122 @@ function withMockedRequest(responseFactory, run) {
     });
 }
 
+// Non-streaming variant of withMockedRequest, for chat()/probeTools() (which
+// use postJson — a single JSON response body, not SSE). `responder(options,
+// parsedBody)` returns `{ statusCode, body }`; every call's options and
+// parsed request body are captured in `calls` (passed to `run`).
+function withMockedJsonRequest(responder, run) {
+  const originalHttpRequest = http.request;
+  const originalHttpsRequest = https.request;
+  const calls = [];
+
+  function fakeRequest(options, callback) {
+    const req = new EventEmitter();
+    let written = "";
+    req.setTimeout = function () {};
+    req.write = function (chunk) { written += chunk; };
+    req.destroy = function (err) {
+      process.nextTick(function () { req.emit("error", err); });
+    };
+    req.end = function () {
+      let parsedBody = null;
+      try { parsedBody = written ? JSON.parse(written) : null; } catch (e) { /* ignore */ }
+      const outcome = responder(options, parsedBody) || {};
+      calls.push({ options: options, body: parsedBody, outcome: outcome });
+      const res = new EventEmitter();
+      res.statusCode = outcome.statusCode !== undefined ? outcome.statusCode : 200;
+      res.setEncoding = function () {};
+      callback(res);
+      process.nextTick(function () {
+        res.emit("data", JSON.stringify(outcome.body !== undefined ? outcome.body : {}));
+        res.emit("end");
+      });
+    };
+    return req;
+  }
+
+  http.request = fakeRequest;
+  https.request = fakeRequest;
+
+  return Promise.resolve()
+    .then(function () { return run(calls); })
+    .finally(function () {
+      http.request = originalHttpRequest;
+      https.request = originalHttpsRequest;
+    });
+}
+
+// vLLM (0.6.3 §review, "known-untested-provider" gap) needs
+// --enable-auto-tool-choice + --tool-call-parser to support tool calls at
+// all -- without those flags it 400s on any request carrying "tools", per
+// its own docs. probeTools() must resolve (never throw) with
+// supportsTools:false so Test Provider still passes -- a probe failure is
+// "no tool support," never a connectivity failure. This also confirms
+// (via the second chat() call) that supportsTools:false is exactly what
+// drives normalizedRoutingTier's auto mode to Tier C (flowpilot.js,
+// test/routing-tier.test.js already covers that half).
+async function testProbeToolsRejectedByProviderDoesNotThrow() {
+  await withMockedJsonRequest(function (options, body) {
+    if (body && Array.isArray(body.tools) && body.tools.length) {
+      return { statusCode: 400, body: { error: { message: "tools are not supported" } } };
+    }
+    return { statusCode: 200, body: { choices: [{ message: { content: "hello" } }] } };
+  }, async function () {
+    const settings = { baseUrl: "http://localhost:8000/v1", model: "test-model", requestTimeoutMs: 1000 };
+
+    const probe = await probeTools(settings);
+    assert.strictEqual(probe.supportsTools, false, "probeTools must resolve false, not throw, when the provider rejects a tools request");
+    assert.ok(probe.error, "probeTools should surface the rejection reason for diagnostics");
+
+    // Test Provider's plain connectivity check carries no tools -- it must
+    // still succeed even though the capability probe above failed.
+    const result = await chat(settings, [{ role: "user", content: "hi" }]);
+    assert.strictEqual(result.content, "hello", "the plain connectivity check must still pass even though probeTools failed");
+  });
+}
+
+// An empty apiKey (every local preset's default) must never produce a
+// broken "Bearer " Authorization header -- chat()/chatStream()/listModels()/
+// probeTools() all guard with `if (settings.apiKey)`, a truthy check.
+async function testEmptyApiKeySendsNoAuthorizationHeader() {
+  await withMockedJsonRequest(function () {
+    return { statusCode: 200, body: { choices: [{ message: { content: "ok" } }] } };
+  }, async function (calls) {
+    await chat({ baseUrl: "http://localhost:1234/v1", model: "test-model", apiKey: "", requestTimeoutMs: 1000 },
+      [{ role: "user", content: "hi" }]);
+    assert.strictEqual(calls[0].options.headers.Authorization, undefined,
+      "an empty apiKey must never produce a broken Authorization header");
+  });
+}
+
+// ADR-013 sprint follow-up: OpenRouter's ZDR toggle already has live
+// verification (echo server, real request body). Attribution headers had
+// none -- this closes that gap with repeatable, automated coverage: off by
+// default, on only when explicitly enabled, and OpenRouter-preset-only
+// (never applied to Custom even if the flag is somehow set, since
+// applyOpenRouterExtras keys on presetId, not baseUrl pattern-matching).
+async function testAttributionHeadersOnlyWhenEnabledAndOnlyForOpenRouter() {
+  await withMockedJsonRequest(function () {
+    return { statusCode: 200, body: { choices: [{ message: { content: "ok" } }] } };
+  }, async function (calls) {
+    const base = { baseUrl: "https://openrouter.ai/api/v1", model: "test-model", presetId: "openrouter", requestTimeoutMs: 1000 };
+
+    await chat(base, [{ role: "user", content: "hi" }]); // attributionEnabled unset entirely -- the real default
+    assert.strictEqual(calls[0].options.headers["HTTP-Referer"], undefined, "attribution headers absent by default");
+    assert.strictEqual(calls[0].options.headers["X-Title"], undefined, "attribution headers absent by default");
+
+    await chat(Object.assign({}, base, { attributionEnabled: false }), [{ role: "user", content: "hi" }]);
+    assert.strictEqual(calls[1].options.headers["HTTP-Referer"], undefined, "attribution headers absent when explicitly off");
+
+    await chat(Object.assign({}, base, { attributionEnabled: true }), [{ role: "user", content: "hi" }]);
+    assert.strictEqual(calls[2].options.headers["HTTP-Referer"], "https://github.com/manny-est/flowpilot", "attribution headers present when enabled");
+    assert.strictEqual(calls[2].options.headers["X-Title"], "FlowPilot", "attribution headers present when enabled");
+
+    await chat(Object.assign({}, base, { presetId: "custom", attributionEnabled: true }), [{ role: "user", content: "hi" }]);
+    assert.strictEqual(calls[3].options.headers["HTTP-Referer"], undefined, "attribution must be OpenRouter-preset-only, never applied to Custom");
+  });
+}
+
 // ADR-007 (SSRF mitigation): the error message must be generic — never the
 // raw upstream body. Before that fix, a non-provider target's response text
 // ("this is not sse at all", here standing in for anything an SSRF target
@@ -147,6 +263,9 @@ async function testValidSseResponse() {
   testNormalizeApiBase();
   await testMalformedNonSseResponse();
   await testValidSseResponse();
+  await testProbeToolsRejectedByProviderDoesNotThrow();
+  await testEmptyApiKeySendsNoAuthorizationHeader();
+  await testAttributionHeadersOnlyWhenEnabledAndOnlyForOpenRouter();
   console.log("provider-openai-compatible tests passed");
 })().catch(function (err) {
   console.error(err);
