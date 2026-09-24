@@ -27,7 +27,14 @@ function testNormalizeApiBase() {
     // IDENTICALLY to how the old unconditional-append code already
     // resolved them, i.e. zero behavior change for existing providers.
     ["http://192.168.1.15:8080", "http://192.168.1.15:8080/v1/chat/completions", "real saved config: LocalAI/spark, bare host+port"],
-    ["https://api.openai.com", "https://api.openai.com/v1/chat/completions", "real saved config: OpenAI test provider, bare host"]
+    ["https://api.openai.com", "https://api.openai.com/v1/chat/completions", "real saved config: OpenAI test provider, bare host"],
+    // Pre-beta.1 addition (design-chat rule): a full endpoint that does NOT
+    // end in "/v1" (a non-standard gateway path, e.g. Open WebUI's own
+    // "/api/chat/completions") must be used VERBATIM — the old logic
+    // stripped this suffix unconditionally and forced a "/v1" into a path
+    // that was never supposed to have one, breaking exactly this case.
+    ["http://host:3000/api/chat/completions", "http://host:3000/api/chat/completions", "full non-/v1 endpoint (Open WebUI-style) used verbatim, no /v1 forced in"],
+    ["http://host:3000/api/chat/completions/", "http://host:3000/api/chat/completions", "verbatim rule also tolerates a trailing slash"]
   ];
   cases.forEach(function (c) {
     const input = c[0], expectedChat = c[1], label = c[2];
