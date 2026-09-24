@@ -85,6 +85,7 @@ const { extractJsonObject } = require("./lib/envelope");
 const { repairEnvelope } = require("./lib/validator");
 const { enforceAgentContract } = require("./lib/agent-contract");
 const { isProviderShapedResponse } = require("./lib/provider-shape-check");
+const { dockerLocalhostHintSuffix } = require("./lib/docker-localhost-hint");
 const providerPresets = require("./lib/provider-presets");
 const API_KEY_UNCHANGED = createStorage.API_KEY_UNCHANGED;
 const UPDATE_CHECK_URL = "https://registry.npmjs.org/-/package/@manny-est/node-red-flowpilot/dist-tags";
@@ -2640,7 +2641,8 @@ function flowPilotRuntime(RED) {
         });
         return res.status(422).json({
           error: "provider_check_failed",
-          message: "Not a valid provider endpoint (no FlowPilot-compatible response)."
+          message: "Not a valid provider endpoint (no FlowPilot-compatible response)." +
+            dockerLocalhostHintSuffix(activeProvider.baseUrl)
         });
       }
 
@@ -2700,7 +2702,22 @@ function flowPilotRuntime(RED) {
       });
     } catch (err) {
       storage.appendAudit({ action: "chat_test_error", error: err.message });
-      res.status(500).json({ error: err.message });
+      // `activeProvider` isn't guaranteed to be bound here — runChat() may
+      // have thrown before ever returning it (e.g. a real connection
+      // failure, the case this hint exists for) — so its baseUrl is looked
+      // up fresh rather than referencing that (possibly-unbound) const.
+      let hint = "";
+      try {
+        const fallbackSettings = storage.getSettings();
+        hint = dockerLocalhostHintSuffix(storage.getActiveProvider(fallbackSettings).baseUrl);
+      } catch (lookupErr) { /* best-effort hint only — never let this mask the real error */ }
+      // A real ECONNREFUSED (found live while verifying this hint against
+      // an actual Dockerized instance) carries its info in err.code with an
+      // EMPTY err.message on this Node version — without this fallback the
+      // response would be a bare, unhelpful "" right when the hint matters
+      // most. Not otherwise part of this fix's scope; narrowly patched here.
+      const baseMessage = err.message || (err.code ? "Connection failed (" + err.code + ")." : "Provider request failed.");
+      res.status(500).json({ error: baseMessage + hint });
     }
   });
 
