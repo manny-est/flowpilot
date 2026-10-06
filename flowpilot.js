@@ -2753,7 +2753,8 @@ function flowPilotRuntime(RED) {
         });
         return res.status(422).json({
           error: "provider_check_failed",
-          message: "Not a valid provider endpoint (no FlowPilot-compatible response)."
+          message: "Not a valid provider endpoint (no FlowPilot-compatible response)." +
+            dockerLocalhostHintSuffix(activeProvider.baseUrl)
         });
       }
 

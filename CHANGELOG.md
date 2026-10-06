@@ -2,7 +2,111 @@
 
 All notable changes to FlowPilot are documented here.
 
-## [0.6.3] - 2026-09-23
+## [0.6.3] - 2026-10-05
+
+Promoted from the beta track after real-world confirmation: the
+OpenRouter forum requester who originally reported the base-URL bug
+confirmed `0.6.3-beta.2` works for their OpenRouter + ZDR setup, and no
+other problems were reported during the beta window.
+
+### Fixed
+- **OpenRouter (and other OpenAI-compatible providers documented with a
+  base URL that already includes `/v1`) couldn't connect at all —
+  following the provider's own docs produced a doubled
+  `.../v1/v1/chat/completions` 404.** Every affected provider (OpenAI,
+  OpenRouter, Ollama, LM Studio, LocalAI, llama.cpp server, vLLM) now
+  resolves correctly at request time. Your saved base URL itself is
+  never rewritten, so an already-confirmed provider stays confirmed
+  after upgrading.
+- **A full endpoint that does NOT end in `/v1`** (a non-standard
+  gateway path, e.g. Open WebUI's own `/api/chat/completions`) is now
+  used exactly as typed instead of having `/v1` forced into it — lets
+  this kind of gateway work through the Custom preset.
+- **The "Advanced" section in Settings couldn't be expanded** — clicking
+  it collapsed its own parent section (Providers) along with it.
+  Advanced now opens independently.
+- **Saving or testing one provider could be blocked by a problem with a
+  completely different, unrelated provider.** Save/Test validation now
+  only checks the provider you're actively working with. Related:
+  unsaved edits to a provider are discarded when you switch to a
+  different one without saving, instead of silently carrying forward.
+- **Test Provider's connection-refused errors could show up blank.**
+  Now shows a proper "Connection failed (CODE)." message, plus a hint
+  when the host is literally `localhost`/`127.0.0.1` inside a
+  Dockerized Node-RED, where that refers to the Node-RED container
+  itself, not the host machine running your provider.
+
+### Added
+- **Provider presets.** A new "Provider" dropdown in Settings offers
+  OpenAI, Anthropic, OpenRouter, Ollama, LM Studio, LocalAI, llama.cpp
+  server, vLLM, or Custom — picking one fills in the right base URL and
+  shows or hides the API key field depending on whether that provider
+  needs one. Base URL, context window, temperature, and OpenRouter's
+  own extra options are tucked into a collapsed "Advanced" section so
+  the everyday path stays simple. Every provider you already had
+  configured keeps working exactly as before.
+- **A live "FlowPilot will call: …" preview** under Base URL in
+  Advanced, so it's never a guess which endpoint your configuration
+  actually resolves to.
+- **OpenRouter support**, including its own two extra options in
+  Advanced: enforcing zero-data-retention (ZDR) per request, and
+  optionally sending attribution headers identifying FlowPilot to
+  OpenRouter (off by default).
+- **`/bug`** — a quick command for reporting a bug, with a link to the
+  GitHub issues page.
+- **`/feedback`** — for feature requests and general feedback: the
+  same issues page (put "feedback" in the title), or a direct DM on
+  the [Node-RED forum](https://discourse.nodered.org/u?name=manny-est)
+  for anything you'd rather send privately.
+
+### Known limitations
+- **Ollama's context window may be too small for FlowPilot's prompts.**
+  Ollama's OpenAI-compatible API has no way to set context length per
+  request. If a model using an Ollama provider seems to ignore your
+  instructions, increase `OLLAMA_CONTEXT_LENGTH` on your Ollama server
+  (or set `num_ctx` in a Modelfile) — Settings shows this same note
+  whenever the Ollama preset is selected. A live-traffic measurement of
+  this is planned as follow-up work; if it confirms an overflow, a
+  stronger in-app hint (or an automatic mitigation) ships in a future
+  release.
+- LM Studio, llama.cpp server, and vLLM presets are confirmed against
+  each provider's own current documentation but have not yet been
+  tested against a live instance of each.
+
+## [0.6.3-beta.2] - 2026-09-23
+
+**Beta release** — same beta window as 0.6.3-beta.1, fixing issues
+found during testing. Install/update with
+`npm install @manny-est/node-red-flowpilot@beta`.
+
+### Fixed
+- **The "Advanced" section in Settings couldn't be expanded** — clicking
+  it collapsed its own parent section (Providers) along with it, hiding
+  both. Advanced now opens independently.
+- **Saving or testing one provider could be blocked by a problem with a
+  completely different, unrelated provider** — a single provider with
+  incomplete or bad data (e.g. a cleared Base URL) could prevent saving
+  or testing every other configured provider. Save/Test validation now
+  only checks the provider you're actively working with. Related: unsaved
+  edits to a provider are now discarded when you switch to a different
+  one without saving, instead of silently carrying forward.
+
+### Added
+- **`/bug`** — a quick command for reporting a bug, with a link to the
+  GitHub issues page.
+- **`/feedback`** — revised for feature requests and general feedback:
+  the same issues page (put "feedback" in the title), or a direct DM on
+  the [Node-RED forum](https://discourse.nodered.org/u?name=manny-est)
+  for anything you'd rather send privately.
+
+## [0.6.3-beta.1] - 2026-09-23
+
+**Beta release** — shipped on npm's `beta` dist-tag for the OpenRouter
+forum requester (and anyone else who wants it early) to test ahead of
+general availability. Install with
+`npm install @manny-est/node-red-flowpilot@beta`. If you hit a problem,
+please report it — a stable `0.6.3` follows once this beta is
+confirmed working, or after roughly a week with no reported issues.
 
 ### Fixed
 - **OpenRouter (and other OpenAI-compatible providers documented with a
