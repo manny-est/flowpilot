@@ -133,6 +133,13 @@ You can configure multiple providers and switch between them with the **Active p
 
 ---
 
+**Known limitation — Ollama context window:** Ollama's OpenAI-compatible
+API has no way to set the context length per request, and FlowPilot's
+prompts are large. If a model seems to ignore your instructions while
+using an Ollama provider, increase `OLLAMA_CONTEXT_LENGTH` on your Ollama
+server (or set `num_ctx` in a Modelfile). Settings shows this same note
+whenever the Ollama preset is selected.
+
 ## Features
 
 ### Chat
