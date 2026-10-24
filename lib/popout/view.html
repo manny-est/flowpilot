@@ -2,10 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<!-- Asset paths are relative to this page (served at
+     <httpAdminRoot>flowpilot/popout/view.html), like Node-RED's own debug
+     pop-out (lib/debug/view.html), so a non-root httpAdminRoot works. -->
 <title>FlowPilot</title>
-<link rel="stylesheet" href="/red/style.min.css">
-<link rel="stylesheet" href="/vendor/font-awesome/css/font-awesome.min.css">
-<link rel="stylesheet" href="/flowpilot/core.css">
+<link rel="stylesheet" href="../../red/style.min.css">
+<link rel="stylesheet" href="../../vendor/font-awesome/css/font-awesome.min.css">
+<link rel="stylesheet" href="../core.css">
 <style>
     /* Minimal page chrome — the real layout lives in flowpilot-core.css's
        #fp-root rules, same as the sidebar. This pop-out has no settings/
@@ -16,9 +19,9 @@
 </head>
 <body class="red-ui-editor">
 <div id="fp-popout-root"></div>
-<script src="/vendor/vendor.js"></script>
-<script src="/red/red.min.js"></script>
-<script src="/flowpilot/core.js"></script>
+<script src="../../vendor/vendor.js"></script>
+<script src="../../red/red.min.js"></script>
+<script src="../core.js"></script>
 <script type="text/javascript">
     // This window never connects to the runtime or loads a live flow
     // (RED.nodes/RED.view here are inert, disconnected shells, exactly like
