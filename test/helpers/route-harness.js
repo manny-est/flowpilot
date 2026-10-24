@@ -14,7 +14,7 @@ const Module = require("module");
 
 // flowpilot.js requires @node-red/registry (only present inside a real
 // Node-RED install) for the installed-palette list; stub it with an empty
-// palette so the runtime loads standalone.
+// palette (one contrib package) so the runtime loads standalone.
 const REGISTRY_STUB_ID = "@node-red/registry";
 const originalResolve = Module._resolveFilename;
 Module._resolveFilename = function (request) {
@@ -23,7 +23,12 @@ Module._resolveFilename = function (request) {
 };
 require.cache[REGISTRY_STUB_ID] = {
   id: REGISTRY_STUB_ID, filename: REGISTRY_STUB_ID, loaded: true,
-  exports: { getNodeList: function () { return []; }, getModuleList: function () { return {}; } }
+  exports: {
+    getNodeList: function () {
+      return [{ module: "node-red-contrib-example", enabled: true, types: ["example-node"] }];
+    },
+    getModuleList: function () { return {}; }
+  }
 };
 
 function chatCompletion(content) {
@@ -40,6 +45,7 @@ function chatCompletion(content) {
 // "not-provider" answers every request with JSON that is NOT provider-shaped.
 // reply: string or function(body) -> string, the assistant content returned.
 // host: address to listen on (default 127.0.0.1).
+// finishReason: function(chatRequestIndex, body) -> finish_reason (default "stop").
 function startFakeProvider(options) {
   const opts = options || {};
   const requests = [];
@@ -59,7 +65,9 @@ function startFakeProvider(options) {
         res.end(JSON.stringify({ object: "list", data: [{ id: "test-model", object: "model" }] }));
         return;
       }
+      const chatIndex = requests.filter(function (r) { return !/\/models$/.test(r.url); }).length - 1;
       const content = typeof opts.reply === "function" ? opts.reply(body) : (opts.reply || "ok");
+      const finishReason = typeof opts.finishReason === "function" ? opts.finishReason(chatIndex, body) : "stop";
       if (body && body.stream) {
         res.setHeader("Content-Type", "text/event-stream");
         res.write("data: " + JSON.stringify({ id: "x", object: "chat.completion.chunk",
@@ -69,7 +77,9 @@ function startFakeProvider(options) {
         res.end("data: [DONE]\n\n");
         return;
       }
-      res.end(JSON.stringify(chatCompletion(content)));
+      const completion = chatCompletion(content);
+      completion.choices[0].finish_reason = finishReason;
+      res.end(JSON.stringify(completion));
     });
   });
   return new Promise(function (resolve) {
@@ -85,6 +95,7 @@ function loadRuntime(settings) {
   fs.mkdirSync(path.join(userDir, "flowpilot"));
   fs.writeFileSync(path.join(userDir, "flowpilot", "settings.json"), JSON.stringify(settings));
   const routes = {};
+  const eventHandlers = {};
   function reg(method) {
     return function (route) {
       const handlers = Array.prototype.slice.call(arguments, 1);
@@ -94,7 +105,7 @@ function loadRuntime(settings) {
   const RED = {
     settings: { userDir: userDir },
     auth: { needsPermission: function () { return function (req, res, next) { next(); }; } },
-    events: { on: function () {} },
+    events: { on: function (name, fn) { (eventHandlers[name] = eventHandlers[name] || []).push(fn); } },
     nodes: { add: function () {}, getNodeList: function () { return []; } },
     httpAdmin: { get: reg("GET"), post: reg("POST"), delete: reg("DELETE"), use: function () {} }
   };
@@ -102,6 +113,8 @@ function loadRuntime(settings) {
   const runtimePath = require.resolve("../../flowpilot.js");
   delete require.cache[runtimePath];
   require(runtimePath)(RED);
+  // Behave like a started runtime (enables the installed-nodes note).
+  (eventHandlers["flows:started"] || []).forEach(function (fn) { fn(); });
   return { routes: routes, userDir: userDir };
 }
 

@@ -839,24 +839,40 @@ module.exports = function flowPilotRuntime(RED) {
   }
 
   // Assemble the final messages array in the one place both /chat and the
-  // generate/modify/document endpoints use: system prompt, optional
-  // installed-node-package note, optional truncation notice, history,
-  // optional selection-context note, then the new user turn.
+  // generate/modify/document endpoints use: ONE leading system message,
+  // history, then the new user turn. Every system fragment — system prompt,
+  // optional installed-node-package note, optional selection-context note,
+  // optional truncation notice (stable first, volatile last) — is folded
+  // into that single message: strict chat templates (e.g. Qwen's official
+  // one) reject a system message anywhere but first, or more than one
+  // (issue #11). Same "\n\n" join the Anthropic adapter already applies
+  // when it lifts system content into its top-level `system` field.
   function buildMessages(systemPrompt, history, historyTruncated, described, userPrompt) {
-    const messages = [{ role: "system", content: systemPrompt }];
+    const systemParts = [systemPrompt];
     const installedNodes = describeInstalledNodes();
     if (installedNodes) {
-      messages.push({ role: "system", content: installedNodes });
+      systemParts.push(installedNodes);
+    }
+    if (described && described.content) {
+      systemParts.push(described.content);
     }
     if (historyTruncated) {
-      messages.push({ role: "system", content: HISTORY_TRUNCATION_NOTICE });
+      systemParts.push(HISTORY_TRUNCATION_NOTICE);
     }
+    const messages = [{ role: "system", content: systemParts.join("\n\n") }];
     (history || []).forEach(function (m) { messages.push(m); });
-    if (described) {
-      messages.push({ role: "system", content: described.content });
-    }
     messages.push({ role: "user", content: userPrompt });
     return messages;
+  }
+
+  // Appends a fragment to the leading system message rather than adding a
+  // second system message (issue #11, see buildMessages).
+  function withSystemFragment(messages, fragment) {
+    if (messages.length && messages[0].role === "system") {
+      return [Object.assign({}, messages[0], { content: messages[0].content + "\n\n" + fragment })]
+        .concat(messages.slice(1));
+    }
+    return [{ role: "system", content: fragment }].concat(messages);
   }
 
   // ---------------------------------------------------------------------
@@ -1172,9 +1188,7 @@ module.exports = function flowPilotRuntime(RED) {
     const first = await provider.chat(activeProvider, messages, options);
     if (first.finishReason !== "length") { return first; }
 
-    const retryMessages = messages.concat([
-      { role: "system", content: AGENT_TRUNCATION_NUDGE }
-    ]);
+    const retryMessages = withSystemFragment(messages, AGENT_TRUNCATION_NUDGE);
     const retry = await provider.chat(activeProvider, retryMessages, options);
     if (retry.finishReason === "length") {
       retry.fallbackToClassic = true;
