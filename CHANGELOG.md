@@ -2,6 +2,28 @@
 
 All notable changes to FlowPilot are documented here.
 
+## [0.6.4] - 2026-10-24
+
+### Fixed
+- **FlowPilot didn't work when Node-RED's editor is served under a
+  sub-path** (`httpAdminRoot` set to something other than `/`, e.g.
+  `/manage`) — the sidebar showed errors because every FlowPilot request
+  went to the server root instead of the editor's path. Settings, Test
+  Provider, chat, and the pop-out window now all work under any
+  `httpAdminRoot`, with or without `adminAuth`.
+  ([#12](https://github.com/manny-est/flowpilot/issues/12))
+- **Test Provider's "Not a valid provider endpoint" error now includes
+  the Docker hint** when your provider URL uses `localhost` or
+  `127.0.0.1`: inside a Dockerized Node-RED, `localhost` means the
+  Node-RED container itself, not the machine running your provider.
+  ([#10](https://github.com/manny-est/flowpilot/issues/10))
+- **Local models with strict chat templates (such as Qwen's official
+  template) rejected FlowPilot's requests** with "System message must be
+  at the beginning." FlowPilot now sends all of its instructions as a
+  single system message at the start of every request. The model
+  receives the same information as before.
+  ([#11](https://github.com/manny-est/flowpilot/issues/11))
+
 ## [0.6.3] - 2026-10-05
 
 Promoted from the beta track after real-world confirmation: the
