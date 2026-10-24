@@ -23,6 +23,11 @@ All notable changes to FlowPilot are documented here.
   single system message at the start of every request. The model
   receives the same information as before.
   ([#11](https://github.com/manny-est/flowpilot/issues/11))
+- **The automatic capability check after switching models always
+  failed** ("Pre-flight failed — continuing with cached capabilities").
+  After you change a provider's model, FlowPilot now re-checks tool
+  support on your next chat message as intended, without you having to
+  press Test Provider.
 
 ## [0.6.3] - 2026-10-05
 
