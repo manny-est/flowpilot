@@ -96,6 +96,10 @@ const runEventsStore = new Map();
 let updateCheckCache = null;
 const PROPOSE_ACTION_NAME = "propose_action";
 const PROPOSE_ACTIONS = new Set(["generate", "modify", "document", "build"]);
+// Reserved for Phase 12 (X-Ray, directive §2.3): a known name that is not
+// yet a valid action. Rejected like any unknown action, with its own retry
+// message, and never offered in the tool schema or the UI.
+const RESERVED_PROPOSE_ACTIONS = new Set(["xray"]);
 const ROUTING_TIERS = new Set(["A", "B", "C"]);
 const PRE_ROUTER_TOOL_CALL_ID_PREFIX = "prerouter-";
 const TIER_C_TOOL_CALL_ID_PREFIX = "tier-c-";
@@ -1604,6 +1608,9 @@ function flowPilotRuntime(RED) {
   function invalidProposeActionError(args) {
     if (!args || typeof args !== "object") {
       return "propose_action arguments must be a JSON object.";
+    }
+    if (RESERVED_PROPOSE_ACTIONS.has(args.action)) {
+      return "action " + args.action + " is reserved and not available yet; use one of generate, modify, document, build.";
     }
     if (!PROPOSE_ACTIONS.has(args.action)) {
       return "action must be one of generate, modify, document, build (got: " + String(args.action) + ")";
