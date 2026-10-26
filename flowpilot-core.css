@@ -1678,3 +1678,88 @@
     color: #ff9800;
     flex: 1 0 100%;
 }
+
+/* ---- R11-5: Plan/Act bar and mode row (functional restyle only) ---- */
+.fp-planact-bar {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 4px;
+}
+
+.fp-planact {
+    flex: 1;
+    padding: 5px 8px;
+    border-radius: 4px;
+    border: 1px solid #2a333c;
+    background: transparent;
+    color: #8a96a3;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.fp-planact:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.fp-planact-plan.fp-planact-on {
+    color: #cc7a00;
+    border-color: rgba(255, 152, 0, 0.6);
+    background: rgba(255, 152, 0, 0.12);
+    box-shadow: 0 0 10px -2px rgba(255, 152, 0, 0.8);
+}
+
+.fp-planact-act.fp-planact-on {
+    color: #1f88e5;
+    border-color: rgba(31, 136, 229, 0.6);
+    background: rgba(31, 136, 229, 0.12);
+    box-shadow: 0 0 10px -2px rgba(31, 136, 229, 0.8);
+}
+
+/* Flex row: a fifth indicator (X-Ray) is one more MODE_INDICATORS entry. */
+.fp-mode-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 4px;
+}
+
+.fp-mode-indicator {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 2px 4px;
+    border: 1px solid #2a333c;
+    border-radius: 3px;
+    background: transparent;
+    color: #8a96a3;
+    opacity: 0.55;
+    font-size: 11px;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.fp-mode-indicator i {
+    margin-right: 4px;
+}
+
+.fp-mode-indicator:hover {
+    opacity: 0.85;
+}
+
+/* The agent's proposed mode: lit, still muted. */
+.fp-mode-indicator.fp-mode-proposed {
+    opacity: 0.8;
+    color: #1f88e5;
+    border-color: rgba(31, 136, 229, 0.35);
+}
+
+/* A user pin: fully lit. */
+.fp-mode-indicator.fp-action-armed {
+    opacity: 1;
+    color: #1f88e5;
+    border-color: rgba(31, 136, 229, 0.7);
+    background: rgba(31, 136, 229, 0.15);
+    box-shadow: 0 0 8px -2px rgba(31, 136, 229, 0.8);
+}
