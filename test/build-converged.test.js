@@ -51,7 +51,7 @@ function chatReqs(fake) { return fake.requests.filter(function (r) { return r.me
     assert.strictEqual(first.body.toolTiers.d1, "write-gated", "deploy_flows is consent-gated");
     const r0 = chatReqs(fake)[0];
     assert.ok(/^IMPORTANT — this is a BUILD run/.test(r0.body.messages[0].content), "converged prompt leads the system message");
-    ["apply_step", "deploy_flows", "verify_runtime", "read_node"].forEach(function (n) {
+    ["apply_step", "deploy_flows", "verify_runtime", "finish_build", "read_node"].forEach(function (n) {
       assert.ok(names(r0).indexOf(n) !== -1, "first turn offers " + n);
     });
     assert.ok(names(r0).indexOf("propose_action") === -1, "no Plan tools in Build");

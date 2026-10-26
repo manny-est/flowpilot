@@ -984,6 +984,24 @@ function flowPilotRuntime(RED) {
           additionalProperties: false
         }
       }
+    },
+    {
+      tier: "write-safe",
+      type: "function",
+      function: {
+        name: "finish_build",
+        description: "End the build. goal_met is true only when the last verify_runtime evidence shows the goal " +
+          "is met; otherwise false. summary is shown to the user: what was built and the evidence (or what is still wrong).",
+        parameters: {
+          type: "object",
+          properties: {
+            goal_met: { type: "boolean" },
+            summary: { type: "string" }
+          },
+          required: ["goal_met", "summary"],
+          additionalProperties: false
+        }
+      }
     }
   ];
 
