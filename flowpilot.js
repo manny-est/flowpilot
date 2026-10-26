@@ -948,6 +948,13 @@ function flowPilotRuntime(RED) {
     });
   }
 
+  // Names of the tools actually offered on a call, for the debug log (Gate
+  // P5 evidence: no WRITE tool is ever offered on a Plan turn).
+  function offeredToolNames(options) {
+    const tools = options && Array.isArray(options.tools) ? options.tools : [];
+    return tools.map(function (t) { return (t && t.function && t.function.name) || (t && t.name) || "?"; });
+  }
+
   function agentToolsFor(settings, activeProvider, mode, writesAllowed) {
     const routingTier = normalizedRoutingTier(activeProvider);
     if (mode === "chat" && activeProvider && activeProvider.supportsTools === true) {
@@ -1864,6 +1871,7 @@ function flowPilotRuntime(RED) {
           providerBaseUrl: activeProvider.baseUrl,
           model: activeProvider.model,
           messages: finalMessages,
+          offeredTools: offeredToolNames(chatOptions),
           toolCalls: result.toolCalls,
           responseContent: result.content || null
         });
@@ -1882,6 +1890,7 @@ function flowPilotRuntime(RED) {
       providerBaseUrl: activeProvider.baseUrl,
       model: activeProvider.model,
       messages: finalMessages,
+      offeredTools: offeredToolNames(chatOptions),
       responseChars: typeof result.content === "string" ? result.content.length : 0,
       responseContent: result.content || "",
       parseOutcome: "received"
@@ -2494,6 +2503,7 @@ function flowPilotRuntime(RED) {
           providerBaseUrl: activeProvider.baseUrl,
           model: activeProvider.model,
           messages: finalMessages,
+          offeredTools: offeredToolNames(chatOptions),
           toolCalls: result.toolCalls,
           responseContent: result.content || null,
           debugNote: execution.debugNote || undefined
