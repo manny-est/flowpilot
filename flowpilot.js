@@ -24,11 +24,6 @@ const DIRECT_COMPLETION_SCHEMA = {
   additionalProperties: true
 };
 
-const SAFE_NODE_TYPES = new Set([
-  "inject", "function", "change", "switch", "filter", "json", "xml", "csv",
-  "base64", "html", "split", "join", "sort", "batch", "debug", "status",
-  "comment", "link in", "link out", "link call", "junction"
-]);
 
 const MODIFY_VERIFY_SKIP_PROPS = new Set([
   "wires", "x", "y", "z", "g", "outputLabels", "inputLabels", "links"
@@ -45,7 +40,9 @@ function classifyFlowNodes(nodes) {
       type: node.type,
       name: node.name || ""
     };
-    if (SAFE_NODE_TYPES.has(node.type)) {
+    // R11-8: the shared consent classifier; creating a node is the
+    // operation the build consent gate asks about.
+    if (consent.decideConsent("create", node.type) === "auto") {
       classes.safe.push(summary);
     } else {
       classes.sideEffecting.push(summary);
@@ -74,6 +71,7 @@ const modifySystemPrompt = require("./lib/modify-system-prompt");
 const buildSystemPrompt = require("./lib/build-system-prompt");
 const planSystemPrompt = require("./lib/plan-system-prompt");
 const tierCClassificationPrompt = require("./lib/tier-c-classification-prompt");
+const consent = require("./lib/core/consent");
 const personaPrompt = require("./lib/persona-prompt");
 const { buildCoreScript } = require("./lib/build-core-script");
 const {
