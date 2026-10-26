@@ -1008,6 +1008,8 @@ function flowPilotRuntime(RED) {
   // Converged Build is opt-in (settings.buildEngine, default "classic") and
   // runs on the agent WRITE-tool loop, so it also needs that loop enabled and
   // a tool-capable provider. Anything else keeps the classic Build path.
+  const BUILD_READ_TOOL_NAMES = ["read_node", "get_connections", "read_debug"];
+
   function convergedBuildActive(settings, activeProvider) {
     return !!settings && settings.buildEngine === "converged" && settings.enableAgentWrite === true &&
       !!activeProvider && activeProvider.supportsTools === true;
@@ -1038,7 +1040,13 @@ function flowPilotRuntime(RED) {
       return providerToolDefinitions(AGENT_READ_TOOLS.concat(PLAN_CHAT_TOOLS));
     }
     if (mode === "build" && writesAllowed === true && convergedBuildActive(settings, activeProvider)) {
-      return providerToolDefinitions(AGENT_READ_TOOLS.concat(WRITE_TOOLS, BUILD_RUNTIME_TOOLS));
+      // The selection is already in the prompt, so Build only needs the read
+      // tools for inspecting nodes and wiring — fewer tool definitions keep
+      // the request inside small local context windows.
+      const buildReadTools = AGENT_READ_TOOLS.filter(function (tool) {
+        return BUILD_READ_TOOL_NAMES.indexOf(tool.function.name) !== -1;
+      });
+      return providerToolDefinitions(buildReadTools.concat(WRITE_TOOLS, BUILD_RUNTIME_TOOLS));
     }
     const writesEnabled = settings.enableAgentWrite === true &&
       (mode === "modify" || mode === "generate") && writesAllowed !== false &&

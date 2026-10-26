@@ -51,6 +51,12 @@ function chatReqs(fake) { return fake.requests.filter(function (r) { return r.me
     assert.strictEqual(first.body.toolTiers.d1, "write-gated", "deploy_flows is consent-gated");
     const r0 = chatReqs(fake)[0];
     assert.ok(/^IMPORTANT — this is a BUILD run/.test(r0.body.messages[0].content), "converged prompt leads the system message");
+    assert.ok(r0.body.messages[0].content.indexOf("You are FlowPilot's flow generator") !== -1 &&
+      r0.body.messages[0].content.indexOf("Respond with a SINGLE JSON object") !== -1,
+      "converged prompt keeps Generate's identity and node-rules sections");
+    assert.ok(r0.body.messages[0].content.indexOf("Before generating — check this is actually") === -1,
+      "converged prompt drops the mode-mismatch section");
+    assert.ok(names(r0).indexOf("list_flows") === -1, "build offers only the read tools it needs");
     ["apply_step", "deploy_flows", "verify_runtime", "finish_build", "read_node"].forEach(function (n) {
       assert.ok(names(r0).indexOf(n) !== -1, "first turn offers " + n);
     });
