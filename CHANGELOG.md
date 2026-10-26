@@ -2,6 +2,85 @@
 
 All notable changes to FlowPilot are documented here.
 
+## [0.7.0-beta.1] - 2026-10-27
+
+**Beta.** Plan/Act: FlowPilot now works out which action you want instead
+of asking you to pick a mode first. Install with
+`npm install @manny-est/node-red-flowpilot@beta`; the stable line stays on
+0.6.x until this beta has had real use.
+
+### Added
+- **Chat is now Plan.** Ask questions as before. When what you type
+  becomes a specific change to your flows, FlowPilot answers with a
+  **proposal card** instead of acting: what it will do, which nodes it
+  targets, and a short plan. Edit the summary, add, remove or reorder plan
+  items, then press **Act**, or **Discard** it. Nothing changes on your
+  canvas until you press Act. Planning stays read-only.
+- **Plan / Act bar and mode row.** Two main buttons, Plan and Act, plus a
+  quieter row with Generate, Modify, Document and Build. The row lights up
+  the mode FlowPilot picked for its proposal. Click a mode, or type
+  `/generate`, `/modify`, `/document` or `/build`, to **pin** it: Act then
+  runs your pinned mode instead. A pin lasts for one run.
+- **Re-plan.** If a run stops before it's done (you skipped a step, it hit
+  a limit, a change didn't verify, or it needs more information),
+  FlowPilot offers a Re-plan card with the unfinished steps, ready to edit
+  and run again. It never re-runs anything on its own.
+- **Messages typed while FlowPilot is working are queued, not lost.** At
+  the next step FlowPilot asks whether to use your message now (it adjusts
+  the remaining steps) or after the run. Pressing Enter while busy no longer
+  starts a second request.
+- **Smarter, safer consent prompts.** FlowPilot decides when to ask by
+  what a step does (create, change, rewire, delete, deploy, trigger) and
+  which node type it touches. Steps on everyday nodes such as inject,
+  function, change, switch and debug just run. Steps on nodes that reach
+  outside Node-RED (HTTP, MQTT, exec, files, and any type it doesn't know)
+  ask first. Deleting and deploying always ask. Once you approve a node, the
+  same run doesn't ask about it again.
+- **Settings shows how FlowPilot routes your requests and why**: the
+  routing chosen for your provider, and whether that came from your manual
+  override, from tool support, or from the model running locally or in the
+  cloud. Local models and models without tool calling automatically use a
+  classify-first routing that measured more reliable.
+- **Experimental: Build on the agent engine** (Settings → Agentic build
+  loop → Build engine → Converged, with the WRITE-tool loop on). Build places
+  the nodes, asks before each deploy, fires the trigger itself, checks the
+  real debug output, and fixes and retries in the same run. It finishes with
+  "Done with proof" quoting what it observed, or an honest stop. Classic
+  Build is still the default.
+- **Settings → hide the built-in helper buttons** (Explain, Help, Review,
+  Suggest). Your own custom buttons always show.
+- **Build warns before deploying** when your editor has undeployed changes,
+  because a deploy pushes all of them live.
+
+### Changed
+- The Generate, Modify and Document instructions no longer try to second-
+  guess whether your request "belongs" in that mode. Choosing the action is
+  Plan's job now, so a mode you pin is carried out as asked.
+- Removing a node always asks for consent, even for a simple node type.
+
+### Fixed
+- Strict chat templates (such as Qwen's) rejected Plan routing and Act
+  requests with "System message must be at the beginning." Every request
+  now carries a single leading system message.
+- A proposal made after FlowPilot had looked around the flow could show
+  "Select nodes first" even though nodes were selected.
+- After pressing Act, the next message you typed could still be routed into
+  that mode instead of back to Plan.
+- Grouping nodes reported "failed verification" even when the group was
+  created correctly.
+- Group creation from a reviewed Modify could leave an empty, orphaned
+  group behind if Node-RED refused to create it. It now cleans up and
+  reports the real error.
+
+### Known limitations
+- Local models with a small context window (around 8k tokens) can run out
+  of room in Act runs that use the WRITE-tool loop, and in Build. Plan
+  routing and classic Generate, Modify and Document still work. A larger
+  context size for the model fixes this.
+- In Node-RED 5, when FlowPilot shares the right-hand sidebar with the
+  Debug panel, its message area can become very short. Drag the divider
+  down, or collapse the Debug panel.
+
 ## [0.6.4] - 2026-10-24
 
 ### Fixed
