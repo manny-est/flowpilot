@@ -1770,3 +1770,8 @@
     font-size: 11px;
     color: #8a96a3;
 }
+
+/* R11-9: a message is queued for the next step boundary. */
+.fp-compose.fp-has-queued #fp-prompt {
+    border-style: dashed;
+}
