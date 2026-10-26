@@ -3277,8 +3277,10 @@ function flowPilotRuntime(RED) {
     // Converged Build (R11-6): the work is already on the canvas through the
     // WRITE tools, so the final reply is an explanation with no "flow".
     if (!flow && auditContext && auditContext.strategy === "agent" && auditAction === "build") {
-      storage.appendAudit(Object.assign({ action: "build_agent_final" }, auditFields, perf));
-      return { explanation: parsed.explanation || "" };
+      storage.appendAudit(Object.assign({ action: "build_agent_final", goalMet: parsed.goalMet }, auditFields, perf));
+      const buildFinal = { explanation: parsed.explanation || "" };
+      if (typeof parsed.goalMet === "boolean") { buildFinal.goalMet = parsed.goalMet; }
+      return buildFinal;
     }
     if (!flow) {
       const err = new Error("The response did not contain a 'flow' array.");
@@ -3509,6 +3511,7 @@ function flowPilotRuntime(RED) {
       }
       if (result.skippedNote) { agentBody.skippedNote = result.skippedNote; }
       if (result.suggestedAction) { agentBody.suggestedAction = result.suggestedAction; }
+      if (typeof result.goalMet === "boolean") { agentBody.goalMet = result.goalMet; }
       return { status: 200, body: agentBody };
     }
     return { status: 200, body: result };

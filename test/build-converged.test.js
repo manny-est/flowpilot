@@ -36,7 +36,7 @@ function chatReqs(fake) { return fake.requests.filter(function (r) { return r.me
   fake = await startFakeProvider({
     // First turn deploys; the continuation (after a tool result) finishes
     // with an explanation and no "flow" — the work is already on the canvas.
-    reply: function (body) { return isFinal(body) ? JSON.stringify({ explanation: "Built and verified: debug showed 42." }) : ""; },
+    reply: function (body) { return isFinal(body) ? JSON.stringify({ explanation: "Built and verified: debug showed 42.", goalMet: true }) : ""; },
     toolCalls: function (body) {
       return isFinal(body) ? null
         : [{ id: "d1", type: "function", function: { name: "deploy_flows", arguments: "{\"summary\":\"first deploy\"}" } }];
@@ -67,6 +67,7 @@ function chatReqs(fake) { return fake.requests.filter(function (r) { return r.me
     assert.strictEqual(step.status, 200, "agent-step build final 200, no flow needed (" + JSON.stringify(step.body).slice(0, 160) + ")");
     assert.strictEqual(step.body.prose, true, "final renders as the run's explanation");
     assert.ok(/verified/.test(step.body.explanation), "explanation passed through: " + JSON.stringify(step.body));
+    assert.strictEqual(step.body.goalMet, true, "goalMet verdict passed through");
     const r1 = chatReqs(fake)[1];
     ["apply_step", "deploy_flows", "verify_runtime"].forEach(function (n) {
       assert.ok(names(r1).indexOf(n) !== -1, "continuation offers " + n);

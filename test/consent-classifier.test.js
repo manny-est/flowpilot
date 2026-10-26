@@ -55,7 +55,7 @@ assert.strictEqual(consent.decideConsent("modify-config", SIDE, ctx("run-1", "n-
 
 // Real client call site, evaluated with the module in the same scope.
 const main = fs.readFileSync(path.join(__dirname, "..", "lib", "core", "main.js"), "utf8");
-const collect = main.match(/function collectWriteToolConsentItems\(name, args\) \{[\s\S]*?\n    \}\n/)[0];
+const collect = main.match(/function collectWriteToolConsentItems\(name, args, idMap\) \{[\s\S]*?\n    \}\n/)[0];
 const gate = main.match(/function writeToolCallNeedsConsent\(tier, name, args, consentContext\) \{[\s\S]*?\n    \}\n/)[0];
 const consentSrc = fs.readFileSync(path.join(__dirname, "..", "lib", "core", "consent.js"), "utf8").replace(/if \(typeof module[\s\S]*$/, "");
 const LIVE = { "fn1": { type: "function" }, "http1": { type: "http request" }, "dbg1": { type: "debug" } };
@@ -75,4 +75,7 @@ assert.strictEqual(needs("write-gated", "rename_node", { nodeId: "fn1" }, { hold
 const m2 = consent.createConsentMemory(); m2.remember("r", "http1");
 assert.strictEqual(needs("write-gated", "apply_step", { changes: [{ id: "http1", set: {} }] }, { memory: m2, taskId: "r" }), false, "approved node not re-asked in the same run");
 
+assert.strictEqual(needs("write-gated", "apply_step", { newWires: [{ from: "fn1", to: "ph-dbg" }] }, { idMap: { "ph-dbg": "dbg1" } }), false,
+  "a node created earlier in the run is classified by its real type via the run id map");
+assert.strictEqual(needs("write-gated", "deploy_flows", { summary: "x" }), true, "deploy always asks");
 console.log("consent-classifier tests passed (" + cells + " table cells)");
