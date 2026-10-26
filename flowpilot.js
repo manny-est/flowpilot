@@ -69,6 +69,7 @@ const generationSystemPrompt = require("./lib/generation-system-prompt");
 const documentSystemPrompt = require("./lib/document-system-prompt");
 const modifySystemPrompt = require("./lib/modify-system-prompt");
 const buildSystemPrompt = require("./lib/build-system-prompt");
+const buildAgentSystemPrompt = require("./lib/build-agent-system-prompt");
 const planSystemPrompt = require("./lib/plan-system-prompt");
 const tierCClassificationPrompt = require("./lib/tier-c-classification-prompt");
 const consent = require("./lib/core/consent");
@@ -938,6 +939,81 @@ function flowPilotRuntime(RED) {
     return tool && tool.function && tool.function.name === "ask_user";
   });
   const PLAN_CHAT_TOOLS = [ASK_USER_TOOL, PROPOSE_ACTION_TOOL].filter(Boolean);
+
+  // Converged Build (R11-6, ADR-010): the two runtime steps Build adds to the
+  // engine. Both execute client-side like every WRITE tool. deploy_flows is
+  // consent-gated as the "deploy" operation (consent.js: always asks);
+  // verify_runtime only observes, apart from firing the trigger node, which
+  // consent.js classifies as "trigger".
+  const BUILD_RUNTIME_TOOLS = [
+    {
+      tier: "write-gated",
+      type: "function",
+      function: {
+        name: "deploy_flows",
+        description: "Deploy the current editor flows to the Node-RED runtime so the build can be tested. " +
+          "The user approves every deploy. The result says whether the deploy happened and how many " +
+          "deploy attempts remain for this build.",
+        parameters: {
+          type: "object",
+          properties: {
+            summary: { type: "string", description: "Short description of what this deploy is for." }
+          },
+          required: ["summary"],
+          additionalProperties: false
+        }
+      }
+    },
+    {
+      tier: "write-safe",
+      type: "function",
+      function: {
+        name: "verify_runtime",
+        description: "Check the deployed flow's real behaviour: optionally fire a trigger node (an inject), " +
+          "then return the debug messages and node statuses observed since the last deploy. Use it after " +
+          "every deploy_flows, and judge success only from what it returns.",
+        parameters: {
+          type: "object",
+          properties: {
+            summary: { type: "string", description: "Short description of this verification step." },
+            trigger_node_id: { type: "string", description: "Id of the node to fire first (normally the inject node), as named in apply_step." },
+            expect: { type: "string", description: "What the debug output should show if the goal is met." },
+            wait_ms: { type: "number", description: "How long to collect output after triggering, 1000-15000 ms. Default 4000." }
+          },
+          required: ["summary", "expect"],
+          additionalProperties: false
+        }
+      }
+    },
+    {
+      tier: "write-safe",
+      type: "function",
+      function: {
+        name: "finish_build",
+        description: "End the build. goal_met is true only when the last verify_runtime evidence shows the goal " +
+          "is met; otherwise false. summary is shown to the user: what was built and the evidence (or what is still wrong).",
+        parameters: {
+          type: "object",
+          properties: {
+            goal_met: { type: "boolean" },
+            summary: { type: "string" }
+          },
+          required: ["goal_met", "summary"],
+          additionalProperties: false
+        }
+      }
+    }
+  ];
+
+  // Converged Build is opt-in (settings.buildEngine, default "classic") and
+  // runs on the agent WRITE-tool loop, so it also needs that loop enabled and
+  // a tool-capable provider. Anything else keeps the classic Build path.
+  const BUILD_READ_TOOL_NAMES = ["read_node", "get_connections", "read_debug"];
+
+  function convergedBuildActive(settings, activeProvider) {
+    return !!settings && settings.buildEngine === "converged" && settings.enableAgentWrite === true &&
+      !!activeProvider && activeProvider.supportsTools === true;
+  }
   const TIER_B_PLAN_CHAT_TOOLS = [ASK_USER_TOOL, TIER_B_PROPOSE_ACTION_TOOL].filter(Boolean);
 
   function providerToolDefinitions(tools) {
@@ -963,6 +1039,15 @@ function flowPilotRuntime(RED) {
       }
       return providerToolDefinitions(AGENT_READ_TOOLS.concat(PLAN_CHAT_TOOLS));
     }
+    if (mode === "build" && writesAllowed === true && convergedBuildActive(settings, activeProvider)) {
+      // The selection is already in the prompt, so Build only needs the read
+      // tools for inspecting nodes and wiring — fewer tool definitions keep
+      // the request inside small local context windows.
+      const buildReadTools = AGENT_READ_TOOLS.filter(function (tool) {
+        return BUILD_READ_TOOL_NAMES.indexOf(tool.function.name) !== -1;
+      });
+      return providerToolDefinitions(buildReadTools.concat(WRITE_TOOLS, BUILD_RUNTIME_TOOLS));
+    }
     const writesEnabled = settings.enableAgentWrite === true &&
       (mode === "modify" || mode === "generate") && writesAllowed !== false &&
       activeProvider && activeProvider.supportsTools === true;
@@ -972,7 +1057,7 @@ function flowPilotRuntime(RED) {
   function toolTierMap(toolCalls) {
     if (!Array.isArray(toolCalls) || !toolCalls.length) { return null; }
     const tiersByName = {};
-    WRITE_TOOLS.concat([PROPOSE_ACTION_TOOL]).forEach(function (tool) {
+    WRITE_TOOLS.concat([PROPOSE_ACTION_TOOL], BUILD_RUNTIME_TOOLS).forEach(function (tool) {
       tiersByName[tool.function.name] = tool.tier;
     });
     const byCallId = {};
@@ -3215,6 +3300,14 @@ function flowPilotRuntime(RED) {
     enforceAgentContract(parsed, auditContext, false);
 
     const flow = Array.isArray(parsed.flow) ? parsed.flow : null;
+    // Converged Build (R11-6): the work is already on the canvas through the
+    // WRITE tools, so the final reply is an explanation with no "flow".
+    if (!flow && auditContext && auditContext.strategy === "agent" && auditAction === "build") {
+      storage.appendAudit(Object.assign({ action: "build_agent_final", goalMet: parsed.goalMet }, auditFields, perf));
+      const buildFinal = { explanation: parsed.explanation || "" };
+      if (typeof parsed.goalMet === "boolean") { buildFinal.goalMet = parsed.goalMet; }
+      return buildFinal;
+    }
     if (!flow) {
       const err = new Error("The response did not contain a 'flow' array.");
       err.status = 422;
@@ -3275,7 +3368,7 @@ function flowPilotRuntime(RED) {
       ? agentToolsFor(settings, activeProvider, auditAction, execution && execution.strategy === "agent")
       : [];
     const responseFormat = directCompletionResponseFormat(activeProvider, auditAction, toolsEnabled);
-    const toolChoice = (auditAction === "modify" || auditAction === "generate") && execution &&
+    const toolChoice = (auditAction === "modify" || auditAction === "generate" || auditAction === "build") && execution &&
       execution.strategy === "agent" ? "required" : "auto";
     let chatOptions = toolsEnabled
       ? { tools: offeredTools, toolChoice: toolChoice }
@@ -3444,6 +3537,7 @@ function flowPilotRuntime(RED) {
       }
       if (result.skippedNote) { agentBody.skippedNote = result.skippedNote; }
       if (result.suggestedAction) { agentBody.suggestedAction = result.suggestedAction; }
+      if (typeof result.goalMet === "boolean") { agentBody.goalMet = result.goalMet; }
       return { status: 200, body: agentBody };
     }
     return { status: 200, body: result };
@@ -3864,6 +3958,43 @@ function flowPilotRuntime(RED) {
 
     if (!prompt || !String(prompt).trim()) {
       return res.status(400).json({ error: "A description of what to build is required." });
+    }
+
+    // Converged Build (R11-6): an agent-strategy request runs on the one
+    // engine with the converged prompt and the runtime tools. Every other
+    // request takes the classic path below, unchanged.
+    if (req.body.strategy === "agent") {
+      const settings = storage.getSettings();
+      const activeProvider = storage.getActiveProvider(settings);
+      const execution = requireExecutionContract(req, res, settings, activeProvider);
+      if (!execution) { return; }
+      if (!convergedBuildActive(settings, activeProvider)) {
+        return res.status(409).json({
+          error: "converged_build_unavailable",
+          message: "Converged Build needs Settings → Build engine set to converged, the WRITE-tool loop on, and a tool-capable provider."
+        });
+      }
+      try {
+        const fromAct = !!(req.body && req.body.fromAct === true);
+        const built = await runFlowGeneration(
+          buildAgentSystemPrompt, "build", prompt, req.body && req.body.context,
+          sanitizeHistory(req.body.history), !!req.body.historyTruncated, true, execution, fromAct
+        );
+        if (built.toolCalls) {
+          return res.json({
+            toolCalls: built.toolCalls,
+            toolTiers: built.toolTiers,
+            messages: built.messages,
+            content: built.content,
+            usage: built.usage
+          });
+        }
+        recordTranscriptTurn(req.body.conversationId, "build", prompt, transcriptTextFromGenerationResult(built));
+        const { status, body } = finalizeSimpleGeneration(built, execution);
+        return res.status(status).json(body);
+      } catch (err) {
+        return sendGenerationError(res, "build", err, execution);
+      }
     }
 
     const history = sanitizeHistory(req.body.history);
