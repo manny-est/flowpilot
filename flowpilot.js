@@ -1222,9 +1222,8 @@ function flowPilotRuntime(RED) {
   // one) reject a system message anywhere but first, or more than one
   // (issue #11). Same "\n\n" join the Anthropic adapter already applies
   // when it lifts system content into its top-level `system` field.
-  // Exception, deliberately deferred: modeNotice (below) is still a separate
-  // trailing system message — folding it is CODEX-042 (Phase 11 restart,
-  // routing corpus Tier A + C required).
+  // modeNotice (CLAUDE-001b's Act transition notice) is the most volatile
+  // fragment, so it goes last (CODEX-042).
   function buildMessages(systemPrompt, history, historyTruncated, described, userPrompt, modeNotice) {
     const systemParts = [systemPrompt];
     const installedNodes = describeInstalledNodes();
@@ -1237,14 +1236,14 @@ function flowPilotRuntime(RED) {
     if (historyTruncated) {
       systemParts.push(HISTORY_TRUNCATION_NOTICE);
     }
-    const messages = [{ role: "system", content: systemParts.join("\n\n") }];
-    (history || []).forEach(function (m) { messages.push(m); });
     // CLAUDE-001b (R11-3 §3 point 4, the Cline pattern): only present when
     // buildGenerationContext's own fromAct flag was explicitly true — never
     // inferred here from anything else in this assembly.
     if (modeNotice) {
-      messages.push({ role: "system", content: modeNotice });
+      systemParts.push(modeNotice);
     }
+    const messages = [{ role: "system", content: systemParts.join("\n\n") }];
+    (history || []).forEach(function (m) { messages.push(m); });
     messages.push({ role: "user", content: userPrompt });
     return messages;
   }
@@ -1256,13 +1255,17 @@ function flowPilotRuntime(RED) {
       : "Nothing is currently selected.";
   }
 
+  // Plan routing's minimal context (ADR-008 addendum, §4.4): the system
+  // prompt, then the selection-state line, then the truncation notice — all
+  // in the one leading system message, same order and reason as
+  // buildMessages (CODEX-042).
   function buildPlanRoutingMessages(systemPrompt, history, historyTruncated, context, userPrompt) {
-    const messages = [{ role: "system", content: systemPrompt }];
+    const systemParts = [systemPrompt, selectionStateSystemMessage(context)];
     if (historyTruncated) {
-      messages.push({ role: "system", content: HISTORY_TRUNCATION_NOTICE });
+      systemParts.push(HISTORY_TRUNCATION_NOTICE);
     }
+    const messages = [{ role: "system", content: systemParts.join("\n\n") }];
     (history || []).forEach(function (m) { messages.push(m); });
-    messages.push({ role: "system", content: selectionStateSystemMessage(context) });
     messages.push({ role: "user", content: userPrompt });
     return messages;
   }
@@ -1668,9 +1671,12 @@ function flowPilotRuntime(RED) {
     let rawResult = first;
 
     if (mapped.parsed.unparseable) {
+      // A user turn, not a trailing system message: strict templates reject
+      // a system message anywhere but first (issue #11, CODEX-042), and the
+      // conversation can't end on the assistant turn either.
       const retryMessages = messages.concat([
         { role: "assistant", content: first.content || "" },
-        { role: "system", content: "Reply with one standalone capital letter: A, B, C, D, E, or F." }
+        { role: "user", content: "Reply with one standalone capital letter: A, B, C, D, E, or F." }
       ]);
       const retry = await chatWithAgentCap(provider, activeProvider, retryMessages, options);
       mapped = tierCClassificationToResult(retry.content, prompt, context);
