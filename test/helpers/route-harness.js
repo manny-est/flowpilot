@@ -46,6 +46,7 @@ function chatCompletion(content) {
 // reply: string or function(body) -> string, the assistant content returned.
 // host: address to listen on (default 127.0.0.1).
 // finishReason: function(chatRequestIndex, body) -> finish_reason (default "stop").
+// toolCalls: function(body) -> OpenAI-style tool_calls array (or null) for the reply.
 function startFakeProvider(options) {
   const opts = options || {};
   const requests = [];
@@ -79,6 +80,11 @@ function startFakeProvider(options) {
       }
       const completion = chatCompletion(content);
       completion.choices[0].finish_reason = finishReason;
+      const toolCalls = typeof opts.toolCalls === "function" ? opts.toolCalls(body) : null;
+      if (toolCalls) {
+        completion.choices[0].message.tool_calls = toolCalls;
+        completion.choices[0].finish_reason = "tool_calls";
+      }
       res.end(JSON.stringify(completion));
     });
   });
