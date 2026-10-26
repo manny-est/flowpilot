@@ -93,6 +93,51 @@ async function exercise(label, route, body, settingsExtra, fakeOptions, provider
   assert.strictEqual(retry.reqs[1].body.messages.length, retry.reqs[0].body.messages.length,
     "truncation retry: no extra message added");
 
+  // Phase 11 paths (CODEX-042): the Act transition notice (fromAct) and
+  // Plan routing (strategy "agent" chat, Tier A and Tier C).
+  const NOTICE = "The user approved this plan:";
+  const act = await exercise("generate (fromAct)", "/flowpilot/generate",
+    Object.assign({ prompt: "make a flow", entry: "generate", fromAct: true }, COMMON));
+  const actSys = act.reqs[0].body.messages[0].content;
+  assert.ok(actSys.indexOf(NOTICE) > actSys.indexOf("earlier parts of this conversation were omitted"),
+    "fromAct: transition notice is the last fragment of the system message");
+  await exercise("generate (fromAct, stream)", "/flowpilot/generate",
+    Object.assign({ prompt: "make a flow", entry: "generate", fromAct: true, stream: true }, COMMON));
+  const actModify = await exercise("modify (fromAct)", "/flowpilot/modify",
+    Object.assign({ prompt: "rename it", entry: "modify", fromAct: true }, COMMON));
+  assert.ok(actModify.reqs[0].body.messages[0].content.indexOf(NOTICE) > 0, "modify fromAct: transition notice present");
+  await exercise("build (fromAct)", "/flowpilot/build",
+    Object.assign({ prompt: "build a flow", entry: "build", fromAct: true }, COMMON));
+  await exercise("document (fromAct)", "/flowpilot/document",
+    Object.assign({ prompt: "", entry: "document", fromAct: true }, COMMON));
+  const noAct = await exercise("modify (no fromAct)", "/flowpilot/modify",
+    Object.assign({ prompt: "rename it", entry: "modify" }, COMMON));
+  noAct.reqs.forEach(function (r) {
+    r.body.messages.forEach(function (m) {
+      assert.ok(String(m.content).indexOf(NOTICE) === -1, "no fromAct: transition notice absent");
+    });
+  });
+
+  const PLAN = { prompt: "What does this flow do?", strategy: "agent", entry: "chat", tools: true,
+    history: HISTORY, historyTruncated: true, context: CONTEXT };
+  const tierA = await exercise("plan routing (Tier A)", "/flowpilot/chat", PLAN, { enableAgentWrite: false }, {},
+    { supportsTools: true, routingTierMode: "manual", routingTier: "A" });
+  const planSys = tierA.reqs[0].body.messages[0].content;
+  assert.ok(planSys.indexOf("2 nodes selected.") > 0, "plan routing: selection-state line folded into the system message");
+  assert.ok(planSys.indexOf("earlier parts of this conversation were omitted") > planSys.indexOf("2 nodes selected."),
+    "plan routing: truncation notice after the selection-state line");
+  assert.deepStrictEqual(tierA.reqs[0].body.messages.slice(1).map(function (m) { return m.role; }), ["user", "assistant", "user"],
+    "plan routing: history then the user turn follow the single system message");
+  await exercise("plan routing (Tier C)", "/flowpilot/chat", PLAN, {}, { reply: "A" },
+    { supportsTools: true, routingTierMode: "manual", routingTier: "C" });
+  let n = 0;
+  const retryC = await exercise("plan routing (Tier C retry)", "/flowpilot/chat", PLAN, {},
+    { reply: function () { return n++ === 0 ? "hmm, not sure" : "A"; } },
+    { supportsTools: true, routingTierMode: "manual", routingTier: "C" });
+  assert.strictEqual(retryC.reqs.length, 2, "Tier C retry: second request sent");
+  const retryRoles = retryC.reqs[1].body.messages.map(function (m) { return m.role; });
+  assert.deepStrictEqual(retryRoles.slice(-2), ["assistant", "user"], "Tier C retry: nudge is a user turn after the unparseable reply");
+
   await exercise("test", "/flowpilot/test", { prompt: "Say hello." });
   // (non-empty body: the route 400s on {} — see the 0.6.4 report, unrelated)
   await exercise("probe", "/flowpilot/probe", { reason: "test" });
