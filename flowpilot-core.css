@@ -1617,6 +1617,12 @@
     word-break: break-word;
 }
 
+.fp-propose-plan-move:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+
+.fp-propose-plan-move,
 .fp-propose-plan-remove {
     flex-shrink: 0;
     padding: 2px 6px;

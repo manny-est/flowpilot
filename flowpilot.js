@@ -96,6 +96,10 @@ const runEventsStore = new Map();
 let updateCheckCache = null;
 const PROPOSE_ACTION_NAME = "propose_action";
 const PROPOSE_ACTIONS = new Set(["generate", "modify", "document", "build"]);
+// Reserved for Phase 12 (X-Ray, directive §2.3): a known name that is not
+// yet a valid action. Rejected like any unknown action, with its own retry
+// message, and never offered in the tool schema or the UI.
+const RESERVED_PROPOSE_ACTIONS = new Set(["xray"]);
 const ROUTING_TIERS = new Set(["A", "B", "C"]);
 const PRE_ROUTER_TOOL_CALL_ID_PREFIX = "prerouter-";
 const TIER_C_TOOL_CALL_ID_PREFIX = "tier-c-";
@@ -944,6 +948,13 @@ function flowPilotRuntime(RED) {
     });
   }
 
+  // Names of the tools actually offered on a call, for the debug log (Gate
+  // P5 evidence: no WRITE tool is ever offered on a Plan turn).
+  function offeredToolNames(options) {
+    const tools = options && Array.isArray(options.tools) ? options.tools : [];
+    return tools.map(function (t) { return (t && t.function && t.function.name) || (t && t.name) || "?"; });
+  }
+
   function agentToolsFor(settings, activeProvider, mode, writesAllowed) {
     const routingTier = normalizedRoutingTier(activeProvider);
     if (mode === "chat" && activeProvider && activeProvider.supportsTools === true) {
@@ -1605,6 +1616,9 @@ function flowPilotRuntime(RED) {
     if (!args || typeof args !== "object") {
       return "propose_action arguments must be a JSON object.";
     }
+    if (RESERVED_PROPOSE_ACTIONS.has(args.action)) {
+      return "action " + args.action + " is reserved and not available yet; use one of generate, modify, document, build.";
+    }
     if (!PROPOSE_ACTIONS.has(args.action)) {
       return "action must be one of generate, modify, document, build (got: " + String(args.action) + ")";
     }
@@ -1857,6 +1871,7 @@ function flowPilotRuntime(RED) {
           providerBaseUrl: activeProvider.baseUrl,
           model: activeProvider.model,
           messages: finalMessages,
+          offeredTools: offeredToolNames(chatOptions),
           toolCalls: result.toolCalls,
           responseContent: result.content || null
         });
@@ -1875,6 +1890,7 @@ function flowPilotRuntime(RED) {
       providerBaseUrl: activeProvider.baseUrl,
       model: activeProvider.model,
       messages: finalMessages,
+      offeredTools: offeredToolNames(chatOptions),
       responseChars: typeof result.content === "string" ? result.content.length : 0,
       responseContent: result.content || "",
       parseOutcome: "received"
@@ -2487,6 +2503,7 @@ function flowPilotRuntime(RED) {
           providerBaseUrl: activeProvider.baseUrl,
           model: activeProvider.model,
           messages: finalMessages,
+          offeredTools: offeredToolNames(chatOptions),
           toolCalls: result.toolCalls,
           responseContent: result.content || null,
           debugNote: execution.debugNote || undefined
