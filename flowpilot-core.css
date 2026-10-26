@@ -1763,3 +1763,10 @@
     background: rgba(31, 136, 229, 0.15);
     box-shadow: 0 0 8px -2px rgba(31, 136, 229, 0.8);
 }
+
+/* Stage 5: which routing tier was chosen and why (display only). */
+.fp-tier-why {
+    margin-top: 4px;
+    font-size: 11px;
+    color: #8a96a3;
+}
