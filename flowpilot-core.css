@@ -674,6 +674,53 @@
     color: var(--red-ui-secondary-text-color, #888);
 }
 
+/* SF-6 result card: every value here is derived from the run record. */
+.fp-result-card {
+    overflow-wrap: anywhere;
+}
+
+.fp-result-heading {
+    margin-top: 10px;
+    margin-bottom: 5px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--red-ui-secondary-text-color, #888);
+}
+
+.fp-result-node {
+    margin: 0 0 8px 0;
+    padding-left: 8px;
+    border-left: 2px solid rgba(31, 136, 229, 0.35);
+}
+
+.fp-result-node-title, .fp-result-change-key {
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.fp-result-change, .fp-result-line, .fp-result-check, .fp-result-run, .fp-result-tokens {
+    font-size: 12px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.fp-result-line {
+    margin-left: 8px;
+    font-family: monospace;
+    white-space: pre-wrap;
+}
+
+.fp-result-line-add, .fp-result-added, .fp-result-check-pass { color: #1a7a1a; }
+.fp-result-line-remove, .fp-result-removed, .fp-result-check-fail { color: #b22222; }
+.fp-result-check-warning { color: #8a5a00; }
+.fp-result-tokens { margin-top: 6px; color: var(--red-ui-secondary-text-color, #888); }
+.fp-result-run { margin-top: 8px; font-weight: 600; }
+
+.fp-result-test:disabled { opacity: 0.55; }
+
 /* /build loop stepper — reuses .fp-review's card look (see addGeneratedReview)
    rather than introducing a new visual language. */
 .fp-loop-steps {
@@ -1589,6 +1636,21 @@
     margin-bottom: 12px;
 }
 
+.fp-propose-risk-section {
+    margin: 8px 0 12px 0;
+    padding: 8px;
+    border-left: 3px solid #ff9800;
+    background: rgba(255, 152, 0, 0.08);
+}
+
+.fp-propose-risk-list {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 12px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+
 .fp-propose-plan-list {
     list-style: none;
     margin: 0;
@@ -1774,4 +1836,34 @@
 /* R11-9: a message is queued for the next step boundary. */
 .fp-compose.fp-has-queued #fp-prompt {
     border-style: dashed;
+}
+
+/* The sidebar can be narrower than the default 300px. Keep the complete
+   card reachable at 180px: rows wrap, code wraps, and no child establishes
+   a horizontal scrolling surface. */
+@media (max-width: 220px) {
+    #fp-root, #fp-root * { min-width: 0; box-sizing: border-box; }
+    .fp-header, .fp-compose { padding: 8px; }
+    .fp-messages { padding: 0 6px 8px 6px; overflow-x: hidden; }
+    .fp-header-row, .fp-view-buttons, .fp-planact-bar, .fp-review-actions,
+    .fp-propose-buttons-row, .fp-propose-add-plan { gap: 4px; }
+    .fp-logo { width: 28px; height: 28px; flex: 0 0 28px; }
+    .fp-title { font-size: 16px; }
+    .fp-subtitle { font-size: 11px; }
+    .fp-message { padding: 8px; overflow-wrap: anywhere; }
+    .fp-md pre, .fp-json { max-width: 100%; overflow-x: hidden; white-space: pre-wrap; word-break: break-word; }
+    .fp-review-actions > *, .fp-propose-buttons-row > *, .fp-propose-add-plan > * {
+        max-width: 100%;
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+    .fp-propose-mode-row { gap: 3px; }
+    .fp-propose-mode-badge { width: 22px; height: 22px; font-size: 9px; }
+    .fp-propose-plan-list > li { align-items: flex-start; flex-wrap: wrap; gap: 3px; }
+    .fp-propose-plan-text { flex: 1 1 100%; }
+    .fp-propose-add-plan { flex-wrap: wrap; }
+    .fp-propose-plan-input { flex: 1 1 100%; }
+    .fp-mode-indicator { white-space: normal; line-height: 1.2; }
+    .fp-mode-indicator i { margin-right: 1px; }
+    .fp-status-strip { flex-wrap: wrap; gap: 3px; }
 }
