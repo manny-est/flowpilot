@@ -1,4 +1,5 @@
 const https = require("https");
+const vm = require("vm");
 const path = require("path");
 const nodeRedRegistry = require("@node-red/registry");
 const PACKAGE_VERSION = require("./package.json").version;
@@ -107,6 +108,67 @@ const PRE_ROUTER_CHANGE_VERBS = ["rename", "rewire", "remove", "update", "insert
 const PRE_ROUTER_VAGUE_PHRASES = [
   "whatever", "anything", "something", "the right node", "the right one", "somehow"
 ];
+
+// SF-3 / ADR-015 C3. These wrappers mirror the Node-RED Function node's
+// compile-time wrappers (10-function.js). They are passed to vm.Script only;
+// none of the resulting scripts is ever run here.
+function functionValidationWrapper(code, kind) {
+  code = typeof code === "string" ? code : "";
+  if (kind === "initialize") {
+    return "(async function(__send__) {\n" +
+      "var node = { id:__node__.id, name:__node__.name, path:__node__.path, outputCount:__node__.outputCount, " +
+      "log:__node__.log, error:__node__.error, warn:__node__.warn, debug:__node__.debug, trace:__node__.trace, " +
+      "status:__node__.status, send:function(msgs, cloneMsg) { __node__.send(__send__, RED.util.generateId(), msgs, cloneMsg); } };\n" +
+      code + "\n})(__initSend__);";
+  }
+  if (kind === "finalize") {
+    return "(function () {\n" +
+      "var node = { id:__node__.id, name:__node__.name, path:__node__.path, outputCount:__node__.outputCount, " +
+      "log:__node__.log, error:__node__.error, warn:__node__.warn, debug:__node__.debug, trace:__node__.trace, " +
+      "status:__node__.status, send:function(msgs, cloneMsg) { __node__.error('Cannot send from close function'); } };\n" +
+      code + "\n})();";
+  }
+  return "var results = null;\n" +
+    "results = (async function(msg,__send__,__done__){\n" +
+    "var __msgid__ = msg._msgid;\n" +
+    "var node = { id:__node__.id, name:__node__.name, path:__node__.path, outputCount:__node__.outputCount, " +
+    "log:__node__.log, error:__node__.error, warn:__node__.warn, debug:__node__.debug, trace:__node__.trace, " +
+    "status:__node__.status, send:function(msgs, cloneMsg) { __node__.send(__send__, __msgid__, msgs, cloneMsg); }, done:__done__ };\n" +
+    code + "\n})(msg,__send__,__done__);";
+}
+
+function compileFunctionValidation(code, kind) {
+  if (typeof code !== "string" || !code.trim()) { return { ok: true }; }
+  const wrapped = functionValidationWrapper(code, kind);
+  const marker = wrapped.indexOf(code);
+  const prefixLines = wrapped.slice(0, marker).split("\n").length - 1;
+  try {
+    new vm.Script(wrapped, { filename: "FlowPilot Function node " + kind });
+    return { ok: true };
+  } catch (err) {
+    let line = null;
+    // A vm.Script SyntaxError's stack starts with "<filename>:<line>"; deeper
+    // frames are Node internals, so only the first line is trusted.
+    const firstLine = err && err.stack ? String(err.stack).split("\n")[0] : "";
+    const filename = "FlowPilot Function node " + kind;
+    if (firstLine.indexOf(filename + ":") === 0) {
+      const lineNo = Number(firstLine.slice(filename.length + 1));
+      if (lineNo > 0) { line = Math.max(1, lineNo - prefixLines); }
+    }
+    return { ok: false, message: err && err.message ? err.message : String(err), line: line };
+  }
+}
+
+function validateFunctionPayload(body) {
+  body = body || {};
+  const checks = {
+    func: compileFunctionValidation(body.code !== undefined ? body.code : body.func, "body"),
+    initialize: compileFunctionValidation(body.initialize, "initialize"),
+    finalize: compileFunctionValidation(body.finalize, "finalize")
+  };
+  const errors = Object.keys(checks).filter(function (key) { return !checks[key].ok; });
+  return { ok: errors.length === 0, checks: checks, errors: errors };
+}
 
 function wordPattern(word) {
   return new RegExp("(^|[^a-z0-9_])" + word.replace(/\s+/g, "\\s+") + "([^a-z0-9_]|$)", "i");
@@ -2421,6 +2483,24 @@ function flowPilotRuntime(RED) {
   function hasRequestBody(body) {
     return !!body && typeof body === "object" && !Array.isArray(body) && Object.keys(body).length > 0;
   }
+
+  // Compile-only Function-node validation. The route accepts the single-node
+  // shape used by the editor and also a small batch shape for future callers;
+  // either way, only vm.Script compilation occurs and user code is never run.
+  RED.httpAdmin.post("/flowpilot/validate-function", RED.auth.needsPermission("settings.write"), function (req, res) {
+    if (!hasRequestBody(req.body)) {
+      return res.status(400).json({ error: "Function validation payload is required." });
+    }
+    if (Array.isArray(req.body.nodes)) {
+      const results = req.body.nodes.map(function (node) {
+        const result = validateFunctionPayload(node || {});
+        result.id = node && node.id;
+        return result;
+      });
+      return res.json({ ok: results.every(function (result) { return result.ok; }), nodes: results });
+    }
+    res.json(validateFunctionPayload(req.body));
+  });
 
   function validateSettingsSaveBody(body) {
     if (!hasRequestBody(body)) {
