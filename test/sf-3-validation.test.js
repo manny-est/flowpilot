@@ -104,6 +104,27 @@ assert.strictEqual(api.validationOutcomeForAttempt(3, { ok: false, retryableFail
   delete global.ajaxJson;
 })();
 
+// Live-found (SF-3 gate, converged Build on Spark): an editor node's .wires
+// kept the model's placeholder id while the real wire lived in the link
+// table, so a correct canvas failed validation three times.
+(function () {
+  const inj = { id: "6f98", type: "inject", wires: [["fp-dbg-1"]], _def: { inputs: 0, outputs: 1 } };
+  const dbg = { id: "a1b2", type: "debug", wires: [], _def: { inputs: 1, outputs: 0 } };
+  const live = [inj, dbg];
+  const fakeRED = { nodes: {
+    getType: function () { return true; },
+    eachNode: function (cb) { live.forEach(cb); },
+    eachConfig: function () {},
+    node: function (id) { return live.find(function (n) { return n.id === id; }) || null; },
+    filterLinks: function (f) { return f.source === inj ? [{ source: inj, sourcePort: 0, target: dbg }] : []; }
+  } };
+  const w = new Function("RED", source + "\nreturn { validateWriteResult };")(fakeRED);
+  let out = null;
+  w.validateWriteResult({ requested: { newNodes: [{ id: "fp-inj-1" }, { id: "fp-dbg-1" }] },
+    idMap: { "fp-inj-1": "6f98", "fp-dbg-1": "a1b2" } }, function (r) { out = r; });
+  assert.strictEqual(out.ok, true, "wires come from the editor's link table, not the node's stale .wires");
+})();
+
 (async function () {
   const runtime = loadRuntime({ activeProviderId: "p1", providers: [provider(1)] });
   const harmless = await call(runtime, "POST", "/flowpilot/validate-function", {
