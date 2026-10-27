@@ -207,19 +207,9 @@ function isDeterministicPreRouterToolCall(call) {
     call.id.indexOf(PRE_ROUTER_TOOL_CALL_ID_PREFIX) === 0);
 }
 
-// ADR-013 (amended per the architect's 2026-09-23 review): tool-calling
-// capability is not the same axis as routing reliability. Gate P1 (see
-// Phase11-Build-Progress.md, CODEX-041) measured spark — a local,
-// tool-capable model — at 100% on document/build/clarify under Tier C
-// (classify first, then act) vs. 68.9% under Tier A (native tool call),
-// on the full 45-case corpus. A rule that sends every tool-capable model to
-// Tier A assigns exactly the measured-worse shape to any local deployment.
-// isLocalDeployment classifies by DEPLOYMENT (cloud-frontier vs.
-// self-hosted), not by raw model size — ADR-011 explicitly warned off
-// trying to auto-detect true model size from an arbitrary endpoint, and
-// this doesn't attempt that; it uses the preset the user themselves picked
-// (ADR-012), falling back to the provider's own baseUrl only for "custom"
-// (ADR-012: the deliberately ambiguous escape hatch preset).
+// ADR-013's accepted amendment makes classify-first the automatic rule for
+// every provider. Deployment classification remains available for the
+// Settings explanation and other diagnostics, but no longer selects Tier A.
 function isPrivateNetworkHost(rawBaseUrl) {
   let hostname;
   try {
@@ -252,17 +242,12 @@ function isLocalDeployment(provider) {
   return isPrivateNetworkHost(provider && provider.baseUrl);
 }
 
-// "auto" mode (the default) derives the effective tier from two live
-// signals: the tool-calling probe already run by Pre-flight check / the
-// silent re-probe (provider.supportsTools), and deployment class (above).
-// No tools -> Tier C. Tools on a cloud/frontier provider -> Tier A. Tools
-// on a local/self-hosted provider -> Tier C too, per the Gate P1 evidence
-// above -- capability to emit a tool call isn't the same as routing
-// reliably with one. Tier B is a narrowed, unexercised stub (see
-// agentToolsFor) and is deliberately never chosen automatically -- it's
-// reachable only via an explicit manual override. "manual" mode uses the
-// hand-picked routingTier as-is, exactly like pre-0.6.4 behavior, for
-// anyone who already knew what they were doing.
+// "auto" mode (the default) always classifies first. Tool calling remains
+// useful after that classification for reading the user's flows, but it no
+// longer changes the routing tier. Tier B remains a narrowed stub (see
+// agentToolsFor) and is reachable only via an explicit manual override.
+// "manual" mode uses the hand-picked routingTier as-is, exactly like
+// pre-0.6.4 behavior, for anyone who already knew what they were doing.
 function normalizedRoutingTier(provider) {
   const mode = provider && provider.routingTierMode === "manual" ? "manual" : "auto";
   if (mode === "manual") {
@@ -271,8 +256,7 @@ function normalizedRoutingTier(provider) {
       : "";
     return ROUTING_TIERS.has(tier) ? tier : "A";
   }
-  if (!(provider && provider.supportsTools === true)) { return "C"; }
-  return isLocalDeployment(provider) ? "C" : "A";
+  return "C";
 }
 
 function normalizeProposeActionArguments(args, context) {
@@ -347,7 +331,38 @@ function makeTierCAskUserToolCall(prompt, reason) {
   };
 }
 
-function makeTierCProposeActionToolCall(letter, prompt, content, context) {
+function normalizeTierCActionDetails(details) {
+  if (!details || typeof details !== "object") { return null; }
+  const summary = typeof details.summary === "string" ? details.summary.trim() : "";
+  if (!summary) { return null; }
+  const planItems = Array.isArray(details.plan_items)
+    ? details.plan_items
+      .map(function (item) { return typeof item === "string" ? item.trim().slice(0, 200) : ""; })
+      .filter(function (item) { return !!item; })
+      .slice(0, 8)
+    : [];
+  return { summary: summary.slice(0, 400), plan_items: planItems };
+}
+
+function parseTierCActionDetails(content) {
+  const text = String(content || "").trim();
+  if (!text) { return null; }
+  const candidates = [text.replace(/^```(?:json)?\s*|\s*```$/gi, "").trim()];
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start >= 0 && end > start) { candidates.push(text.slice(start, end + 1)); }
+  for (let i = 0; i < candidates.length; i++) {
+    try {
+      const parsed = normalizeTierCActionDetails(JSON.parse(candidates[i]));
+      if (parsed) { return parsed; }
+    } catch (err) {
+      // Keep the classification turn's existing echo behavior on failure.
+    }
+  }
+  return null;
+}
+
+function makeTierCProposeActionToolCall(letter, prompt, content, context, details) {
   const actionByLetter = { B: "generate", C: "modify", D: "document", E: "build" };
   const action = actionByLetter[letter];
   const prose = stripTierCAnswerPrefix(content);
@@ -355,7 +370,8 @@ function makeTierCProposeActionToolCall(letter, prompt, content, context) {
     action === "modify" ? "I will change the existing Node-RED flow as requested: " :
     action === "document" ? "I will add canvas documentation for this request: " :
     "I will run a build-and-verify pass for this request: ";
-  const summary = prose || (prefix + String(prompt || "").trim());
+  const parsedDetails = normalizeTierCActionDetails(details);
+  const summary = parsedDetails ? parsedDetails.summary : (prose || (prefix + String(prompt || "").trim()));
   return {
     index: 0,
     id: TIER_C_TOOL_CALL_ID_PREFIX + Date.now(),
@@ -365,13 +381,13 @@ function makeTierCProposeActionToolCall(letter, prompt, content, context) {
       arguments: JSON.stringify(normalizeProposeActionArguments({
         action: action,
         summary: summary,
-        plan_items: []
+        plan_items: parsedDetails ? parsedDetails.plan_items : []
       }, context))
     }
   };
 }
 
-function tierCClassificationToResult(content, prompt, context) {
+function tierCClassificationToResult(content, prompt, context, actionDetails) {
   const parsed = parseTierCClassification(content);
   if (parsed.ambiguous || parsed.unparseable || parsed.letter === "F") {
     return {
@@ -390,7 +406,7 @@ function tierCClassificationToResult(content, prompt, context) {
   return {
     result: {
       content: "",
-      toolCalls: [makeTierCProposeActionToolCall(parsed.letter, prompt, content, context)]
+      toolCalls: [makeTierCProposeActionToolCall(parsed.letter, prompt, content, context, actionDetails)]
     },
     parsed: parsed
   };
@@ -1029,9 +1045,12 @@ function flowPilotRuntime(RED) {
     return tools.map(function (t) { return (t && t.function && t.function.name) || (t && t.name) || "?"; });
   }
 
-  function agentToolsFor(settings, activeProvider, mode, writesAllowed) {
+  function agentToolsFor(settings, activeProvider, mode, writesAllowed, answerPhase) {
     const routingTier = normalizedRoutingTier(activeProvider);
     if (mode === "chat" && activeProvider && activeProvider.supportsTools === true) {
+      if (answerPhase === true) {
+        return providerToolDefinitions(AGENT_READ_TOOLS.concat([ASK_USER_TOOL].filter(Boolean)));
+      }
       // Tier B is intentionally only a narrowed, unexercised stub in this
       // ticket: same contract shape as Tier A, minus read tools.
       if (routingTier === "B") {
@@ -1803,8 +1822,41 @@ function flowPilotRuntime(RED) {
     return {
       result: Object.assign({}, rawResult, mapped.result),
       messages: finalMessages,
-      parsed: mapped.parsed
+      parsed: mapped.parsed,
+      classificationContent: rawResult && rawResult.content || ""
     };
+  }
+
+  // Answer phase is read-only by contract. If a provider ignores the narrowed
+  // tool list and emits propose_action anyway, drop just that call so it
+  // never reaches the Act chip; read-tool calls in the same turn still run.
+  function stripAnswerPhaseProposals(result) {
+    if (!result || !Array.isArray(result.toolCalls)) { return result; }
+    const kept = result.toolCalls.filter(function (call) {
+      return !(call && call.function && call.function.name === PROPOSE_ACTION_NAME);
+    });
+    if (kept.length === result.toolCalls.length) { return result; }
+    return Object.assign({}, result, { toolCalls: kept.length ? kept : null });
+  }
+
+  async function runTierCActionSummary(provider, activeProvider, settings, classified) {
+    const actionNames = { B: "generate", C: "modify", D: "document", E: "build" };
+    const action = classified && classified.parsed && actionNames[classified.parsed.letter];
+    if (!action) { return null; }
+    const messages = (classified.messages || []).concat([
+      { role: "assistant", content: classified.classificationContent || "" },
+      { role: "user", content: "The action is already decided as " + action + ". Do not classify or reroute it. " +
+        "Reply with only JSON in exactly this shape: {\"summary\":\"...\",\"plan_items\":[\"...\"]}. " +
+        "The summary should say what will be done, and plan_items should contain concise steps." }
+    ]);
+    warnNumCtxOverflow(messages, activeProvider, "chat-tier-c-action-summary");
+    try {
+      const followUp = await provider.chat(activeProvider, messages, agentTurnOptions(settings, undefined));
+      const details = parseTierCActionDetails(followUp && followUp.content);
+      return details ? { details: details, messages: messages } : null;
+    } catch (err) {
+      return null;
+    }
   }
 
   function normalizeProposeActionToolCalls(toolCalls, context) {
@@ -1903,6 +1955,7 @@ function flowPilotRuntime(RED) {
       ? buildPlanRoutingMessages(systemPrompt, history, historyTruncated, context, prompt)
       : buildMessages(systemPrompt, history, historyTruncated, described, prompt);
     let finalMessages = messages;
+    let answerPhase = false;
     warnNumCtxOverflow(messages, activeProvider, "chat");
 
     const toolsEnabled = !!useTools && activeProvider.supportsTools === true;
@@ -1930,10 +1983,50 @@ function flowPilotRuntime(RED) {
           );
           result = classified.result;
           finalMessages = classified.messages;
+          if (classified.parsed.letter === "A" && activeProvider.supportsTools === true) {
+            const answerMessages = buildPlanRoutingMessages(
+              systemPrompt,
+              history,
+              historyTruncated,
+              context,
+              prompt
+            );
+            const answerTools = agentToolsFor(settings, activeProvider, "chat", undefined, true);
+            const answerOptions = agentTurnOptions(settings, {
+              tools: answerTools,
+              toolChoice: "auto"
+            });
+            chatOptions = answerOptions;
+            warnNumCtxOverflow(answerMessages, activeProvider, "chat-tier-c-answer-handoff");
+            result = await chatWithAgentCap(provider, activeProvider, answerMessages, answerOptions);
+            finalMessages = answerMessages;
+            answerPhase = true;
+            maybeLogDebugEvent("tier_c_answer_handoff", {
+              mode: "chat",
+              providerBaseUrl: activeProvider && activeProvider.baseUrl,
+              model: activeProvider && activeProvider.model,
+              messages: answerMessages,
+              offeredTools: offeredToolNames(answerOptions),
+              classification: classified.parsed
+            });
+          } else if (classified.parsed.letter >= "B" && classified.parsed.letter <= "E" &&
+            activeProvider.supportsTools === true) {
+            const summary = await runTierCActionSummary(provider, activeProvider, settings, classified);
+            if (summary) {
+              result = tierCClassificationToResult(
+                classified.classificationContent,
+                prompt,
+                context,
+                summary.details
+              ).result;
+              finalMessages = summary.messages;
+            }
+          }
         } else {
           result = await chatWithAgentCap(provider, activeProvider, messages, chatOptions);
         }
       }
+      if (answerPhase) { result = stripAnswerPhaseProposals(result); }
       const validated = await validateProposeActionToolCalls(
         activeProvider, finalMessages, result, "chat", context,
         function (retryMessages) {
@@ -1959,7 +2052,10 @@ function flowPilotRuntime(RED) {
           responseContent: result.content || null
         });
       }
-      return { settings, activeProvider, result, perf, messages: finalMessages, toolCalls: result.toolCalls };
+      return {
+        settings, activeProvider, result, perf, messages: finalMessages,
+        toolCalls: result.toolCalls, answerPhase: answerPhase
+      };
     }
 
     // The visible reply may end with a hidden <<<FLOWPILOT_DATA>>> block
@@ -1981,7 +2077,10 @@ function flowPilotRuntime(RED) {
 
     const perf = performanceAuditFields(finalMessages, result.content, result);
 
-    return { settings, activeProvider, result, perf, chatMessage: split.message, chatData: split.data, messages: finalMessages };
+    return {
+      settings, activeProvider, result, perf, chatMessage: split.message, chatData: split.data,
+      messages: finalMessages, answerPhase: answerPhase
+    };
   }
 
   // ---------------------------------------------------------------------
@@ -2403,7 +2502,7 @@ function flowPilotRuntime(RED) {
 
     try {
       const useTools = !!req.body.tools;
-      const { activeProvider, result, perf, chatMessage, chatData, messages, toolCalls } =
+      const { activeProvider, result, perf, chatMessage, chatData, messages, toolCalls, answerPhase } =
         await runChat(prompt, "selected-nodes", req.body.context, history, historyTruncated,
           req.body.conversationId, useTools, req.body.strategy);
 
@@ -2416,10 +2515,15 @@ function flowPilotRuntime(RED) {
       }, perf));
 
       if (result.fallbackToClassic) {
-        return res.json({ fallbackToClassic: true, usage: result.usage || null });
+        const fallbackBody = { fallbackToClassic: true, usage: result.usage || null };
+        if (answerPhase) { fallbackBody.answerPhase = true; }
+        return res.json(fallbackBody);
       }
       if (toolCalls) {
-        return res.json({ toolCalls: toolCalls, messages: messages, content: result.content || null, usage: result.usage || null });
+        const toolBody = { toolCalls: toolCalls, messages: messages, content: result.content || null,
+          usage: result.usage || null };
+        if (answerPhase) { toolBody.answerPhase = true; }
+        return res.json(toolBody);
       }
 
       const body = {
@@ -2427,6 +2531,7 @@ function flowPilotRuntime(RED) {
         raw: result.raw ? "[raw response captured]" : null,
         usage: result.usage || null
       };
+      if (answerPhase) { body.answerPhase = true; }
       const suggestedAction = extractSuggestedAction(chatData);
       if (suggestedAction) { body.suggestedAction = suggestedAction; }
       const questionOptions = extractQuestionOptions(chatData);
@@ -2531,12 +2636,13 @@ function flowPilotRuntime(RED) {
     }
     const mode = req.body.mode || "chat";
     const context = req.body && req.body.context;
+    const answerPhase = req.body && req.body.answerPhase === true;
 
     try {
       let finalMessages = messages;
       const toolsEnabled = activeProvider.supportsTools === true;
       const offeredTools = toolsEnabled
-        ? agentToolsFor(settings, activeProvider, mode, execution.strategy === "agent")
+        ? agentToolsFor(settings, activeProvider, mode, execution.strategy === "agent", answerPhase)
         : [];
       let chatOptions = toolsEnabled
         ? { tools: offeredTools, toolChoice: "auto" }
@@ -2552,7 +2658,9 @@ function flowPilotRuntime(RED) {
       let result = execution.strategy === "agent"
         ? await chatWithAgentCap(provider, activeProvider, messages, chatOptions)
         : await provider.chat(activeProvider, messages, chatOptions);
-      if (execution.strategy === "agent") {
+      if (answerPhase) {
+        result = stripAnswerPhaseProposals(result);
+      } else if (execution.strategy === "agent") {
         const validated = await validateProposeActionToolCalls(
           activeProvider, messages, result, mode, context,
           function (retryMessages) {
@@ -2564,7 +2672,9 @@ function flowPilotRuntime(RED) {
       }
 
       if (result.fallbackToClassic) {
-        return res.json({ fallbackToClassic: true, usage: result.usage || null });
+        const fallbackBody = { fallbackToClassic: true, usage: result.usage || null };
+        if (answerPhase) { fallbackBody.answerPhase = true; }
+        return res.json(fallbackBody);
       }
 
       storage.appendAudit(Object.assign({
@@ -2591,12 +2701,14 @@ function flowPilotRuntime(RED) {
           responseContent: result.content || null,
           debugNote: execution.debugNote || undefined
         });
-        return res.json({
+        const toolBody = {
           toolCalls: result.toolCalls,
           toolTiers: toolTierMap(result.toolCalls),
           content: result.content || null,
           usage: result.usage || null
-        });
+        };
+        if (answerPhase) { toolBody.answerPhase = true; }
+        return res.json(toolBody);
       }
 
       maybeLogDebugEvent("assistant_reply", {
@@ -2631,7 +2743,11 @@ function flowPilotRuntime(RED) {
       const split = splitChatDataBlock(result.content || "");
       recordTranscriptTurn(req.body.conversationId, "chat", null, split.message);
 
-      const body = { message: split.message || "[No assistant message returned by provider]", usage: result.usage || null };
+      const body = {
+        message: split.message || "[No assistant message returned by provider]",
+        usage: result.usage || null
+      };
+      if (answerPhase) { body.answerPhase = true; }
       const suggestedAction = extractSuggestedAction(split.data);
       if (suggestedAction) { body.suggestedAction = suggestedAction; }
       const questionOptions = extractQuestionOptions(split.data);
