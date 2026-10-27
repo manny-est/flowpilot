@@ -1827,6 +1827,18 @@ function flowPilotRuntime(RED) {
     };
   }
 
+  // Answer phase is read-only by contract. If a provider ignores the narrowed
+  // tool list and emits propose_action anyway, drop just that call so it
+  // never reaches the Act chip; read-tool calls in the same turn still run.
+  function stripAnswerPhaseProposals(result) {
+    if (!result || !Array.isArray(result.toolCalls)) { return result; }
+    const kept = result.toolCalls.filter(function (call) {
+      return !(call && call.function && call.function.name === PROPOSE_ACTION_NAME);
+    });
+    if (kept.length === result.toolCalls.length) { return result; }
+    return Object.assign({}, result, { toolCalls: kept.length ? kept : null });
+  }
+
   async function runTierCActionSummary(provider, activeProvider, settings, classified) {
     const actionNames = { B: "generate", C: "modify", D: "document", E: "build" };
     const action = classified && classified.parsed && actionNames[classified.parsed.letter];
@@ -2014,11 +2026,7 @@ function flowPilotRuntime(RED) {
           result = await chatWithAgentCap(provider, activeProvider, messages, chatOptions);
         }
       }
-      if (answerPhase && Array.isArray(result.toolCalls) && result.toolCalls.some(function (call) {
-        return call && call.function && call.function.name === PROPOSE_ACTION_NAME;
-      })) {
-        result = Object.assign({}, result, { toolCalls: null });
-      }
+      if (answerPhase) { result = stripAnswerPhaseProposals(result); }
       const validated = await validateProposeActionToolCalls(
         activeProvider, finalMessages, result, "chat", context,
         function (retryMessages) {
@@ -2650,15 +2658,8 @@ function flowPilotRuntime(RED) {
       let result = execution.strategy === "agent"
         ? await chatWithAgentCap(provider, activeProvider, messages, chatOptions)
         : await provider.chat(activeProvider, messages, chatOptions);
-      const strayAnswerProposal = answerPhase && Array.isArray(result.toolCalls) &&
-        result.toolCalls.some(function (call) {
-          return call && call.function && call.function.name === PROPOSE_ACTION_NAME;
-        });
-      if (strayAnswerProposal) {
-        // Answer phase is read-only by contract. If a provider ignores the
-        // narrowed tool list and emits an Act proposal anyway, never let it
-        // reach the client-side chip renderer.
-        result = Object.assign({}, result, { toolCalls: null });
+      if (answerPhase) {
+        result = stripAnswerPhaseProposals(result);
       } else if (execution.strategy === "agent") {
         const validated = await validateProposeActionToolCalls(
           activeProvider, messages, result, mode, context,

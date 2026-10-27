@@ -78,6 +78,27 @@ async function testAnswerPhaseDefense() {
   });
 }
 
+async function testAnswerPhaseKeepsReadCalls() {
+  await withRuntime({
+    reply: "",
+    toolCalls: function (body) {
+      return body && Array.isArray(body.tools)
+        ? toolCall("read_node", { name: "Poll" }, "call-read").concat(
+          toolCall("propose_action", { action: "modify", summary: "bad" }, "call-prop"))
+        : null;
+    }
+  }, {}, async function (runtime, fake) {
+    const out = await call(runtime, "POST", "/flowpilot/agent-step", {
+      strategy: "agent", entry: "chat", mode: "chat", answerPhase: true,
+      messages: [{ role: "system", content: "x" }, { role: "user", content: "answer" }]
+    });
+    assert.strictEqual(out.status, 200);
+    assert.strictEqual(out.body.answerPhase, true);
+    assert.deepStrictEqual(out.body.toolCalls.map(function (c) { return c.function.name; }), ["read_node"],
+      "a stray proposal is dropped but the read call in the same turn still runs");
+  });
+}
+
 async function testActionSummary() {
   let callIndex = 0;
   await withRuntime({
@@ -130,6 +151,7 @@ async function testActionFallback() {
   await testAnswerHandoff();
   await testAnswerNoTools();
   await testAnswerPhaseDefense();
+  await testAnswerPhaseKeepsReadCalls();
   await testActionSummary();
   await testActionFallback();
   console.log("SF-1 classify-first tests passed");
