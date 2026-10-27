@@ -1112,14 +1112,12 @@ function flowPilotRuntime(RED) {
     }
   ];
 
-  // Converged Build is opt-in (settings.buildEngine, default "classic") and
-  // runs on the agent WRITE-tool loop, so it also needs that loop enabled and
-  // a tool-capable provider. Anything else keeps the classic Build path.
+  // Converged Build is the Build engine for tool-capable providers. Providers
+  // without tools stay on the classic Build envelope path indefinitely.
   const BUILD_READ_TOOL_NAMES = ["read_node", "get_connections", "read_debug"];
 
   function convergedBuildActive(settings, activeProvider) {
-    return !!settings && settings.buildEngine === "converged" && settings.enableAgentWrite === true &&
-      !!activeProvider && activeProvider.supportsTools === true;
+    return !!activeProvider && activeProvider.supportsTools === true;
   }
   const TIER_B_PLAN_CHAT_TOOLS = [ASK_USER_TOOL, TIER_B_PROPOSE_ACTION_TOOL].filter(Boolean);
 
@@ -1158,9 +1156,8 @@ function flowPilotRuntime(RED) {
       });
       return providerToolDefinitions(buildReadTools.concat(WRITE_TOOLS, BUILD_RUNTIME_TOOLS));
     }
-    const writesEnabled = settings.enableAgentWrite === true &&
-      (mode === "modify" || mode === "generate") && writesAllowed !== false &&
-      activeProvider && activeProvider.supportsTools === true;
+    const writesEnabled = ["modify", "generate", "document"].indexOf(mode) !== -1 &&
+      writesAllowed !== false && activeProvider && activeProvider.supportsTools === true;
     return providerToolDefinitions(AGENT_READ_TOOLS.concat(writesEnabled ? WRITE_TOOLS : []));
   }
 
@@ -2706,21 +2703,20 @@ function flowPilotRuntime(RED) {
       });
       return null;
     }
-    const chatAgentAllowed = body.entry === "chat" &&
-      activeProvider && activeProvider.supportsTools === true;
-    if (body.strategy === "agent" &&
-        !(chatAgentAllowed || (settings.enableAgentWrite === true &&
-          activeProvider && activeProvider.supportsTools === true))) {
+    const toolProvider = !!activeProvider && activeProvider.supportsTools === true;
+    if (body.strategy === "agent" && !toolProvider) {
       res.status(409).json({
         error: "agent_strategy_unavailable",
-        message: body.entry === "chat"
-          ? "The agent strategy for chat requires a tool-capable provider."
-          : "The agent strategy requires enableAgentWrite and a tool-capable provider."
+        message: "The agent strategy requires a tool-capable provider."
       });
       return null;
     }
     return {
-      strategy: body.strategy,
+      // Capability, not the retired settings choices, selects the engine.
+      // A tool provider is always agent-strategy; a no-tools provider is
+      // always classic-strategy. An explicit agent request on a no-tools
+      // provider was rejected above so the corpus can prove that guard.
+      strategy: toolProvider ? "agent" : "classic",
       entry: body.entry,
       conversationId: body.conversationId || null,
       runId: body.runId || null,
@@ -3601,9 +3597,8 @@ function flowPilotRuntime(RED) {
   // action name, and how the route validates its inputs beforehand. Throws
   // an Error with .status and (when applicable) .raw for the route to relay.
   // ---------------------------------------------------------------------
-  // Step 4: useTools offers the mode-appropriate agent tools. WRITE tools
-  // are Modify-only and require enableAgentWrite plus a tool-capable
-  // provider. If the
+  // Step 4: useTools offers the mode-appropriate agent tools. Tool-capable
+  // Generate, Document, Modify and Build requests receive WRITE tools. If the
   // provider responds with tool_calls instead of a final envelope, returns
   // early with { toolCalls, messages, content, usage } — same shape as
   // runChat's early return — so the route can hand it to the frontend
@@ -3612,12 +3607,13 @@ function flowPilotRuntime(RED) {
     const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction, fromAct);
     if (!isProviderConfirmed(activeProvider)) { throw providerUnconfirmedError(); }
     const settings = storage.getSettings();
-    const toolsEnabled = !!useTools && activeProvider.supportsTools === true;
+    const toolsEnabled = activeProvider.supportsTools === true && execution &&
+      execution.strategy === "agent";
     const offeredTools = toolsEnabled
       ? agentToolsFor(settings, activeProvider, auditAction, execution && execution.strategy === "agent")
       : [];
     const responseFormat = directCompletionResponseFormat(activeProvider, auditAction, toolsEnabled);
-    const toolChoice = (auditAction === "modify" || auditAction === "generate" || auditAction === "build") && execution &&
+    const toolChoice = ["modify", "generate", "document", "build"].indexOf(auditAction) !== -1 && execution &&
       execution.strategy === "agent" ? "required" : "auto";
     let chatOptions = toolsEnabled
       ? { tools: offeredTools, toolChoice: toolChoice }
@@ -4165,7 +4161,7 @@ function flowPilotRuntime(RED) {
     const historyTruncated = !!req.body.historyTruncated;
     const finalize = function (result) { return finalizeSimpleGeneration(result, execution); };
 
-    if (req.body.stream) {
+    if (req.body.stream && execution.strategy === "classic") {
       return runExecuteStream(
         req, res, generationSystemPrompt, "generate", prompt, req.body && req.body.context,
         history, historyTruncated, finalize, req.body.conversationId, execution
@@ -4214,18 +4210,27 @@ function flowPilotRuntime(RED) {
       return res.status(400).json({ error: "A description of what to build is required." });
     }
 
-    // Converged Build (R11-6): an agent-strategy request runs on the one
-    // engine with the converged prompt and the runtime tools. Every other
-    // request takes the classic path below, unchanged.
-    if (req.body.strategy === "agent") {
-      const settings = storage.getSettings();
-      const activeProvider = storage.getActiveProvider(settings);
-      const execution = requireExecutionContract(req, res, settings, activeProvider);
-      if (!execution) { return; }
+    const settings = storage.getSettings();
+    const activeProvider = storage.getActiveProvider(settings);
+    const hasStrategy = req.body && req.body.strategy !== undefined;
+    const execution = hasStrategy
+      ? requireExecutionContract(req, res, settings, activeProvider)
+      : {
+        strategy: activeProvider && activeProvider.supportsTools === true ? "agent" : "classic",
+        entry: "build",
+        conversationId: req.body && req.body.conversationId || null,
+        runId: req.body && req.body.runId || null,
+        debugNote: null
+      };
+    if (!execution) { return; }
+
+    // Tool-capable Build uses the converged agent engine. Providers without
+    // tools stay on the classic envelope path.
+    if (execution.strategy === "agent") {
       if (!convergedBuildActive(settings, activeProvider)) {
         return res.status(409).json({
           error: "converged_build_unavailable",
-          message: "Converged Build needs Settings → Build engine set to converged, the WRITE-tool loop on, and a tool-capable provider."
+          message: "Converged Build requires a tool-capable provider."
         });
       }
       try {
@@ -4259,10 +4264,12 @@ function flowPilotRuntime(RED) {
     const history = sanitizeHistory(req.body.history);
     const historyTruncated = !!req.body.historyTruncated;
 
-    if (req.body.stream) {
+    if (req.body.stream && execution.strategy === "classic") {
       return runExecuteStream(
         req, res, buildSystemPrompt, "build", prompt, req.body && req.body.context,
-        history, historyTruncated, finalizeSimpleGeneration, req.body.conversationId
+        history, historyTruncated, function (result) {
+          return finalizeSimpleGeneration(result, execution);
+        }, req.body.conversationId, execution
       );
     }
 
@@ -4271,7 +4278,7 @@ function flowPilotRuntime(RED) {
       const fromAct = !!(req.body && req.body.fromAct === true);
       const built = await runFlowGeneration(
         buildSystemPrompt, "build", prompt, req.body && req.body.context,
-        history, historyTruncated, useTools, undefined, fromAct
+        history, historyTruncated, useTools, execution, fromAct
       );
       if (built.toolCalls) {
         const lane = laneForRequest(req.body, built);
@@ -4288,7 +4295,7 @@ function flowPilotRuntime(RED) {
         });
       }
       recordTranscriptTurn(req.body.conversationId, "build", prompt, transcriptTextFromGenerationResult(built));
-      const { status, body } = finalizeSimpleGeneration(built);
+      const { status, body } = finalizeSimpleGeneration(built, execution);
       res.status(status).json(body);
     } catch (err) {
       sendGenerationError(res, "build", err);
@@ -4296,8 +4303,21 @@ function flowPilotRuntime(RED) {
   });
 
   RED.httpAdmin.post("/flowpilot/document", RED.auth.needsPermission("settings.write"), async function (req, res) {
+    const settings = storage.getSettings();
+    const activeProvider = storage.getActiveProvider(settings);
+    const hasStrategy = req.body && req.body.strategy !== undefined;
+    const execution = hasStrategy
+      ? requireExecutionContract(req, res, settings, activeProvider)
+      : {
+        strategy: activeProvider && activeProvider.supportsTools === true ? "agent" : "classic",
+        entry: "document",
+        conversationId: req.body && req.body.conversationId || null,
+        runId: req.body && req.body.runId || null,
+        debugNote: null
+      };
+    if (!execution) { return; }
     const context = req.body && req.body.context;
-    const described = describeSelectionContext(context, storage.getSettings());
+    const described = describeSelectionContext(context, settings);
 
     if (!described) {
       return res.status(400).json({ error: "Select the node(s) you want documented first." });
@@ -4311,10 +4331,12 @@ function flowPilotRuntime(RED) {
     const history = sanitizeHistory(req.body.history);
     const historyTruncated = !!req.body.historyTruncated;
 
-    if (req.body.stream) {
+    if (req.body.stream && execution.strategy === "classic") {
       return runExecuteStream(
         req, res, documentSystemPrompt, "document", userPrompt, context,
-        history, historyTruncated, finalizeSimpleGeneration, req.body.conversationId
+        history, historyTruncated, function (result) {
+          return finalizeSimpleGeneration(result, execution);
+        }, req.body.conversationId, execution
       );
     }
 
@@ -4323,7 +4345,7 @@ function flowPilotRuntime(RED) {
       const fromAct = !!(req.body && req.body.fromAct === true);
       const documented = await runFlowGeneration(
         documentSystemPrompt, "document", userPrompt, context,
-        history, historyTruncated, useTools, undefined, fromAct
+        history, historyTruncated, useTools, execution, fromAct
       );
       if (documented.toolCalls) {
         const lane = laneForRequest(req.body, documented);
@@ -4340,7 +4362,7 @@ function flowPilotRuntime(RED) {
         });
       }
       recordTranscriptTurn(req.body.conversationId, "document", userPrompt, transcriptTextFromGenerationResult(documented));
-      const { status, body } = finalizeSimpleGeneration(documented);
+      const { status, body } = finalizeSimpleGeneration(documented, execution);
       res.status(status).json(body);
     } catch (err) {
       sendGenerationError(res, "document", err);
@@ -4382,7 +4404,7 @@ function flowPilotRuntime(RED) {
       agentWriteEnabled: execution.strategy === "agent"
     });
 
-    if (req.body.stream) {
+    if (req.body.stream && execution.strategy === "classic") {
       return runExecuteStream(
         req, res, modifyPrompt, "modify", String(prompt).trim(), context,
         history, historyTruncated, finalize, req.body.conversationId, execution
