@@ -16,6 +16,9 @@ const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, "answer-flow.jso
 const cases = JSON.parse(fs.readFileSync(path.join(__dirname, "answer-cases.json"), "utf8"));
 const fixtureTab = fixture.find(function (node) { return node && node.type === "tab"; });
 const fixtureNodes = fixture.filter(function (node) { return node && node.type !== "tab"; });
+// POST /flow gives the tab a new id (the fixture's is ignored); main() stores
+// the real one here for the active-tab emulation and for cleanup.
+let importedTabId = null;
 
 function request(method, url, body, token) {
   return new Promise(function (resolve, reject) {
@@ -177,7 +180,7 @@ async function executeReadTool(call, token, testCase) {
     } else if (Array.isArray(testCase.selection) && testCase.selection.length) {
       scope = testCase.selection.map(function (id) { return byId[id]; }).filter(Boolean);
     } else {
-      scope = all.filter(function (node) { return node.z === fixtureTab.id; });
+      scope = all.filter(function (node) { return node.z === importedTabId; });
     }
     return buildConnections(scope, all);
   }
@@ -225,6 +228,8 @@ async function main() {
     }, token);
     if (importResult.status < 200 || importResult.status >= 300) { throw new Error("Fixture import failed (HTTP " + importResult.status + ")"); }
     imported = true;
+    importedTabId = importResult.body && importResult.body.id;
+    if (!importedTabId) { throw new Error("Fixture import returned no flow id."); }
     for (let i = 0; i < cases.length; i++) {
       const testCase = cases[i];
       const conversationId = "answer-" + testCase.id + "-" + Date.now().toString(36);
@@ -234,12 +239,17 @@ async function main() {
       const resolved = await resolveCase(testCase, token, first, conversationId);
       const answer = resolved.body.message || resolved.body.content || "";
       const score = scoreAnswer(answer, testCase);
-      results.push({ id: testCase.id, prompt: testCase.prompt, answer: answer, pass: score.pass, score: score, status: first.status, steps: resolved.steps });
+      const pending = (resolved.body.toolCalls || []).map(function (c) {
+        return { name: c.function && c.function.name, arguments: safeJsonParse(c.function && c.function.arguments) };
+      });
+      results.push({ id: testCase.id, prompt: testCase.prompt, answer: answer, pass: score.pass, score: score, status: first.status,
+        steps: resolved.steps, answerPhase: resolved.answerPhase, endedOn: pending.length ? pending : undefined,
+        error: resolved.body.error || undefined });
       console.log((i + 1) + "/" + cases.length + " " + (score.pass ? "PASS" : "FAIL") + " " + testCase.id);
     }
   } finally {
     if (imported) {
-      const removed = await request("DELETE", NR_URL + "/flow/" + encodeURIComponent(fixtureTab.id), undefined, token);
+      const removed = await request("DELETE", NR_URL + "/flow/" + encodeURIComponent(importedTabId), undefined, token);
       if (removed.status < 200 || removed.status >= 300) { console.error("Warning: fixture cleanup failed (HTTP " + removed.status + ")"); }
     }
   }
