@@ -91,3 +91,17 @@ assert.deepStrictEqual(intake.nodeCandidates({ id: "t1" }, "Rename Shaper").map(
 assert.strictEqual(intake.nodeCandidates({ id: "t1" }, "fix it").length, 4, "no match falls back to the open tab's nodes");
 delete global.RED;
 console.log("SF-2 picker candidate tests passed");
+
+// Name resolution is safe (live-found: "Rename the debug node" resolved to a
+// node named "Debug" on another tab).
+global.RED = { nodes: { eachNode: function (cb) {
+  [{ id: "a", type: "debug", name: "Out A", z: "t1" }, { id: "b", type: "debug", name: "Out B", z: "t1" },
+   { id: "d", type: "debug", name: "Debug", z: "t2" }, { id: "s", type: "function", name: "Shaper", z: "t1" },
+   { id: "s2", type: "function", name: "Shaper", z: "t2" }, { id: "w", type: "function", name: "Weather Fmt", z: "t2" }].forEach(cb);
+} } };
+function resolved(msg) { return intake.resolveIntakeTarget(msg, [], intake.nodeCandidates({ id: "t1" }, msg), null); }
+assert.strictEqual(resolved("Rename the debug node to Final").kind, "unresolved", "a type word never names a node");
+assert.deepStrictEqual(resolved("Rename Shaper to Main").ids, ["s"], "the open tab's match wins over another tab's");
+assert.deepStrictEqual(resolved("Fix Weather Fmt please").ids, ["w"], "a unique name elsewhere resolves");
+delete global.RED;
+console.log("SF-2 safe name-resolution tests passed");
