@@ -76,3 +76,18 @@ const table = [
 table.forEach(function (row) { assert.strictEqual(row[1], row[2], row[0]); });
 
 console.log("SF-2 intake/lanes tests passed");
+
+// Picker candidates rank nodes the message names by type or name, open tab
+// first (live-found: the first 6 nodes of the tab were offered regardless).
+global.RED = { nodes: { eachNode: function (cb) {
+  [{ id: "k", type: "inject", name: "Kick", z: "t1" }, { id: "s", type: "function", name: "Shaper", z: "t1" },
+   { id: "a", type: "debug", name: "Out A", z: "t1" }, { id: "b", type: "debug", name: "Out B", z: "t1" },
+   { id: "x", type: "debug", name: "Elsewhere", z: "t2" }].forEach(cb);
+} } };
+const debugs = intake.nodeCandidates({ id: "t1" }, "Rename the debug node to Final").map(function (c) { return c.id; });
+assert.deepStrictEqual(debugs.slice(0, 2).sort(), ["a", "b"], "open-tab debug nodes come first");
+assert.ok(debugs.indexOf("k") === -1 && debugs.indexOf("s") === -1, "non-matching nodes aren't offered when something matches");
+assert.deepStrictEqual(intake.nodeCandidates({ id: "t1" }, "Rename Shaper").map(function (c) { return c.id; }), ["s"], "a name match wins");
+assert.strictEqual(intake.nodeCandidates({ id: "t1" }, "fix it").length, 4, "no match falls back to the open tab's nodes");
+delete global.RED;
+console.log("SF-2 picker candidate tests passed");
