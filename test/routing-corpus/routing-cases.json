@@ -141,8 +141,9 @@
     "id": "modify-add-debug-after-current",
     "prompt": "Add a debug node after the current HTTP request node so I can inspect its response.",
     "expected": "modify",
-    "expectedLane": "DIRECT",
-    "note": "Specific change to existing graph."
+    "expectedLane": "ASK",
+    "note": "Specific change to existing graph.",
+    "laneNote": "No selection; \"the current HTTP request node\" can match several nodes, so the picker asks."
   },
   {
     "id": "modify-rewire",

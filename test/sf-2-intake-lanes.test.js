@@ -69,6 +69,8 @@ const table = [
   ["plan first override", chooseLane(Object.assign({}, selected, { planFirst: true }), { action: "modify" }).lane, "PLAN"],
   ["just do it override", chooseLane(Object.assign({}, selected, { justDoIt: true }), { action: "modify" }).lane, "DIRECT"],
   ["C1 targeted behavior", chooseLane(selected, { action: "modify" }).lane, "DIRECT"],
+  ["'this flow' with the open tab known is a resolved target", chooseLane({ message: "Document this flow for a teammate", activeTab: { id: "t1", label: "Flow 1" } }, { action: "document" }).lane, "DIRECT"],
+  ["'this flow' without a known tab still asks", chooseLane({ message: "Document this flow for a teammate" }, { action: "document" }).lane, "ASK"],
   ["C1 targeted behavior via build", chooseLane(Object.assign({ message: "make this inject fire every 5 s" }, selected), { action: "build" }).lane, "DIRECT"]
 ];
 table.forEach(function (row) { assert.strictEqual(row[1], row[2], row[0]); });
