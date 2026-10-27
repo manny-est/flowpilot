@@ -2,6 +2,23 @@
 
 All notable changes to FlowPilot are documented here.
 
+## [0.6.5] - 2026-10-27
+
+### Fixed
+- **OpenAI's newer models (GPT-5 family and later) didn't work with
+  FlowPilot.** Requests failed because these models reject a custom
+  `temperature` and the older `max_tokens` setting, and some of them only
+  allow tool calls with reasoning turned off. FlowPilot now recognizes
+  each of these errors, adjusts the request (`max_completion_tokens`, no
+  `temperature`, `reasoning_effort: "none"` for tool calls where the
+  model requires it) and retries automatically. It remembers the
+  adjustment for that model until Node-RED restarts. Models that can't
+  use tools through OpenAI's Chat Completions API at all (for example
+  `gpt-6.1-sol`) now show a clear "no tool support" message in Test
+  Provider, and plain chat still works. Other providers (LocalAI, Ollama,
+  OpenRouter, Anthropic, `gpt-4.1`) receive exactly the same requests as
+  before.
+
 ## [0.6.4] - 2026-10-24
 
 ### Fixed
