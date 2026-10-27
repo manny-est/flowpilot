@@ -32,7 +32,7 @@ const red = {
     eachNode: function (fn) { Object.keys(nodes).forEach(function (id) { fn(nodes[id]); }); },
     eachLink: function (fn) { fn({ source: nodes.target, sourcePort: 0, target: nodes.tap }); }
   },
-  history: { list: [], depth: 0, index: 0 }
+  history: null
 };
 
 assert.strictEqual(api.getDiffGateThreshold({}), 5, "default threshold is five");
@@ -50,7 +50,9 @@ assert.deepStrictEqual(ledger.map(function (n) { return n.id; }).sort(), ["tap",
 
 let state = api.createDiffGateState(["target"], {});
 let decision = api.diffGateDecision(events, ["target"], state, {}, red);
-assert.strictEqual(decision.pause, true, "out-of-target touch pauses");
+assert.strictEqual(decision.pause, false, "the run's own tap (created, then cleaned up) is in scope, not outside the target");
+decision = api.diffGateDecision(events.concat([{ t: "edit", node: nodes.extra }]), ["target"], state, {}, red);
+assert.strictEqual(decision.pause, true, "editing an existing node outside the target pauses");
 assert.strictEqual(decision.reason, "out-of-target", "pause reason is recorded");
 assert.strictEqual(decision.touchedNodes.filter(function (n) { return n.outOfTarget; }).length, 1, "out-of-target node is marked");
 
@@ -66,19 +68,49 @@ api.diffGateKeepGoing(state, decision);
 const afterKeep = api.diffGateDecision(decision.touchedNodes, ["target", "tap", "extra"], state, {});
 assert.strictEqual(afterKeep.pause, false, "Keep going raises allowance for the same nodes");
 
-const markerRed = {
-  nodes: {
-    eachNode: function (fn) { fn({ id: "n1", name: "Before", type: "inject" }); },
-    eachLink: function () {}
-  },
-  history: { list: [], depth: 0, index: 0 }
-};
-const marker = api.captureDiffGateRunMarker(markerRed);
-markerRed.nodes.eachNode = function (fn) { fn({ id: "n1", name: "User edit", type: "inject" }); };
-assert.strictEqual(api.diffGateHasMidRunEdit(markerRed, marker), true, "node edit is detected at the step boundary");
-markerRed.nodes.eachNode = function (fn) { fn({ id: "n1", name: "Before", type: "inject" }); };
-markerRed.history.list.push({ t: "edit" });
-assert.strictEqual(api.diffGateHasMidRunEdit(markerRed, marker), true, "external RED.history push is detected");
+// Shaped like Node-RED 5.0.9's RED.history (red.js): list()/depth()/peek()
+// are functions; replace() swaps the top entry in place.
+function fakeHistory() {
+  const undo = [];
+  return {
+    list: function () { return undo; },
+    depth: function () { return undo.length; },
+    peek: function () { return undo[undo.length - 1]; },
+    push: function (ev) { undo.push(ev); },
+    replace: function (ev) { undo[undo.length - 1] = ev; },
+    pop: function () { return undo.pop(); }
+  };
+}
+const liveNode = { id: "n1", name: "Before", type: "inject", selected: false, dirty: false, changed: false };
+const markerRed = { nodes: { eachNode: function (fn) { fn(liveNode); }, eachLink: function () {} }, history: fakeHistory() };
+markerRed.history.push({ t: "edit" });
+let marker = api.captureDiffGateRunMarker(markerRed);
+liveNode.selected = true;
+assert.strictEqual(api.diffGateHasMidRunEdit(markerRed, marker), false, "selecting a node is not an edit");
+liveNode.dirty = true; liveNode.changed = true;
+assert.strictEqual(api.diffGateHasMidRunEdit(markerRed, marker), false, "deploy/dirty flags are not edits");
+markerRed.history.push({ t: "move" });
+assert.strictEqual(api.diffGateHasMidRunEdit(markerRed, marker), true, "a user edit (history push) is detected");
+marker = api.captureDiffGateRunMarker(markerRed);
+markerRed.history.replace({ t: "edit", replaced: true });
+assert.strictEqual(api.diffGateHasMidRunEdit(markerRed, marker), true, "history.replace() is detected");
+marker = api.captureDiffGateRunMarker(markerRed);
+markerRed.history.pop();
+assert.strictEqual(api.diffGateHasMidRunEdit(markerRed, marker), true, "a user Ctrl+Z is detected");
+
+// New nodes are in scope; a wire touches only its source node.
+const scoped = api.diffGateDecision([
+  { t: "add", nodes: [{ id: "new-debug", name: "Added", type: "debug" }],
+    links: [{ source: { id: "target" }, target: { id: "new-debug" } }] },
+  { t: "add", links: [{ source: { id: "target" }, target: { id: "downstream" } }] }
+], ["target"], null, {});
+assert.strictEqual(scoped.pause, false, "adding a node next to the target and wiring the target onward stays in target");
+assert.ok(!scoped.touchedNodes.some(function (n) { return n.id === "downstream"; }), "a wire's target node isn't touched");
+const outside = api.diffGateDecision([
+  { t: "edit", node: { id: "other", name: "Other", type: "function" } }
+], ["target"], null, {});
+assert.strictEqual(outside.pause, true, "editing an existing node outside the target pauses");
+assert.strictEqual(outside.reason, "out-of-target");
 
 let restored = false;
 let pushed;
