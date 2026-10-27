@@ -2076,12 +2076,9 @@ module.exports = function flowPilotRuntime(RED) {
 
       // Capability probe — connectivity already succeeded above, so a
       // probe failure here just means "no tool support", not a /test failure.
-      // Re-discover this active model from a clean entry so a prior chat
-      // request cannot hide an adjustment from Test Provider.
-      getProvider(activeProvider).resetCompat(activeProvider);
-      if (activeProvider.paramCompat && activeProvider.model) {
-        delete activeProvider.paramCompat[activeProvider.model];
-      }
+      // The entry was reset once before the connectivity chat above (runChat
+      // resetCompat), so the probe continues from what that chat learned
+      // (e.g. a dropped temperature) and Test Provider reports both.
       // Persist the result on the provider profile for the agentic tool-calling path.
       const probe = await getProvider(activeProvider).probeTools(activeProvider);
       const reasoning = getProvider(activeProvider).detectReasoning(result.raw);
