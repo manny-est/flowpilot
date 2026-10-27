@@ -11,7 +11,7 @@ const { loadRuntime, call, provider } = require("./helpers/route-harness");
 const source = fs.readFileSync(path.join(__dirname, "..", "lib", "core", "validate.js"), "utf8");
 const reviewSource = fs.readFileSync(path.join(__dirname, "..", "lib", "core", "apply-review.js"), "utf8");
 assert.ok(!/if \(!n\.valid\)\s*\{\s*n\.valid\s*=\s*true/.test(reviewSource), "invalid nodes are not forced valid");
-const api = new Function("RED", source + "\nreturn { validateFlow, validationOutcomeForAttempt };" )({
+const api = new Function("RED", source + "\nreturn { validateFlow, validationOutcomeForAttempt, validationForModel };" )({
   nodes: { getType: function (type) { return type === "inject" || type === "debug" || type === "function"; } }
 });
 
@@ -63,6 +63,12 @@ assert.ok(result.warnings.length >= 3, "common mistake and built-in lint warning
 assert.ok(result.warnings.some(function (check) { return /multiple outputs/.test(check.message); }));
 assert.ok(result.warnings.some(function (check) { return /Change node/.test(check.message); }));
 
+const compactPass = api.validationForModel(api.validateFlow([installedNode("i", "inject", { wires: [["d"]] }), installedNode("d", "debug")],
+  { isInstalled: function () { return true; } }));
+assert.deepStrictEqual(compactPass, { ok: true }, "a passing write costs the model one tiny field, not every check");
+const compactFail = api.validationForModel(api.validateFlow([installedNode("i", "inject", { wires: [["gone"]] })],
+  { isInstalled: function () { return true; } }));
+assert.ok(compactFail.ok === false && /missing node gone/.test(compactFail.failures[0]), "failures reach the model as short messages");
 assert.strictEqual(api.validationOutcomeForAttempt(1, { ok: false, retryableFailures: [{}], needsYou: [] }), "retry");
 assert.strictEqual(api.validationOutcomeForAttempt(3, { ok: false, retryableFailures: [{}], needsYou: [] }), "out-of-tries");
 assert.strictEqual(api.validationOutcomeForAttempt(3, { ok: false, retryableFailures: [], needsYou: [{}] }), "needs-you");
