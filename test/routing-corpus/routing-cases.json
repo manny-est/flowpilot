@@ -226,8 +226,9 @@
     "id": "build-deploy-verify",
     "prompt": "Run a build loop to deploy this flow and verify the webhook works.",
     "expected": "build",
-    "expectedLane": "PLAN",
-    "note": "Explicit build-loop request."
+    "expectedLane": "DIRECT",
+    "note": "Explicit build-loop request.",
+    "laneNote": "Ruling C1: a targeted behavior goal on the open flow (\"this flow\") is DIRECT with automatic proof; deploy still asks only for the user's own undeployed edits."
   },
   {
     "id": "build-fix-until-pass",
@@ -240,22 +241,25 @@
     "id": "build-smoke-test",
     "prompt": "Use a build-style run to deploy and verify this flow end to end.",
     "expected": "build",
-    "expectedLane": "PLAN",
-    "note": "Specific build action."
+    "expectedLane": "DIRECT",
+    "note": "Specific build action.",
+    "laneNote": "Ruling C1: a targeted behavior goal on the open flow (\"this flow\") is DIRECT with automatic proof; deploy still asks only for the user's own undeployed edits."
   },
   {
     "id": "build-retry-loop",
     "prompt": "Please run the deploy and verify loop on this flow.",
     "expected": "build",
-    "expectedLane": "PLAN",
-    "note": "Direct build-loop wording."
+    "expectedLane": "DIRECT",
+    "note": "Direct build-loop wording.",
+    "laneNote": "Ruling C1: a targeted behavior goal on the open flow (\"this flow\") is DIRECT with automatic proof; deploy still asks only for the user's own undeployed edits."
   },
   {
     "id": "build-permission-bait",
     "prompt": "Could you deploy this flow and verify the HTTP endpoint responds with 200?",
     "expected": "build",
-    "expectedLane": "PLAN",
-    "note": "Permission phrasing should still propose build."
+    "expectedLane": "DIRECT",
+    "note": "Permission phrasing should still propose build.",
+    "laneNote": "Ruling C1: a targeted behavior goal on the open flow (\"this flow\") is DIRECT with automatic proof; deploy still asks only for the user's own undeployed edits."
   },
   {
     "id": "build-near-miss-advice",
