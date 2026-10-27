@@ -3,49 +3,49 @@
     "id": "answer-how-add-switch",
     "prompt": "How would I add a switch node after an inject in Node-RED?",
     "expected": "answer",
-    "expectedLane": "ASK",
+    "expectedLane": "ANSWER",
     "note": "Adversarial near-miss: asks for advice, not an action."
   },
   {
     "id": "answer-explain-payload",
     "prompt": "What does msg.payload mean in Node-RED?",
     "expected": "answer",
-    "expectedLane": "ASK",
+    "expectedLane": "ANSWER",
     "note": "Plain factual question."
   },
   {
     "id": "answer-review-if-needed",
     "prompt": "What would happen if I changed the inject repeat to 5 seconds?",
     "expected": "answer",
-    "expectedLane": "ASK",
+    "expectedLane": "ANSWER",
     "note": "Hypothetical explanation, not a request to modify."
   },
   {
     "id": "answer-debug-advice",
     "prompt": "Why would I use a debug node instead of a status node here?",
     "expected": "answer",
-    "expectedLane": "ASK",
+    "expectedLane": "ANSWER",
     "note": "Compare concepts only."
   },
   {
     "id": "answer-build-loop-question",
     "prompt": "When should I use Build mode instead of Modify mode?",
     "expected": "answer",
-    "expectedLane": "ASK",
+    "expectedLane": "ANSWER",
     "note": "Question about workflow, not execution."
   },
   {
     "id": "answer-document-near-miss",
     "prompt": "How should I document a flow for another developer?",
     "expected": "answer",
-    "expectedLane": "ASK",
+    "expectedLane": "ANSWER",
     "note": "Advice about documentation, not a request to create it."
   },
   {
     "id": "answer-safety-near-miss",
     "prompt": "Is it a bad idea to put an exec node in a home automation flow?",
     "expected": "answer",
-    "expectedLane": "ASK",
+    "expectedLane": "ANSWER",
     "note": "Opinion/advice only."
   },
   {
@@ -101,7 +101,7 @@
     "id": "generate-new-debug-with-selection",
     "prompt": "Create a new debug node somewhere in this flow.",
     "expected": "generate",
-    "expectedLane": "PLAN",
+    "expectedLane": "DIRECT",
     "context": {
       "nodes": [
         {
@@ -111,7 +111,8 @@
         }
       ]
     },
-    "note": "Selection-present creation request should reach the model, not the pre-router."
+    "note": "Selection-present creation request should reach the model, not the pre-router.",
+    "laneNote": "Anchored addition (selection present, not open-ended): DIRECT per ruling C1."
   },
   {
     "id": "modify-rename-selected",
@@ -217,7 +218,7 @@
     "id": "document-near-miss-explain",
     "prompt": "Explain what this flow does in plain English.",
     "expected": "answer",
-    "expectedLane": "ASK",
+    "expectedLane": "ANSWER",
     "note": "Adversarial near-miss: explanation request is not itself a document action."
   },
   {
@@ -259,7 +260,7 @@
     "id": "build-near-miss-advice",
     "prompt": "How would I verify that a webhook flow is working after deployment?",
     "expected": "answer",
-    "expectedLane": "ASK",
+    "expectedLane": "ANSWER",
     "note": "Adversarial near-miss: asks how, not to perform a build run."
   },
   {
@@ -331,14 +332,14 @@
     "id": "answer-near-miss-remove-question",
     "prompt": "Should I remove the debug nodes before deploying this flow?",
     "expected": "answer",
-    "expectedLane": "ASK",
+    "expectedLane": "ANSWER",
     "note": "Adversarial near-miss: asks for advice about removal, not removal itself."
   },
   {
     "id": "answer-near-miss-generate-question",
     "prompt": "What nodes would I need for a flow that polls an API every minute?",
     "expected": "answer",
-    "expectedLane": "ASK",
+    "expectedLane": "ANSWER",
     "note": "Adversarial near-miss: design advice, not a generation request."
   }
 ]

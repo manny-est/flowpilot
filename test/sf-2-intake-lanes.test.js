@@ -56,7 +56,11 @@ const table = [
   ["unresolved change", chooseLane({}, { action: "modify" }).lane, "ASK"],
   ["resolved change", chooseLane(selected, { action: "modify" }).lane, "DIRECT"],
   ["open creation", chooseLane({}, { action: "generate" }).lane, "PLAN"],
-  ["multi-target plan", chooseLane(selected, { action: "modify", plan_items: ["a", "b"], targets: ["a", "b"] }).lane, "PLAN"],
+  ["multi-target plan", chooseLane(selected, { action: "modify", plan_items: ["a", "b"], distinctTargets: true }).lane, "PLAN"],
+  ["several selected nodes are one target set", chooseLane(selected, { action: "document", plan_items: ["a", "b"], targets: ["n1", "n2", "n3"] }).lane, "DIRECT"],
+  ["answer is its own label", chooseLane(selected, { kind: "answer" }).lane, "ANSWER"],
+  ["anchored addition (add-next-to)", chooseLane(selected, { action: "generate" }, { message: "add a debug node after this" }).lane, "DIRECT"],
+  ["open-ended creation with a selection", chooseLane(Object.assign({ message: "build me a new flow that polls an API" }, selected), { action: "generate" }).lane, "PLAN"],
   ["cross-tab", chooseLane(selected, { action: "modify", crossTab: true }).lane, "PLAN"],
   ["subflow template", chooseLane(selected, { action: "modify", subflowTemplate: true }).lane, "PLAN"],
   ["cross-tab link", chooseLane(selected, { action: "modify", crossTabLink: true }).lane, "PLAN"],
@@ -64,7 +68,8 @@ const table = [
   ["auto off", chooseLane(Object.assign({}, selected, { auto: false }), { action: "modify" }).lane, "PLAN"],
   ["plan first override", chooseLane(Object.assign({}, selected, { planFirst: true }), { action: "modify" }).lane, "PLAN"],
   ["just do it override", chooseLane(Object.assign({}, selected, { justDoIt: true }), { action: "modify" }).lane, "DIRECT"],
-  ["C1 targeted behavior", chooseLane(selected, { action: "modify" }).lane, "DIRECT"]
+  ["C1 targeted behavior", chooseLane(selected, { action: "modify" }).lane, "DIRECT"],
+  ["C1 targeted behavior via build", chooseLane(Object.assign({ message: "make this inject fire every 5 s" }, selected), { action: "build" }).lane, "DIRECT"]
 ];
 table.forEach(function (row) { assert.strictEqual(row[1], row[2], row[0]); });
 
