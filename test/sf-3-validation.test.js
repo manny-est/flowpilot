@@ -11,6 +11,10 @@ const { loadRuntime, call, provider } = require("./helpers/route-harness");
 const source = fs.readFileSync(path.join(__dirname, "..", "lib", "core", "validate.js"), "utf8");
 const reviewSource = fs.readFileSync(path.join(__dirname, "..", "lib", "core", "apply-review.js"), "utf8");
 assert.ok(!/if \(!n\.valid\)\s*\{\s*n\.valid\s*=\s*true/.test(reviewSource), "invalid nodes are not forced valid");
+// Live-found: RED.nodes.validateNode doesn't exist in Node-RED 5.x, so inserted
+// nodes stayed valid === undefined and Node-RED held every deploy behind
+// "Confirm deploy". The real validator is RED.editor.validateNode.
+assert.ok(/RED\.editor\.validateNode/.test(reviewSource), "inserted and edited nodes go through Node-RED's real validator");
 const api = new Function("RED", source + "\nreturn { validateFlow, validationOutcomeForAttempt, validationForModel };" )({
   nodes: { getType: function (type) { return type === "inject" || type === "debug" || type === "function"; } }
 });
