@@ -90,12 +90,50 @@ function indexedFlows(flows) {
   return byId;
 }
 
+// Same shape as the client's get_connections result (selection-context.js
+// buildConnections), ported from test/routing-corpus/routing-runner.js.
+function buildConnections(nodes, allNodes) {
+  const nodeList = Array.isArray(nodes) ? nodes : [];
+  const byId = {};
+  nodeList.forEach(function (node) { if (node && node.id) { byId[node.id] = node; } });
+  const edges = [];
+  const inputs = {};
+  nodeList.forEach(function (node) { inputs[node.id] = []; });
+  nodeList.forEach(function (node) {
+    (Array.isArray(node.wires) ? node.wires : []).forEach(function (targets, fromPort) {
+      (Array.isArray(targets) ? targets : []).forEach(function (targetId) {
+        if (!byId[targetId]) { return; }
+        edges.push({ fromId: node.id, fromPort: fromPort, toId: targetId });
+        inputs[targetId].push({ fromId: node.id, fromPort: fromPort });
+      });
+    });
+  });
+  return {
+    nodes: nodeList.map(function (node) { return JSON.parse(JSON.stringify(node)); }),
+    edges: edges,
+    perNode: nodeList.map(function (node) {
+      return {
+        id: node.id,
+        label: (node.name || node.id) + " [" + node.type + "]",
+        type: node.type,
+        flowId: node.z || null,
+        inputs: inputs[node.id] || [],
+        outputs: (Array.isArray(node.wires) ? node.wires : []).map(function (targets, index) {
+          return { port: index, to: (Array.isArray(targets) ? targets : []).filter(function (id) { return !!byId[id]; }) };
+        })
+      };
+    }),
+    scopeNodeCount: nodeList.length,
+    instanceNodeCount: Array.isArray(allNodes) ? allNodes.length : nodeList.length
+  };
+}
+
 function selectedContext(testCase) {
   const ids = Array.isArray(testCase.selection) ? testCase.selection : [];
   return { nodes: ids.map(function (id) { return fixtureNodes.find(function (node) { return node.id === id; }); }).filter(Boolean) };
 }
 
-async function executeReadTool(call, token) {
+async function executeReadTool(call, token, testCase) {
   const name = call && call.function && call.function.name;
   const args = safeJsonParse(call && call.function && call.function.arguments) || {};
   const flows = await fetchFlows(token);
@@ -117,8 +155,34 @@ async function executeReadTool(call, token) {
     }).map(function (node) { return { id: node.id, name: node.name || "", type: node.type, flowId: node.z || null }; }) };
   }
   if (name === "get_connections") {
-    const nodes = Object.keys(byId).map(function (id) { return byId[id]; }).filter(function (node) { return node.type !== "tab"; });
-    return { nodes: nodes, message: "Fixture connections returned." };
+    // Mirrors the client tool: an id → that node plus the nodes wired to or
+    // from it; no id → the selection; nothing selected → the active tab,
+    // which for this corpus is the fixture tab (what a tester would have open).
+    const all = Object.keys(byId).map(function (id) { return byId[id]; }).filter(function (node) { return node.type !== "tab"; });
+    let scope;
+    if (args.id) {
+      const node = byId[args.id];
+      if (!node) { return { error: "No node found for id " + args.id + "." }; }
+      const linked = {};
+      linked[node.id] = node;
+      (node.wires || []).forEach(function (targets) {
+        (targets || []).forEach(function (id) { if (byId[id]) { linked[id] = byId[id]; } });
+      });
+      all.forEach(function (other) {
+        (other.wires || []).forEach(function (targets) {
+          if ((targets || []).indexOf(node.id) !== -1) { linked[other.id] = other; }
+        });
+      });
+      scope = Object.keys(linked).map(function (id) { return linked[id]; });
+    } else if (Array.isArray(testCase.selection) && testCase.selection.length) {
+      scope = testCase.selection.map(function (id) { return byId[id]; }).filter(Boolean);
+    } else {
+      scope = all.filter(function (node) { return node.z === fixtureTab.id; });
+    }
+    return buildConnections(scope, all);
+  }
+  if (name === "get_selection") {
+    return { nodes: (testCase.selection || []).map(function (id) { return byId[id]; }).filter(Boolean), groupCount: 0 };
   }
   if (name === "read_debug") { return { messages: [], totalBuffered: 0 }; }
   return { error: "Unsupported read tool: " + name };
@@ -137,7 +201,7 @@ async function resolveCase(testCase, token, first, conversationId) {
     if (body.toolCalls.some(function (call) { return call.function && call.function.name === "propose_action" || call.function && call.function.name === "ask_user"; })) { break; }
     messages = appendAssistant(messages, body);
     for (let i = 0; i < body.toolCalls.length; i++) {
-      messages.push({ role: "tool", tool_call_id: body.toolCalls[i].id, content: JSON.stringify(await executeReadTool(body.toolCalls[i], token)) });
+      messages.push({ role: "tool", tool_call_id: body.toolCalls[i].id, content: JSON.stringify(await executeReadTool(body.toolCalls[i], token, testCase)) });
     }
     const payload = { messages: messages, mode: "chat", prompt: testCase.prompt, context: selectedContext(testCase), strategy: "agent", entry: "chat", conversationId: conversationId };
     if (answerPhase) { payload.answerPhase = true; }
