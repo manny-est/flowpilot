@@ -74,6 +74,7 @@ const buildAgentSystemPrompt = require("./lib/build-agent-system-prompt");
 const planSystemPrompt = require("./lib/plan-system-prompt");
 const tierCClassificationPrompt = require("./lib/tier-c-classification-prompt");
 const consent = require("./lib/core/consent");
+const { chooseLane } = require("./lib/core/lanes");
 const personaPrompt = require("./lib/persona-prompt");
 const { buildCoreScript } = require("./lib/build-core-script");
 const {
@@ -243,6 +244,34 @@ function makePreRouterResult(action, verb, prompt, context, needsSelection) {
       }
     }]
   };
+}
+
+function laneForRequest(body, result) {
+  body = body || {};
+  result = result || {};
+  const calls = Array.isArray(result.toolCalls) ? result.toolCalls : [];
+  const proposal = calls.find(function (call) {
+    return call && call.function && call.function.name === PROPOSE_ACTION_NAME;
+  });
+  const ask = calls.find(function (call) {
+    return call && call.function && call.function.name === "ask_user";
+  });
+  let classification;
+  if (proposal) {
+    let args = {};
+    try { args = JSON.parse(proposal.function.arguments || "{}"); } catch (err) { args = {}; }
+    classification = args;
+  } else if (ask) {
+    classification = { kind: "unclear", unclear: true };
+  } else {
+    classification = { kind: result.message ? "answer" : "unclear" };
+  }
+  const context = body.context && typeof body.context === "object" ? body.context : {};
+  const intake = Object.assign({
+    message: body.prompt || "",
+    activeSelectionIds: Array.isArray(context.nodes) ? context.nodes.map(function (n) { return n && n.id; }).filter(Boolean) : []
+  }, body.intake || {});
+  return chooseLane(intake, classification);
 }
 
 function runDeterministicPreRouter(prompt, context) {
@@ -1425,9 +1454,14 @@ function flowPilotRuntime(RED) {
 
   function selectionStateSystemMessage(context) {
     const nodeCount = context && Array.isArray(context.nodes) ? context.nodes.length : 0;
-    return nodeCount > 0
+    const selection = nodeCount > 0
       ? nodeCount + " node" + (nodeCount === 1 ? "" : "s") + " selected."
       : "Nothing is currently selected.";
+    const tab = context && context.activeTab;
+    const tabLine = tab && tab.label && tab.id
+      ? "Active tab: " + tab.label + " (" + tab.id + ")"
+      : "Active tab: (unknown)";
+    return selection + "\n" + tabLine;
   }
 
   // Plan routing's minimal context (ADR-008 addendum, §4.4): the system
@@ -2585,6 +2619,11 @@ function flowPilotRuntime(RED) {
       const { activeProvider, result, perf, chatMessage, chatData, messages, toolCalls, answerPhase } =
         await runChat(prompt, "selected-nodes", req.body.context, history, historyTruncated,
           req.body.conversationId, useTools, req.body.strategy);
+      const lane = laneForRequest(req.body, result);
+      maybeLogDebugEvent("lane", {
+        mode: "chat", runId: req.body.runId || null,
+        lane: lane.lane, reason: lane.reason, intake: req.body.intake || null
+      });
 
       storage.appendAudit(Object.assign({
         action: "chat",
@@ -2601,7 +2640,7 @@ function flowPilotRuntime(RED) {
       }
       if (toolCalls) {
         const toolBody = { toolCalls: toolCalls, messages: messages, content: result.content || null,
-          usage: result.usage || null };
+          usage: result.usage || null, lane: lane.lane, reason: lane.reason };
         if (answerPhase) { toolBody.answerPhase = true; }
         return res.json(toolBody);
       }
@@ -2612,6 +2651,8 @@ function flowPilotRuntime(RED) {
         usage: result.usage || null
       };
       if (answerPhase) { body.answerPhase = true; }
+      body.lane = lane.lane;
+      body.reason = lane.reason;
       const suggestedAction = extractSuggestedAction(chatData);
       if (suggestedAction) { body.suggestedAction = suggestedAction; }
       const questionOptions = extractQuestionOptions(chatData);
@@ -2751,6 +2792,12 @@ function flowPilotRuntime(RED) {
         finalMessages = validated.messages;
       }
 
+      const lane = laneForRequest(req.body, result);
+      maybeLogDebugEvent("lane", {
+        mode: mode, runId: execution.runId,
+        lane: lane.lane, reason: lane.reason, intake: req.body.intake || null
+      });
+
       if (result.fallbackToClassic) {
         const fallbackBody = { fallbackToClassic: true, usage: result.usage || null };
         if (answerPhase) { fallbackBody.answerPhase = true; }
@@ -2785,7 +2832,9 @@ function flowPilotRuntime(RED) {
           toolCalls: result.toolCalls,
           toolTiers: toolTierMap(result.toolCalls),
           content: result.content || null,
-          usage: result.usage || null
+          usage: result.usage || null,
+          lane: lane.lane,
+          reason: lane.reason
         };
         if (answerPhase) { toolBody.answerPhase = true; }
         return res.json(toolBody);
@@ -2817,6 +2866,8 @@ function flowPilotRuntime(RED) {
             }
           : function (r) { return finalizeSimpleGeneration(r, execution); };
         const { status, body } = finalize(generated);
+        body.lane = lane.lane;
+        body.reason = lane.reason;
         return res.status(status).json(body);
       }
 
@@ -2828,6 +2879,8 @@ function flowPilotRuntime(RED) {
         usage: result.usage || null
       };
       if (answerPhase) { body.answerPhase = true; }
+      body.lane = lane.lane;
+      body.reason = lane.reason;
       const suggestedAction = extractSuggestedAction(split.data);
       if (suggestedAction) { body.suggestedAction = suggestedAction; }
       const questionOptions = extractQuestionOptions(split.data);
@@ -4127,12 +4180,17 @@ function flowPilotRuntime(RED) {
         history, historyTruncated, useTools, execution, fromAct
       );
       if (generated.toolCalls) {
+        const lane = laneForRequest(req.body, generated);
+        maybeLogDebugEvent("lane", { mode: "generate", runId: req.body.runId || null,
+          lane: lane.lane, reason: lane.reason, intake: req.body.intake || null });
         return res.json({
           toolCalls: generated.toolCalls,
           toolTiers: generated.toolTiers,
           messages: generated.messages,
           content: generated.content,
-          usage: generated.usage
+          usage: generated.usage,
+          lane: lane.lane,
+          reason: lane.reason
         });
       }
       recordTranscriptTurn(req.body.conversationId, "generate", prompt, transcriptTextFromGenerationResult(generated));
@@ -4177,12 +4235,17 @@ function flowPilotRuntime(RED) {
           sanitizeHistory(req.body.history), !!req.body.historyTruncated, true, execution, fromAct
         );
         if (built.toolCalls) {
+          const lane = laneForRequest(req.body, built);
+          maybeLogDebugEvent("lane", { mode: "build", runId: req.body.runId || null,
+            lane: lane.lane, reason: lane.reason, intake: req.body.intake || null });
           return res.json({
             toolCalls: built.toolCalls,
             toolTiers: built.toolTiers,
             messages: built.messages,
             content: built.content,
-            usage: built.usage
+            usage: built.usage,
+            lane: lane.lane,
+            reason: lane.reason
           });
         }
         recordTranscriptTurn(req.body.conversationId, "build", prompt, transcriptTextFromGenerationResult(built));
@@ -4211,12 +4274,17 @@ function flowPilotRuntime(RED) {
         history, historyTruncated, useTools, undefined, fromAct
       );
       if (built.toolCalls) {
+        const lane = laneForRequest(req.body, built);
+        maybeLogDebugEvent("lane", { mode: "build", runId: req.body.runId || null,
+          lane: lane.lane, reason: lane.reason, intake: req.body.intake || null });
         return res.json({
           toolCalls: built.toolCalls,
           toolTiers: built.toolTiers,
           messages: built.messages,
           content: built.content,
-          usage: built.usage
+          usage: built.usage,
+          lane: lane.lane,
+          reason: lane.reason
         });
       }
       recordTranscriptTurn(req.body.conversationId, "build", prompt, transcriptTextFromGenerationResult(built));
@@ -4258,12 +4326,17 @@ function flowPilotRuntime(RED) {
         history, historyTruncated, useTools, undefined, fromAct
       );
       if (documented.toolCalls) {
+        const lane = laneForRequest(req.body, documented);
+        maybeLogDebugEvent("lane", { mode: "document", runId: req.body.runId || null,
+          lane: lane.lane, reason: lane.reason, intake: req.body.intake || null });
         return res.json({
           toolCalls: documented.toolCalls,
           toolTiers: documented.toolTiers,
           messages: documented.messages,
           content: documented.content,
-          usage: documented.usage
+          usage: documented.usage,
+          lane: lane.lane,
+          reason: lane.reason
         });
       }
       recordTranscriptTurn(req.body.conversationId, "document", userPrompt, transcriptTextFromGenerationResult(documented));
@@ -4324,12 +4397,17 @@ function flowPilotRuntime(RED) {
         history, historyTruncated, useTools, execution, fromAct
       );
       if (result.toolCalls) {
+        const lane = laneForRequest(req.body, result);
+        maybeLogDebugEvent("lane", { mode: "modify", runId: req.body.runId || null,
+          lane: lane.lane, reason: lane.reason, intake: req.body.intake || null });
         return res.json({
           toolCalls: result.toolCalls,
           toolTiers: result.toolTiers,
           messages: result.messages,
           content: result.content,
-          usage: result.usage
+          usage: result.usage,
+          lane: lane.lane,
+          reason: lane.reason
         });
       }
       recordTranscriptTurn(req.body.conversationId, "modify", String(prompt).trim(), transcriptTextFromGenerationResult(result));

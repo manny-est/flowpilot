@@ -1,10 +1,10 @@
 [
-  {"id":"overview-once","prompt":"What does this flow do?","selection":["sf1-once"],"mustInclude":["Start Once","Shaper"],"mustNotInclude":["every (second|\\d+ ?s)"]},
-  {"id":"poll-frequency","prompt":"How often does Poll fire?","selection":["sf1-poll"],"mustInclude":["30"],"mustNotInclude":[]},
-  {"id":"fetch-url","prompt":"What URL does Fetch call?","selection":["sf1-fetch"],"mustInclude":["https://api\\.example\\.test/v1/status"],"mustNotInclude":[]},
-  {"id":"shaper-code","prompt":"What does the Shaper function do?","selection":["sf1-shaper"],"mustInclude":["uppercase|upper.?case|toUpperCase"],"mustNotInclude":[]},
-  {"id":"error-branch","prompt":"Where does the error branch go?","selection":["sf1-route"],"mustInclude":["Error Output"],"mustNotInclude":[]},
-  {"id":"set-topic","prompt":"What property does Set Topic change?","selection":["sf1-set-topic"],"mustInclude":["msg\\.topic|topic","answer-flow"],"mustNotInclude":[]},
-  {"id":"unwired","prompt":"Is anything not wired?","selection":[],"mustInclude":["Unused Debug"],"mustNotInclude":[]},
-  {"id":"tab-inventory","prompt":"What is on this tab?","selection":[],"mustInclude":["Poll","Fetch","Route Status"],"mustNotInclude":[]}
+  {"id": "overview-once", "prompt": "What does this flow do?", "selection": ["sf1-once"], "mustInclude": ["Start Once", "Shaper"], "mustNotInclude": ["Start Once[^\\n.]*(every|repeat)"]},
+  {"id": "poll-frequency", "prompt": "How often does Poll fire?", "selection": ["sf1-poll"], "mustInclude": ["30"], "mustNotInclude": []},
+  {"id": "fetch-url", "prompt": "What URL does Fetch call?", "selection": ["sf1-fetch"], "mustInclude": ["https://api\\.example\\.test/v1/status"], "mustNotInclude": []},
+  {"id": "shaper-code", "prompt": "What does the Shaper function do?", "selection": ["sf1-shaper"], "mustInclude": ["uppercase|upper.?case|toUpperCase"], "mustNotInclude": []},
+  {"id": "error-branch", "prompt": "Where does the error branch go?", "selection": ["sf1-route"], "mustInclude": ["Error Output"], "mustNotInclude": []},
+  {"id": "set-topic", "prompt": "What property does Set Topic change?", "selection": ["sf1-set-topic"], "mustInclude": ["msg\\.topic|topic", "answer-flow"], "mustNotInclude": []},
+  {"id": "unwired", "prompt": "Is anything not wired?", "selection": [], "mustInclude": ["Unused Debug"], "mustNotInclude": []},
+  {"id": "tab-inventory", "prompt": "What is on this tab?", "selection": [], "mustInclude": ["Poll", "Fetch", "Route Status"], "mustNotInclude": []}
 ]
