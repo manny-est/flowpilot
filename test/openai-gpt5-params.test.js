@@ -81,7 +81,7 @@ function jsonError(message, param, code) {
 
 function assertClassifier(errorObj, expected) {
   const classify = adapter.classifyParamError || function () { return null; };
-  assert.strictEqual(classify(errorObj), expected,
+  assert.deepStrictEqual(classify(errorObj), expected,
     "classifyParamError must be exported and classify the error correctly");
 }
 
@@ -91,13 +91,13 @@ function testClassifier() {
   const toolsMessage = "Function tools with reasoning_effort are not supported for gpt-5.6-luna in /v1/chat/completions. To use /v1/responses or set reasoning_effort to 'none'.";
   const noneMessage = "does not support 'none' with this model";
 
-  assertClassifier({ message: maxMessage, type: "invalid_request_error", param: "max_tokens", code: "unsupported_parameter" }, "max_tokens");
-  assertClassifier({ message: maxMessage, type: "invalid_request_error", param: null, code: "unsupported_parameter" }, "max_tokens");
-  assertClassifier({ message: temperatureMessage, type: "invalid_request_error", param: "temperature", code: "unsupported_value" }, "temperature");
-  assertClassifier({ message: temperatureMessage, type: "invalid_request_error", param: "temperature", code: "unsupported_parameter" }, "temperature");
-  assertClassifier({ message: toolsMessage, type: "invalid_request_error", param: "reasoning_effort", code: "unsupported_parameter" }, "tools_need_reasoning_none");
-  assertClassifier({ message: "Function tools with reasoning_effort are not supported for gpt-6.1-sol in /v1/chat/completions. To use /v1/responses or set reasoning_effort to 'none'.", type: "invalid_request_error", param: "reasoning_effort", code: "unsupported_parameter" }, "tools_need_reasoning_none");
-  assertClassifier({ message: noneMessage, type: "invalid_request_error", param: "reasoning_effort", code: "unsupported_value" }, "reasoning_none_unsupported");
+  assertClassifier({ message: maxMessage, type: "invalid_request_error", param: "max_tokens", code: "unsupported_parameter" }, { kind: "translate", from: "max_tokens", to: "max_completion_tokens" });
+  assertClassifier({ message: maxMessage, type: "invalid_request_error", param: null, code: "unsupported_parameter" }, null);
+  assertClassifier({ message: temperatureMessage, type: "invalid_request_error", param: "temperature", code: "unsupported_value" }, { kind: "drop", param: "temperature" });
+  assertClassifier({ message: temperatureMessage, type: "invalid_request_error", param: "temperature", code: "unsupported_parameter" }, { kind: "drop", param: "temperature" });
+  assertClassifier({ message: toolsMessage, type: "invalid_request_error", param: "reasoning_effort", code: "unsupported_parameter" }, { kind: "set", param: "reasoning_effort", value: "none", toolsOnly: true });
+  assertClassifier({ message: "Function tools with reasoning_effort are not supported for gpt-6.1-sol in /v1/chat/completions. To use /v1/responses or set reasoning_effort to 'none'.", type: "invalid_request_error", param: "reasoning_effort", code: "unsupported_parameter" }, { kind: "set", param: "reasoning_effort", value: "none", toolsOnly: true });
+  assertClassifier({ message: noneMessage, type: "invalid_request_error", param: "reasoning_effort", code: "unsupported_value" }, { kind: "toolsUnsupported" });
 
   assertClassifier({ message: "Incorrect API key provided.", type: "authentication_error", param: null, code: "invalid_api_key" }, null);
   assertClassifier({ message: "This request exceeds the model's maximum context length.", type: "invalid_request_error", param: null, code: "context_length_exceeded" }, null);
@@ -119,8 +119,8 @@ async function testChatAdaptsMaxAndTemperature() {
   }, async function (calls) {
     const result = await chat(settings, messages, { maxTokens: 4096 });
     assert.strictEqual(result.content, "ok");
-    assert.strictEqual(calls.length, 3);
-    const finalBody = calls[2].body;
+    assert.strictEqual(calls.length, 2);
+    const finalBody = calls[1].body;
     assert.strictEqual(finalBody.max_completion_tokens, 4096);
     assert.strictEqual(finalBody.max_tokens, undefined);
     assert.strictEqual(finalBody.temperature, undefined);
@@ -192,7 +192,7 @@ async function testProbeLuna() {
 }
 
 async function testChatStreamAdaptsTemperatureAndKeepsGenericErrors() {
-  const settings = { baseUrl: "http://gpt5-stream.example/v1", model: "gpt-5-stream", requestTimeoutMs: 1000 };
+  const settings = { baseUrl: "http://gpt5-stream.example/v1", model: "gpt-5-stream", temperature: 0.2, requestTimeoutMs: 1000 };
   await withMockedRequests(function (options, body) {
     if (body.temperature !== undefined) {
       return { statusCode: 400, body: jsonError("Only the default (1) value is supported.", "temperature", "unsupported_value") };
@@ -225,8 +225,8 @@ async function testChatStreamAdaptsTemperatureAndKeepsGenericErrors() {
 async function testLegacyBodiesRemainByteIdentical() {
   const settings = { baseUrl: "http://localai-regression.example/v1", model: "local-model", requestTimeoutMs: 1000 };
   const messages = [{ role: "user", content: "hello" }];
-  const expectedChat = JSON.stringify({ model: "local-model", messages: messages, temperature: 0.2, stream: false });
-  const expectedStream = JSON.stringify({ model: "local-model", messages: messages, temperature: 0.2, stream: true, stream_options: { include_usage: true } });
+  const expectedChat = JSON.stringify({ model: "local-model", messages: messages, stream: false });
+  const expectedStream = JSON.stringify({ model: "local-model", messages: messages, stream: true, stream_options: { include_usage: true } });
   const expectedProbe = JSON.stringify({
     model: "local-model",
     messages: [
@@ -235,7 +235,7 @@ async function testLegacyBodiesRemainByteIdentical() {
     ],
     tools: toolDefinition(),
     tool_choice: "auto",
-    temperature: 0,
+    max_tokens: 1024,
     stream: false
   });
 
@@ -257,12 +257,21 @@ async function testLegacyBodiesRemainByteIdentical() {
     await probeTools(settings);
     assert.strictEqual(calls[0].raw, expectedProbe, "LocalAI probe body changed");
   });
+
+  const explicit = Object.assign({}, settings, { temperature: 0.2 });
+  const explicitChat = JSON.stringify({ model: "local-model", messages: messages, temperature: 0.2, stream: false });
+  await withMockedRequests(function () {
+    return { statusCode: 200, body: { choices: [{ message: { content: "ok" } }] } };
+  }, async function (calls) {
+    await chat(explicit, messages);
+    assert.strictEqual(calls[0].raw, explicitChat, "explicit LocalAI temperature body changed");
+  });
 }
 
 async function testCacheKeyIncludesBaseUrl() {
   const model = "same-model-cache-key";
-  const settingsA = { baseUrl: "http://cache-a.example/v1", model: model, requestTimeoutMs: 1000 };
-  const settingsB = { baseUrl: "http://cache-b.example/v1", model: model, requestTimeoutMs: 1000 };
+  const settingsA = { baseUrl: "http://cache-a.example/v1", model: model, temperature: 0.2, requestTimeoutMs: 1000 };
+  const settingsB = { baseUrl: "http://cache-b.example/v1", model: model, temperature: 0.2, requestTimeoutMs: 1000 };
   await withMockedRequests(function (options, body) {
     if (body.temperature !== undefined) {
       return { statusCode: 400, body: jsonError("Only the default (1) value is supported.", "temperature", "unsupported_value") };
@@ -294,6 +303,57 @@ async function testNonClassifiable400OnlyRequestsOnce() {
   });
 }
 
+async function testSharedDefaultsAndEmptyLengthRetry() {
+  await withMockedRequests(function (options, body) {
+    return { statusCode: 200, body: { choices: [{ message: { content: "ok" }, finish_reason: "stop" }] } };
+  }, async function (calls) {
+    await chat({ baseUrl: "https://api.openai.com/v1", model: "official-default-model", requestTimeoutMs: 1000 },
+      [{ role: "user", content: "hello" }], { maxTokens: 100 });
+    assert.strictEqual(calls[0].body.temperature, undefined);
+    assert.strictEqual(calls[0].body.max_completion_tokens, 100);
+    assert.strictEqual(calls[0].body.max_tokens, undefined);
+  });
+
+  await withMockedRequests(function (options, body, index) {
+    if (index === 0) {
+      return { statusCode: 200, body: { choices: [{ message: { content: null }, finish_reason: "length" }] } };
+    }
+    return { statusCode: 200, body: { choices: [{ message: { content: "recovered" }, finish_reason: "stop" }] } };
+  }, async function (calls) {
+    const result = await chat({ baseUrl: "http://local-length.example/v1", model: "local-length-model", requestTimeoutMs: 1000 },
+      [{ role: "user", content: "hello" }]);
+    assert.strictEqual(result.content, "recovered");
+    assert.deepStrictEqual(result.compatNotes, ["length limit raised to 16384 after an empty cut-off reply"]);
+    assert.strictEqual(calls[0].body.max_tokens, undefined);
+    assert.strictEqual(calls[1].body.max_tokens, 16384);
+    assert.strictEqual(calls.length, 2);
+  });
+}
+
+async function testDiscoveryLearnsMultipleFixes() {
+  const settings = { baseUrl: "http://discover-multi.example/v1", model: "discover-multi-model", temperature: 0.2, requestTimeoutMs: 1000 };
+  await withMockedRequests(function (options, body) {
+    if (body.max_tokens !== undefined) {
+      return { statusCode: 400, body: jsonError("Use 'max_completion_tokens' instead.", "max_tokens", "unsupported_parameter") };
+    }
+    if (body.temperature !== undefined) {
+      return { statusCode: 400, body: jsonError("Only the default (1) value is supported.", "temperature", "unsupported_value") };
+    }
+    if (body.reasoning_effort !== "none") {
+      return { statusCode: 400, body: jsonError("Function tools with reasoning_effort are not supported for gpt-5.6-luna in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'.", "reasoning_effort", "unsupported_parameter") };
+    }
+    return { statusCode: 200, body: toolResponse() };
+  }, async function (calls) {
+    const result = await probeTools(settings);
+    assert.strictEqual(result.supportsTools, true);
+    assert.strictEqual(calls.length, 4);
+    const finalBody = calls[3].body;
+    assert.strictEqual(finalBody.max_completion_tokens, 1024);
+    assert.strictEqual(finalBody.temperature, undefined);
+    assert.strictEqual(finalBody.reasoning_effort, "none");
+  });
+}
+
 (async function main() {
   const tests = [
     ["classifyParamError", function () { testClassifier(); }],
@@ -304,7 +364,9 @@ async function testNonClassifiable400OnlyRequestsOnce() {
     ["stream parameter adaptation", testChatStreamAdaptsTemperatureAndKeepsGenericErrors],
     ["legacy request bodies", testLegacyBodiesRemainByteIdentical],
     ["cache keying", testCacheKeyIncludesBaseUrl],
-    ["non-classifiable errors", testNonClassifiable400OnlyRequestsOnce]
+    ["non-classifiable errors", testNonClassifiable400OnlyRequestsOnce],
+    ["official defaults and empty length retry", testSharedDefaultsAndEmptyLengthRetry],
+    ["multi-fix discovery", testDiscoveryLearnsMultipleFixes]
   ];
   const failures = [];
   for (const test of tests) {
