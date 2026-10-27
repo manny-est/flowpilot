@@ -67,6 +67,43 @@ assert.strictEqual(api.validationOutcomeForAttempt(1, { ok: false, retryableFail
 assert.strictEqual(api.validationOutcomeForAttempt(3, { ok: false, retryableFailures: [{}], needsYou: [] }), "out-of-tries");
 assert.strictEqual(api.validationOutcomeForAttempt(3, { ok: false, retryableFailures: [], needsYou: [{}] }), "needs-you");
 
+// Sr-Dev review fixes: the write path validates only what the write touched,
+// knows the existing graph (config nodes included), reads all three function
+// parts, and never charges the model for a failed check request.
+(function () {
+  const userBroken = { id: "user-mqtt", type: "inject", valid: false, validationErrors: ["broker is required"], _def: { inputs: 0, outputs: 1 }, wires: [] };
+  const broker = { id: "broker-1", type: "mqtt-broker", _def: { category: "config" } };
+  const fn = { id: "fn-1", type: "function", func: "return msg;", initialize: "let x = ;", finalize: "", outputs: 1, _def: { inputs: 1, outputs: 1 }, wires: [] };
+  const usesBroker = { id: "out-1", type: "inject", broker: "broker-1", wires: [],
+    _def: { inputs: 0, outputs: 1, defaults: { broker: { type: "mqtt-broker", required: true } } } };
+  const live = [userBroken, fn, usesBroker];
+  const fakeRED = { nodes: {
+    getType: function () { return true; },
+    eachNode: function (cb) { live.forEach(cb); },
+    eachConfig: function (cb) { [broker].forEach(cb); },
+    node: function (id) { return live.concat([broker]).find(function (n) { return n.id === id; }) || null; }
+  } };
+  let ajaxMode = "ok";
+  global.ajaxJson = function (method, url, body, ok, fail) {
+    if (ajaxMode === "fail") { return fail("network down"); }
+    ok({ ok: false, checks: { func: { ok: true }, initialize: { ok: false, message: "Unexpected token ';'", line: 1 }, finalize: { ok: true } } });
+  };
+  const w = new Function("RED", source + "\nreturn { validateWriteResult };")(fakeRED);
+  let out = null;
+  w.validateWriteResult({ requested: { nodeId: "gone-node" }, idMap: {} }, function (r) { out = r; });
+  assert.strictEqual(out.ok, true, "a write with nothing live left passes; the user's broken node isn't held against it");
+  w.validateWriteResult({ requested: { changes: [{ id: "out-1" }] }, idMap: {} }, function (r) { out = r; });
+  assert.strictEqual(out.needsYou.length, 0, "a reference to an existing config node isn't 'missing'");
+  w.validateWriteResult({ requested: { changes: [{ id: "fn-1" }] }, idMap: {} }, function (r) { out = r; });
+  assert.ok(out.failures.some(function (c) { return c.check === "function-parse" && /On Start/.test(c.message) && c.line === 1; }),
+    "an On Start syntax error is reported with its part and line");
+  ajaxMode = "fail";
+  w.validateWriteResult({ requested: { changes: [{ id: "fn-1" }] }, idMap: {} }, function (r) { out = r; });
+  assert.strictEqual(out.ok, true, "a failed check request is a warning, not a failed attempt");
+  assert.ok(out.warnings.some(function (c) { return c.check === "function-parse"; }));
+  delete global.ajaxJson;
+})();
+
 (async function () {
   const runtime = loadRuntime({ activeProviderId: "p1", providers: [provider(1)] });
   const harmless = await call(runtime, "POST", "/flowpilot/validate-function", {
@@ -85,6 +122,17 @@ assert.strictEqual(api.validationOutcomeForAttempt(3, { ok: false, retryableFail
   assert.ok(bad.body.checks.func.message, "syntax error message returned");
   assert.strictEqual(typeof bad.body.checks.func.line, "number", "syntax error line returned");
   assert.ok(bad.body.checks.func.line >= 1);
+
+  const secondLine = await call(runtime, "POST", "/flowpilot/validate-function", {
+    code: "var a = 1;\nvar b = ;\nreturn msg;"
+  });
+  assert.strictEqual(secondLine.body.checks.func.line, 2, "line is relative to the user's code, not the wrapper");
+
+  const asyncCleanup = await call(runtime, "POST", "/flowpilot/validate-function", {
+    code: "return msg;", initialize: "await setup();", finalize: "await cleanup();"
+  });
+  assert.strictEqual(asyncCleanup.body.checks.initialize.ok, true, "On Start is async in Node-RED");
+  assert.strictEqual(asyncCleanup.body.checks.finalize.ok, false, "On Stop is not async in Node-RED");
 
   const empty = await call(runtime, "POST", "/flowpilot/validate-function", {});
   assert.strictEqual(empty.status, 400, "empty validation request rejected");

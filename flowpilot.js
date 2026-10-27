@@ -146,9 +146,14 @@ function compileFunctionValidation(code, kind) {
     return { ok: true };
   } catch (err) {
     let line = null;
-    const stack = err && err.stack ? String(err.stack) : "";
-    const match = stack.match(/:(\d+):(\d+)/);
-    if (match) { line = Math.max(1, Number(match[1]) - prefixLines); }
+    // A vm.Script SyntaxError's stack starts with "<filename>:<line>"; deeper
+    // frames are Node internals, so only the first line is trusted.
+    const firstLine = err && err.stack ? String(err.stack).split("\n")[0] : "";
+    const filename = "FlowPilot Function node " + kind;
+    if (firstLine.indexOf(filename + ":") === 0) {
+      const lineNo = Number(firstLine.slice(filename.length + 1));
+      if (lineNo > 0) { line = Math.max(1, lineNo - prefixLines); }
+    }
     return { ok: false, message: err && err.message ? err.message : String(err), line: line };
   }
 }
@@ -157,8 +162,8 @@ function validateFunctionPayload(body) {
   body = body || {};
   const checks = {
     func: compileFunctionValidation(body.code !== undefined ? body.code : body.func, "body"),
-    initialize: compileFunctionValidation(body.initialize, "setup"),
-    finalize: compileFunctionValidation(body.finalize, "cleanup")
+    initialize: compileFunctionValidation(body.initialize, "initialize"),
+    finalize: compileFunctionValidation(body.finalize, "finalize")
   };
   const errors = Object.keys(checks).filter(function (key) { return !checks[key].ok; });
   return { ok: errors.length === 0, checks: checks, errors: errors };
