@@ -133,7 +133,12 @@ function buildConnections(nodes, allNodes) {
 
 function selectedContext(testCase) {
   const ids = Array.isArray(testCase.selection) ? testCase.selection : [];
-  return { nodes: ids.map(function (id) { return fixtureNodes.find(function (node) { return node.id === id; }); }).filter(Boolean) };
+  // The client sends the open tab with every Plan turn (SF-2); a tester would
+  // have the fixture tab open.
+  return {
+    nodes: ids.map(function (id) { return fixtureNodes.find(function (node) { return node.id === id; }); }).filter(Boolean),
+    activeTab: importedTabId ? { id: importedTabId, label: fixtureTab.label } : undefined
+  };
 }
 
 async function executeReadTool(call, token, testCase) {
