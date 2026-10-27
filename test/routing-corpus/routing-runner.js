@@ -17,6 +17,7 @@ const AGENT_LOOP_MAX_STEPS = parseInt(process.env.AGENT_LOOP_MAX_STEPS || "8", 1
 
 const CASES_FILE = path.join(__dirname, "routing-cases.json");
 const cases = JSON.parse(fs.readFileSync(CASES_FILE, "utf8"));
+const { chooseLane } = require("../../lib/core/lanes");
 
 function post(url, body, token) {
   return new Promise(function (resolve, reject) {
@@ -280,6 +281,18 @@ function caseContext(testCase) {
     : undefined;
 }
 
+function caseIntake(testCase) {
+  const context = caseContext(testCase) || {};
+  return {
+    message: testCase && testCase.prompt || "",
+    activeSelectionIds: Array.isArray(context.nodes)
+      ? context.nodes.map(function (node) { return node && node.id; }).filter(Boolean)
+      : [],
+    activeTab: context.activeTab || { id: "test-tab", label: "Test tab" },
+    flags: { auto: true, restricted: false }
+  };
+}
+
 function classify(body) {
   if (!body || Array.isArray(body)) {
     return { kind: "error", detail: "non-object response" };
@@ -406,11 +419,18 @@ async function runCase(testCase, token) {
     const resolved = await resolveAgentLoop(testCase, token, first, conversationId);
     const actual = classify(resolved.body);
     const kind = resolved.body && resolved.body.loopExhausted ? "loop_exhausted" : actual.kind;
+    const lane = chooseLane(caseIntake(testCase), actual.detail && typeof actual.detail === "object"
+      ? Object.assign({}, actual.detail, { kind: actual.kind }) : { kind: actual.kind });
+    const expectedLane = testCase.expectedLane || "ASK";
     return {
       id: testCase.id,
       expected: testCase.expected,
       actual: kind,
       pass: kind === testCase.expected,
+      expectedLane: expectedLane,
+      actualLane: lane.lane,
+      laneReason: lane.reason,
+      lanePass: lane.lane === expectedLane,
       status: resolved.status,
       note: testCase.note,
       durationMs: Date.now() - started,
@@ -429,6 +449,10 @@ async function runCase(testCase, token) {
       note: testCase.note,
       durationMs: Date.now() - started,
       decidedBy: "model",
+      expectedLane: testCase.expectedLane || "ASK",
+      actualLane: "ASK",
+      laneReason: "network error",
+      lanePass: false,
       detail: err.message
     };
   }
@@ -438,6 +462,7 @@ function summarize(results) {
   const total = results.length;
   const passed = results.filter(function (r) { return r.pass; }).length;
   const accuracy = total ? (passed / total) * 100 : 0;
+  const lanePassed = results.filter(function (r) { return r.lanePass; }).length;
   const negativeCases = results.filter(function (r) {
     return r.expected === "answer" || r.expected === "clarify";
   });
@@ -453,6 +478,8 @@ function summarize(results) {
     total: total,
     passed: passed,
     accuracy: Number(accuracy.toFixed(1)),
+    lanePassed: lanePassed,
+    laneAccuracy: Number((total ? (lanePassed / total) * 100 : 0).toFixed(1)),
     falsePositives: falsePositives,
     falsePositiveRate: Number(falsePositiveRate.toFixed(1)),
     decidedBy: {
@@ -477,6 +504,7 @@ async function main() {
       "  " + result.id +
       "  expected=" + result.expected +
       "  actual=" + result.actual +
+      "  lane=" + result.actualLane + "/" + result.expectedLane +
       "  http=" + result.status
     );
     if (i < cases.length - 1) {
@@ -487,6 +515,7 @@ async function main() {
   const summary = summarize(results);
   console.log("");
   console.log("Accuracy: " + summary.passed + "/" + summary.total + " (" + summary.accuracy + "%)");
+  console.log("Lane accuracy: " + summary.lanePassed + "/" + summary.total + " (" + summary.laneAccuracy + "%)");
   console.log("False-positive proposal rate: " + summary.falsePositives + "/" +
     results.filter(function (r) { return r.expected === "answer" || r.expected === "clarify"; }).length +
     " (" + summary.falsePositiveRate + "%)");
