@@ -134,9 +134,11 @@ async function exercise(label, route, body, settingsExtra, fakeOptions, provider
   const retryC = await exercise("plan routing (Tier C retry)", "/flowpilot/chat", PLAN, {},
     { reply: function () { return n++ === 0 ? "hmm, not sure" : "A"; } },
     { supportsTools: true, routingTierMode: "manual", routingTier: "C" });
-  assert.strictEqual(retryC.reqs.length, 2, "Tier C retry: second request sent");
+  assert.strictEqual(retryC.reqs.length, 3, "Tier C retry: classification retry plus answer handoff sent");
   const retryRoles = retryC.reqs[1].body.messages.map(function (m) { return m.role; });
   assert.deepStrictEqual(retryRoles.slice(-2), ["assistant", "user"], "Tier C retry: nudge is a user turn after the unparseable reply");
+  const handoffRoles = retryC.reqs[2].body.messages.map(function (m) { return m.role; });
+  assert.deepStrictEqual(handoffRoles.slice(-1), ["user"], "Tier C answer handoff: normal Plan chat ends on the user turn");
 
   await exercise("test", "/flowpilot/test", { prompt: "Say hello." });
   // (non-empty body: the route 400s on {} — see the 0.6.4 report, unrelated)

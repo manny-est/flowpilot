@@ -4,13 +4,9 @@
 // was confusing internal jargon for a non-technical user (Manny's live
 // screenshot feedback on 0.6.3's Settings UI). This tests the pieces that
 // replaced it: flowpilot.js's normalizedRoutingTier (derives the effective
-// tier in "auto" mode from BOTH a live supportsTools probe AND deployment
-// class -- amended per the architect's review, since Gate P1 measured a
-// local tool-capable model, spark, doing WORSE on Tier A (68.9%) than
-// Tier C (100%) on document/build/clarify; a rule that only checked
-// supportsTools would assign spark exactly that measured-worse tier),
-// isLocalDeployment/isPrivateNetworkHost (the deployment-class signal
-// itself), and lib/storage.js's migration of pre-existing providers into
+// tier in "auto" mode: every provider now classifies first.
+// isLocalDeployment/isPrivateNetworkHost remain the deployment-class signal
+// itself, and lib/storage.js's migration of pre-existing providers into
 // auto/manual mode without changing anyone's deliberate choice.
 
 const assert = require("assert");
@@ -81,16 +77,16 @@ assert.strictEqual(
   "an unrecognized presetId still falls back to the baseUrl check"
 );
 
-// ---- Auto mode: tools AND deployment class both matter, never picks B ---
+// ---- Auto mode: every provider classifies first, never picks B -----------
 assert.strictEqual(
   normalizedRoutingTier({ routingTierMode: "auto", supportsTools: true, presetId: "openrouter" }),
-  "A",
-  "auto + tools + cloud preset -> A"
+  "C",
+  "auto + tools + cloud preset -> C"
 );
 assert.strictEqual(
   normalizedRoutingTier({ routingTierMode: "auto", supportsTools: true, presetId: "ollama" }),
   "C",
-  "auto + tools + LOCAL preset -> C (Gate P1: local Tier A 68.9% vs Tier C 100%)"
+  "auto + tools + LOCAL preset -> C"
 );
 assert.strictEqual(
   normalizedRoutingTier({ routingTierMode: "auto", supportsTools: true, presetId: "custom", baseUrl: "http://192.168.1.15:8080" }),
@@ -109,7 +105,7 @@ assert.strictEqual(
 );
 assert.strictEqual(
   normalizedRoutingTier({ routingTierMode: "auto", supportsTools: true, presetId: "openrouter", routingTier: "B" }),
-  "A",
+  "C",
   "auto mode ignores a stale stored routingTier entirely"
 );
 

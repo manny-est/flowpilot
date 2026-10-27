@@ -3,7 +3,7 @@
 // The Settings "Routing: … Why: …" line (lib/core/main.js routingTierChoice)
 // must name the same tier flowpilot.js's normalizedRoutingTier actually
 // routes with, and the right deciding reason (manual override / tool
-// calling / deployment class), for every branch of the ADR-013 rule.
+// calling) for every branch of the ADR-013 rule.
 
 const assert = require("assert");
 const fs = require("fs");
@@ -40,10 +40,10 @@ const CASES = [
   [{ routingTierMode: "manual", routingTier: "zz" }, "manual"],
   [{ routingTierMode: "auto" }, "tools"],
   [{ routingTierMode: "auto", supportsTools: false, presetId: "openai" }, "tools"],
-  [{ routingTierMode: "auto", supportsTools: true, presetId: "anthropic" }, "deployment"],
-  [{ routingTierMode: "auto", supportsTools: true, presetId: "ollama", baseUrl: "http://my.host:11434" }, "deployment"],
-  [{ routingTierMode: "auto", supportsTools: true, presetId: "custom", baseUrl: "http://192.168.1.15:8080" }, "deployment"],
-  [{ routingTierMode: "auto", supportsTools: true, presetId: "custom", baseUrl: "https://api.example.com" }, "deployment"]
+  [{ routingTierMode: "auto", supportsTools: true, presetId: "anthropic" }, "tools"],
+  [{ routingTierMode: "auto", supportsTools: true, presetId: "ollama", baseUrl: "http://my.host:11434" }, "tools"],
+  [{ routingTierMode: "auto", supportsTools: true, presetId: "custom", baseUrl: "http://192.168.1.15:8080" }, "tools"],
+  [{ routingTierMode: "auto", supportsTools: true, presetId: "custom", baseUrl: "https://api.example.com" }, "tools"]
 ];
 
 CASES.forEach(function (c, i) {

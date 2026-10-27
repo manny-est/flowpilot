@@ -1,0 +1,16 @@
+[
+  {"id":"sf1-tab","type":"tab","label":"SF-1 Answer Flow","disabled":false,"info":"Answer-quality fixture"},
+  {"id":"sf1-once","type":"inject","z":"sf1-tab","name":"Start Once","props":[{"p":"payload"}],"payload":"start","payloadType":"str","once":true,"onceDelay":0.1,"repeat":"","wires":[["sf1-shaper"]]},
+  {"id":"sf1-poll","type":"inject","z":"sf1-tab","name":"Poll","props":[{"p":"payload"}],"payload":"poll","payloadType":"str","repeat":"30","crontab":"","once":false,"wires":[["sf1-fetch"]]},
+  {"id":"sf1-shaper","type":"function","z":"sf1-tab","name":"Shaper","func":"msg.payload = String(msg.payload || '').toUpperCase();\nmsg.topic = 'shaped';\nreturn msg;","outputs":1,"noerr":0,"wires":[["sf1-set-topic"]]},
+  {"id":"sf1-set-topic","type":"change","z":"sf1-tab","name":"Set Topic","rules":[{"t":"set","p":"topic","pt":"msg","to":"answer-flow","tot":"str"}],"action":"","property":"","from":"","to":"","reg":false,"wires":[["sf1-route"]]},
+  {"id":"sf1-fetch","type":"http request","z":"sf1-tab","name":"Fetch","method":"GET","ret":"obj","paytoqs":"ignore","url":"https://api.example.test/v1/status","tls":"","persist":false,"proxy":"","insecureHTTPParser":false,"authType":"","senderr":false,"headers":[],"x":0,"y":0,"wires":[["sf1-route"]]},
+  {"id":"sf1-route","type":"switch","z":"sf1-tab","name":"Route Status","property":"payload","propertyType":"msg","rules":[{"t":"eq","v":"error","vt":"str"},{"t":"else"}],"checkall":"true","repair":false,"outputs":2,"wires":[["sf1-error"],["sf1-success"]]},
+  {"id":"sf1-error","type":"debug","z":"sf1-tab","name":"Error Output","active":true,"tosidebar":true,"console":false,"tostatus":false,"complete":"payload","targetType":"msg","wires":[]},
+  {"id":"sf1-success","type":"debug","z":"sf1-tab","name":"Success Output","active":true,"tosidebar":true,"console":false,"tostatus":false,"complete":"payload","targetType":"msg","wires":[]},
+  {"id":"sf1-comment","type":"comment","z":"sf1-tab","name":"Answer Corpus Notes","info":"Poll checks the remote status endpoint; errors go to Error Output."},
+  {"id":"sf1-link-out","type":"link out","z":"sf1-tab","name":"Trace Link Out","mode":"link","links":["sf1-link-in"],"wires":[]},
+  {"id":"sf1-link-in","type":"link in","z":"sf1-tab","name":"Trace Link In","links":["sf1-link-out"],"wires":[["sf1-trace"]]},
+  {"id":"sf1-trace","type":"debug","z":"sf1-tab","name":"Trace Output","active":true,"tosidebar":true,"console":false,"tostatus":false,"complete":"true","targetType":"full","wires":[]},
+  {"id":"sf1-unused","type":"debug","z":"sf1-tab","name":"Unused Debug","active":true,"tosidebar":true,"console":false,"tostatus":false,"complete":"payload","targetType":"msg","wires":[]}
+]
