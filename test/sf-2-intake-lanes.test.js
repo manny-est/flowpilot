@@ -1,0 +1,71 @@
+"use strict";
+
+const assert = require("assert");
+const intake = require("../lib/core/intake");
+const { chooseLane } = require("../lib/core/lanes");
+
+function base(message, extra) {
+  return intake.buildIntake(message, {}, Object.assign({
+    activeSelectionIds: function () { return []; },
+    activeTab: { id: "tab-a", label: "Main" },
+    candidates: [
+      { id: "a", name: "Alpha", type: "inject" },
+      { id: "b", name: "Beta", type: "debug" },
+      { id: "c", name: "Gamma", type: "function" },
+      { id: "d", name: "Delta", type: "change" },
+      { id: "e", name: "Epsilon", type: "switch" },
+      { id: "f", name: "Zeta", type: "status" },
+      { id: "g", name: "Eta", type: "comment" }
+    ]
+  }, extra || {}));
+}
+
+// Intake defaults, active-tab context, candidate ordering/cap, and the
+// pronoun resolution path all use the same real source functions.
+const touched = intake.createTouchedNodeIndex();
+const firstRun = touched.beginRun();
+touched.recordRun([{ t: "edit", node: { id: "touched-1" } }], firstRun);
+const secondRun = touched.beginRun();
+touched.recordRun([], secondRun);
+const inRecord = base("Rename it", { touchedIndex: touched });
+assert.deepStrictEqual(inRecord.activeTab, { id: "tab-a", label: "Main" });
+assert.strictEqual(inRecord.auto, true);
+assert.strictEqual(inRecord.restricted, false);
+assert.deepStrictEqual(inRecord.targetIds, ["touched-1"]);
+assert.strictEqual(inRecord.target.kind, "it");
+assert.strictEqual(inRecord.candidates.length, 6);
+assert.strictEqual(intake.pickerCandidates(inRecord).length, 7);
+assert.strictEqual(intake.pickerCandidates(inRecord).slice(-1)[0], "Something else (describe it)");
+assert.deepStrictEqual(intake.lockTargetIds({ nodes: [{ id: "a", name: "Alpha" }] }),
+  { ids: ["a"], labels: ["Alpha"] });
+
+// A touched target is valid through two subsequent run numbers, but not the
+// third. The last run's node list is the only list returned.
+const ageIndex = intake.createTouchedNodeIndex();
+const run1 = ageIndex.beginRun();
+ageIndex.recordRun([{ t: "edit", node: { id: "n1" } }], run1);
+ageIndex.beginRun();
+ageIndex.beginRun();
+assert.deepStrictEqual(ageIndex.resolveRecent(2), ["n1"]);
+ageIndex.beginRun();
+assert.deepStrictEqual(ageIndex.resolveRecent(2), []);
+
+const selected = { activeSelectionIds: ["n1"], flags: { auto: true, restricted: false } };
+const table = [
+  ["F/unclear", chooseLane({}, { letter: "F" }).lane, "ASK"],
+  ["unresolved change", chooseLane({}, { action: "modify" }).lane, "ASK"],
+  ["resolved change", chooseLane(selected, { action: "modify" }).lane, "DIRECT"],
+  ["open creation", chooseLane({}, { action: "generate" }).lane, "PLAN"],
+  ["multi-target plan", chooseLane(selected, { action: "modify", plan_items: ["a", "b"], targets: ["a", "b"] }).lane, "PLAN"],
+  ["cross-tab", chooseLane(selected, { action: "modify", crossTab: true }).lane, "PLAN"],
+  ["subflow template", chooseLane(selected, { action: "modify", subflowTemplate: true }).lane, "PLAN"],
+  ["cross-tab link", chooseLane(selected, { action: "modify", crossTabLink: true }).lane, "PLAN"],
+  ["restricted", chooseLane(Object.assign({}, selected, { restricted: true }), { action: "modify" }).lane, "PLAN"],
+  ["auto off", chooseLane(Object.assign({}, selected, { auto: false }), { action: "modify" }).lane, "PLAN"],
+  ["plan first override", chooseLane(Object.assign({}, selected, { planFirst: true }), { action: "modify" }).lane, "PLAN"],
+  ["just do it override", chooseLane(Object.assign({}, selected, { justDoIt: true }), { action: "modify" }).lane, "DIRECT"],
+  ["C1 targeted behavior", chooseLane(selected, { action: "modify" }).lane, "DIRECT"]
+];
+table.forEach(function (row) { assert.strictEqual(row[1], row[2], row[0]); });
+
+console.log("SF-2 intake/lanes tests passed");
