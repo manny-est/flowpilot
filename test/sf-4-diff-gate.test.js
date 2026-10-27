@@ -112,16 +112,17 @@ const outside = api.diffGateDecision([
 assert.strictEqual(outside.pause, true, "editing an existing node outside the target pauses");
 assert.strictEqual(outside.reason, "out-of-target");
 
-let restored = false;
-let pushed;
-const undoRed = {
-  history: {
-    push: function (event) { pushed = event; },
-    undo: function () { restored = true; }
-  }
-};
-assert.strictEqual(api.undoDiffGateRun(undoRed, [{ t: "add", nodes: ["a"] }, { t: "delete", nodes: ["b"] }]), true, "undo uses the native history API");
-assert.strictEqual(pushed.t, "multi", "the run is undone as one compound history event");
-assert.strictEqual(restored, true, "native undo restores the pre-run state");
+// Node-RED 5.x: undo is RED.history.pop() ("core:undo"); there's no undo().
+const stack = [];
+let popped = null;
+const undoRed = { history: {
+  push: function (event) { stack.push(event); },
+  pop: function () { popped = stack.pop(); }
+} };
+assert.strictEqual(api.undoDiffGateRun(undoRed, [{ t: "add", nodes: ["a"] }, { t: "delete", nodes: ["b"] }]), true, "undo uses RED.history.pop");
+assert.strictEqual(popped.t, "multi", "the run is undone as one compound history event");
+assert.strictEqual(stack.length, 0, "nothing is left on the undo stack");
+assert.strictEqual(api.undoDiffGateRun({ history: { push: function () {} } }, [{ t: "add", nodes: ["a"] }]), false,
+  "without a native undo the caller is told it didn't happen");
 
 console.log("SF-4 diff-gate tests passed");
