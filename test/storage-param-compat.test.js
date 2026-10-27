@@ -15,7 +15,7 @@ try {
     providers: [
       { id: "old", providerName: "Old", type: "openai-compatible", baseUrl: "http://old", model: "old-model", temperature: 0.2 },
       { id: "explicit", providerName: "Explicit", type: "openai-compatible", baseUrl: "http://explicit", model: "explicit-model", temperature: 0.7 },
-      { id: "confirmed", providerName: "Confirmed", type: "openai-compatible", baseUrl: "http://confirmed", model: "confirmed-model", confirmedBaseUrl: "http://confirmed", confirmedAt: "2026-10-27T00:00:00.000Z", paramCompat: {
+      { id: "confirmed", providerName: "Confirmed", type: "openai-compatible", baseUrl: "http://confirmed", apiKey: "", model: "confirmed-model", confirmedBaseUrl: "http://confirmed", confirmedAt: "2026-10-27T00:00:00.000Z", paramCompat: {
         "confirmed-model": { omit: ["temperature"], learnedAt: "2026-10-27T00:00:00.000Z" }
       } }
     ],
