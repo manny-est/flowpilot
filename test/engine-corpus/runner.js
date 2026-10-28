@@ -130,7 +130,7 @@ function buildConnections(nodes, allNodes) {
 function fixtureParts(testCase) {
   const flow = Array.isArray(testCase.flow) ? testCase.flow : [];
   const tab = flow.find(function (node) { return node && node.type === "tab"; }) || { id: "corpus-tab", label: "Corpus tab" };
-  const nodes = flow.filter(function (node) { return node && node.type !== "tab" && node.type !== "group"; });
+  const nodes = flow.filter(function (node) { return node && node.type !== "tab" && node.type !== "group"; }).map(clone);
   const allCandidates = nodes.filter(function (node) { return node.z === tab.id; }).map(function (node) {
     return { id: node.id, name: node.name || node.id, type: node.type, z: node.z || null,
       tabLabel: tab.label, inActiveTab: true };
@@ -244,28 +244,78 @@ function ledgerForWrite(call, parts) {
   return out;
 }
 
-function synthesizeWriteResult(call) {
-  const name = toolName(call), args = toolArgs(call), checks = [];
+// Applies a write that passed both gates to the case fixture and returns the
+// result the browser would send back: buildWriteToolResult's shape plus the
+// same changeDetails as executeApplyStepTool / executeRemoveStepTool /
+// executeRenameNodeTool in lib/core/main.js. Like the browser, an unchanged
+// value is still reported as a property change (old === new); later read
+// tools see the updated fixture.
+function applyWriteToFixture(call, parts) {
+  const name = toolName(call), args = toolArgs(call), checks = [], changeDetails = [], extra = {};
+  function find(id) { return parts.nodes.find(function (node) { return node.id === id; }); }
   if (name === "apply_step") {
-    (args.newNodes || []).forEach(function (node) { checks.push({ check: "exists", nodeId: node.id, expected: true, actual: true, pass: true }); });
-    (args.changes || []).forEach(function (change) {
-      Object.keys(change.set || {}).filter(function (key) { return key !== "wires"; }).forEach(function (prop) {
-        checks.push({ check: "property", nodeId: change.id, prop: prop, expected: change.set[prop], actual: change.set[prop], pass: true });
-      });
-      (change.set && change.set.wires || []).forEach(function (targets, port) {
-        (targets || []).forEach(function (toId) { checks.push({ check: "wire", fromId: change.id, fromPort: port, toId: toId, expected: toId, actual: toId, pass: true }); });
-      });
+    (args.newNodes || []).forEach(function (node) {
+      if (!node) { return; }
+      const added = clone(node);
+      if (!added.z) { added.z = parts.tab.id; }
+      parts.nodes.push(added);
+      checks.push({ check: "exists", nodeId: added.id, expected: true, actual: true, pass: true });
+      changeDetails.push({ id: added.id, name: added.name, type: added.type, changeType: "added", after: clone(added) });
     });
-    (args.newWires || []).forEach(function (wire) { checks.push({ check: "wire", fromId: wire.from, fromPort: wire.fromPort || 0, toId: wire.to, expected: wire.to, actual: wire.to, pass: true }); });
+    if ((args.newNodes || []).length) { extra.newNodes = clone(args.newNodes); }
+    (args.changes || []).forEach(function (change) {
+      if (!change || !change.id || !change.set) { return; }
+      const live = find(change.id);
+      const propertyChanges = Object.keys(change.set).filter(function (key) { return key !== "wires"; }).map(function (key) {
+        return { key: key, oldVal: live ? clone(live[key]) : undefined, newVal: clone(change.set[key]) };
+      });
+      if (live) {
+        propertyChanges.forEach(function (pc) { live[pc.key] = clone(pc.newVal); });
+        if (Object.prototype.hasOwnProperty.call(change.set, "wires")) { live.wires = clone(change.set.wires); }
+      }
+      propertyChanges.forEach(function (pc) {
+        checks.push({ check: "property", nodeId: change.id, prop: pc.key, expected: pc.newVal, actual: live ? live[pc.key] : undefined, pass: !!live });
+      });
+      (change.set.wires || []).forEach(function (targets, port) {
+        (targets || []).forEach(function (toId) { checks.push({ check: "wire", fromId: change.id, fromPort: port, toId: toId, expected: toId, actual: live ? toId : null, pass: !!live }); });
+      });
+      changeDetails.push({ id: change.id, name: live && live.name, type: live && live.type,
+        before: propertyChanges.reduce(function (v, pc) { v[pc.key] = pc.oldVal; return v; }, {}),
+        after: propertyChanges.reduce(function (v, pc) { v[pc.key] = pc.newVal; return v; }, {}),
+        propertyChanges: propertyChanges });
+    });
+    (args.newWires || []).forEach(function (wire) {
+      if (!wire) { return; }
+      const from = find(wire.from), port = wire.fromPort || 0;
+      if (from) {
+        from.wires = Array.isArray(from.wires) ? from.wires : [];
+        while (from.wires.length <= port) { from.wires.push([]); }
+        if (from.wires[port].indexOf(wire.to) === -1) { from.wires[port].push(wire.to); }
+      }
+      checks.push({ check: "wire", fromId: wire.from, fromPort: port, toId: wire.to, expected: wire.to, actual: from ? wire.to : null, pass: !!from });
+    });
   } else if (name === "remove_step") {
-    checks.push({ check: "absent", nodeId: args.nodeId, expected: false, actual: false, pass: true });
+    const live = find(args.nodeId);
+    parts.nodes = parts.nodes.filter(function (node) { return node.id !== args.nodeId; });
+    parts.nodes.forEach(function (node) {
+      node.wires = (node.wires || []).map(function (targets) { return (targets || []).filter(function (id) { return id !== args.nodeId; }); });
+    });
+    checks.push({ check: "absent", nodeId: args.nodeId, expected: true, actual: true, pass: true });
+    changeDetails.push({ id: args.nodeId, changeType: "removed", before: live ? clone(live) : { id: args.nodeId } });
   } else if (name === "rename_node") {
-    checks.push({ check: "property", nodeId: args.nodeId, prop: "name", expected: args.name, actual: args.name, pass: true });
+    const live = find(args.nodeId), oldName = live ? live.name : undefined;
+    if (live) { live.name = args.name; }
+    checks.push({ check: "property", nodeId: args.nodeId, prop: "name", expected: args.name, actual: live ? live.name : undefined, pass: !!live });
+    changeDetails.push({ id: args.nodeId, name: args.name, type: live && live.type, before: { name: oldName }, after: { name: args.name },
+      propertyChanges: [{ key: "name", oldVal: oldName, newVal: args.name }] });
   } else if (name === "group_nodes") {
     checks.push({ check: "exists", nodeId: args.name, expected: true, actual: true, pass: true });
+    extra.groupId = "corpus-group-" + String(args.name || "group");
   }
   if (!checks.length) { checks.push({ check: "exists", nodeId: "(write)", expected: true, actual: true, pass: true }); }
-  return { requested: clone(args), checks: checks, allPass: true };
+  if (changeDetails.length) { extra.changeDetails = changeDetails; }
+  const allPass = checks.every(function (check) { return check.pass; });
+  return Object.assign({ requested: clone(args), checks: checks, allPass: allPass }, extra);
 }
 
 function evaluateWriteTool(call, lockedTargets, parts, state, priorLedger) {
@@ -276,7 +326,7 @@ function evaluateWriteTool(call, lockedTargets, parts, state, priorLedger) {
   const consent = decisions.indexOf("ask") !== -1 ? "ask" : "auto";
   const ledger = (priorLedger || []).concat(ledgerForWrite(call, parts));
   const diff = GATES.diffGate.diffGateDecision(ledger, lockedTargets, state, {});
-  return { consent: consent, consentItems: items, diff: diff, ledger: ledger, result: synthesizeWriteResult(call) };
+  return { consent: consent, consentItems: items, diff: diff, ledger: ledger };
 }
 
 function classifyCannedToolCall(call, parts, lockedTargets) {
@@ -387,7 +437,7 @@ async function runAgentCase(testCase, token) {
       writes.push(record);
       if (gate.consent === "ask") { kind = "consent_ask"; stopped = true; break; }
       if (gate.diff.pause) { kind = "diff_gate_pause"; stopped = true; break; }
-      record.result = gate.result; ledger = gate.ledger; messages = appendTool(messages, call, gate.result);
+      record.result = applyWriteToFixture(call, parts); ledger = gate.ledger; messages = appendTool(messages, call, record.result);
     }
     if (stopped) { break; }
     if (steps >= MAX_STEPS) { kind = writes.length ? "write_allowed" : "loop_exhausted"; break; }
@@ -471,6 +521,6 @@ async function main() {
 
 if (require.main === module) { main().catch(function (err) { console.error("\nFatal:", err.stack || err.message); process.exitCode = 1; }); }
 
-module.exports = { proposalKind: proposalKind, cases: cases, corpusSha256: CORPUS_SHA256, expectMatches: expectMatches, fixtureParts: fixtureParts,
+module.exports = { applyWriteToFixture: applyWriteToFixture, readTool: readTool, proposalKind: proposalKind, cases: cases, corpusSha256: CORPUS_SHA256, expectMatches: expectMatches, fixtureParts: fixtureParts,
   loadGateModules: loadGateModules, evaluateWriteTool: evaluateWriteTool, classifyCannedToolCall: classifyCannedToolCall,
   classify: classify, runAgentCase: runAgentCase };

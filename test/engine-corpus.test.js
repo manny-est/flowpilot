@@ -35,4 +35,18 @@ assert.strictEqual(runner.proposalKind(call("propose_action", { action: "modify"
 assert.strictEqual(runner.proposalKind(call("propose_action", { action: "modify" }), false, "DIRECT"),
   "refused", "propose_action outside ASK without needs_selection is not a picker");
 
+// A passing write is applied to the fixture, and the result carries the
+// browser's changeDetails. Like the browser, a repeat write still reports a
+// property change with old === new (the gap polish item #32 closes).
+const writeParts = runner.fixtureParts(generateCase);
+const rename = call("apply_step", { changes: [{ id: "n1", set: { name: "Timer" } }] });
+const first = runner.applyWriteToFixture(rename, writeParts);
+assert.deepStrictEqual(first.changeDetails[0].propertyChanges, [{ key: "name", oldVal: "Trigger", newVal: "Timer" }]);
+assert.strictEqual(runner.readTool(call("read_node", { id: "n1" }), writeParts, writeParts.context).name, "Timer",
+  "read tools see the applied write");
+const second = runner.applyWriteToFixture(rename, writeParts);
+assert.deepStrictEqual(second.changeDetails[0].propertyChanges, [{ key: "name", oldVal: "Timer", newVal: "Timer" }]);
+assert.strictEqual(generateCase.flow.find(function (n) { return n.id === "n1"; }).name, "Trigger",
+  "the case fixture itself is not modified");
+
 console.log("engine-corpus gate-loading tests passed");
