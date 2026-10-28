@@ -175,14 +175,15 @@ The normal asks-first cases are:
 
 Every step that an approved plan listed as risky is covered by that approval.
 Other risky work still asks when FlowPilot reaches it. **Skip this step** lets
-the run continue without that operation; the result explains what was skipped.
+the run continue without that operation.
 
 ### “This turned out bigger than expected”
 
 FlowPilot also pauses if a run starts changing nodes outside the target you
 gave it, or touches more nodes than expected. You can keep going with the
-expanded change or undo the run. The **Diff-gate pause above (changed nodes)**
-setting controls the default size threshold; it is 5 changed nodes.
+expanded change with **Keep going**, or reverse everything with **Undo run**.
+The **Diff-gate pause above (changed nodes)** setting in **Settings → Context &
+Safety** controls the size threshold; the default is 5 changed nodes.
 
 ## Auto, ▾ and Restricted mode
 
@@ -192,8 +193,10 @@ setting controls the default size threshold; it is 5 changed nodes.
 - The **▾** menu sets **Plan first** or **Just do it** for the next message
   only. **Normal** returns to the ordinary Simple Flow decision for that
   message.
-- **Restricted mode**, in Settings, never deploys. Every change gets a plan
-  card and you deploy the flow yourself.
+- **Restricted mode**, in **Settings → Behavior**, never deploys. Every change
+  gets a plan card and you deploy the flow yourself.
+
+![Restricted mode at the top of Settings → Behavior](docs/images/settings-behavior.png)
 
 ## Checks and runtime proof
 
@@ -262,7 +265,7 @@ The current built-in commands are:
 | `/expand` | Restores labels on the selected nodes. |
 | `/disable` | Disables the selected nodes. |
 | `/enable` | Re-enables the selected nodes. |
-| `/refresh` | Re-renders the conversation from FlowPilot's in-memory record store. |
+| `/refresh` | Redraws the conversation in the chat panel (useful if cards look stale). |
 | `/debug` | Turns debug logging on or off. |
 | `/summarize` | Summarizes older chat history while keeping the latest two exchanges. |
 | `/demo` | Fills the prompt box with a sample dad-joke flow request. |
@@ -278,6 +281,8 @@ box for you to review before sending.
 Custom intents from earlier FlowPilot versions are converted automatically to
 saved prompts the first time this version loads. FlowPilot shows a one-time
 notice; the prompt text is retained.
+
+![Saved prompts in Settings](docs/images/settings-saved-prompts.png)
 
 ## Pop-out window
 

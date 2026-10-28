@@ -174,9 +174,10 @@ the editor. It includes a Getting Started flow and a Dad Joke Demo. See the
 
 ## Development status
 
-Version 0.7.0 is the Simple Flow beta line. It uses direct result cards for
-clear changes, plan cards for larger requests, and explicit consent for risky
-operations; the stable line remains on 0.6.x while the beta is tested.
+Version 0.7.0 introduces Simple Flow: clear changes run directly and finish
+with a result card and one-step **Undo**, larger requests show a plan card
+first, and risky operations ask before they run. See the
+[changelog](CHANGELOG.md) for release details.
 
 ## Feedback
 
