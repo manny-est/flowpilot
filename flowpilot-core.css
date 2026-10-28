@@ -1,4 +1,8 @@
 #fp-root {
+    /* A size container, so the narrow-width rules below follow the sidebar's
+       (or pop-out's) own width rather than the browser window's. */
+    container-type: inline-size;
+    container-name: fp-root;
     height: 100%;
     display: flex;
     flex-direction: column;
@@ -214,6 +218,7 @@
     border-radius: 3px;
     padding: 1px 4px;
     white-space: pre-wrap;
+    overflow-wrap: anywhere;
 }
 .fp-md pre {
     margin: 0 0 8px 0;
@@ -1530,6 +1535,42 @@
 
 /* Phase 11 (Plan/Act) — Propose Action Chip styles */
 
+/* The plan card reuses the dark chip-card look, but its sections (mode
+   row, summary, plan, risks, picker, buttons) stack top to bottom. The
+   chip card's flex row put them side by side, crushing the summary into a
+   one-word column at any sidebar width (found in the C4 live check). */
+.fp-chip-card.fp-propose-card {
+    display: block;
+    box-sizing: border-box;
+    max-width: 100%;
+    cursor: default;
+}
+
+.fp-propose-card .fp-propose-plan-list {
+    padding-left: 0;
+    margin-left: 0;
+}
+
+.fp-propose-card .fp-propose-plan-list > li,
+.fp-propose-card .fp-propose-add-plan,
+.fp-propose-card .fp-propose-plan-text { min-width: 0; }
+
+.fp-propose-card .fp-target-picker {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 8px 0 0 0;
+}
+
+.fp-propose-card .fp-target-picker .fp-propose-hint { flex: 1 1 100%; }
+
+.fp-propose-card .fp-target-picker .fp-question-option {
+    max-width: 100%;
+    white-space: normal;
+    text-align: left;
+    overflow-wrap: anywhere;
+}
+
 .fp-propose-mode-row {
     display: flex;
     gap: 8px;
@@ -1840,9 +1881,11 @@
 
 /* The sidebar can be narrower than the default 300px. Keep the complete
    card reachable at 180px: rows wrap, code wraps, and no child establishes
-   a horizontal scrolling surface. */
-@media (max-width: 220px) {
-    #fp-root, #fp-root * { min-width: 0; box-sizing: border-box; }
+   a horizontal scrolling surface. A container query on #fp-root: a @media
+   query measured the browser window, so these rules never applied to a
+   narrow sidebar on a normal screen (found in the C4 live check). */
+@container fp-root (max-width: 220px) {
+    #fp-root * { min-width: 0; box-sizing: border-box; }
     .fp-header, .fp-compose { padding: 8px; }
     .fp-messages { padding: 0 6px 8px 6px; overflow-x: hidden; }
     .fp-header-row, .fp-view-buttons, .fp-planact-bar, .fp-review-actions,
