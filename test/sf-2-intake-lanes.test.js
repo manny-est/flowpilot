@@ -113,6 +113,18 @@ global.RED.nodes.node = function () { return null; }; // as in Node-RED 5: tabs 
 assert.strictEqual(intake.nodeCandidates({ id: "t1" }, "the Elsewhere node")[0].tabLabel, "Flow 2",
   "an off-tab candidate carries its tab's label");
 delete global.RED;
+// A selection the user didn't make for this message (live, SF-7: a run left
+// a node on another tab selected) must not redirect an explicitly named change.
+const shaperCands = [{ id: "s", name: "Shaper", type: "function", inActiveTab: true },
+  { id: "k", name: "Kick", type: "inject", inActiveTab: true }];
+assert.deepStrictEqual(intake.resolveIntakeTarget("Rename the Shaper node to Stamper", ["leftover"], shaperCands, null),
+  { kind: "named", ids: ["s"] }, "an explicit name beats a selection that doesn't contain it");
+assert.deepStrictEqual(intake.resolveIntakeTarget("Rename Shaper to Stamper", ["s"], shaperCands, null),
+  { kind: "selection", ids: ["s"] }, "a selection that contains the named node stays the selection");
+assert.deepStrictEqual(intake.resolveIntakeTarget("Copy Shaper's code into this node", ["k"], shaperCands, null),
+  { kind: "selection", ids: ["k"] }, "'this node' points at the selection; the name is a reference");
+assert.deepStrictEqual(intake.resolveIntakeTarget("Rename the debug node", ["k"], [{ id: "d", name: "Debug", type: "debug", inActiveTab: true }], null),
+  { kind: "selection", ids: ["k"] }, "a generic name never overrides the selection");
 console.log("SF-2 picker candidate tests passed");
 
 // Name resolution is safe (live-found: "Rename the debug node" resolved to a

@@ -125,6 +125,20 @@ const rewireOther = api.diffGateDecision([
 ], ["target"], null, {});
 assert.strictEqual(rewireOther.pause, true, "removing a wire between two other nodes still counts");
 
+// An open-ended run (no locked targets) may add nodes freely but not edit
+// existing ones without asking (live, SF-7: a "Just do it" Build re-timed and
+// rewired an existing inject on another tab with no pause).
+const openEnded = api.diffGateDecision([
+  { t: "add", nodes: [{ id: "new-inj", name: "Every 5s", type: "inject" }] },
+  { t: "add", links: [{ source: { id: "new-inj" }, target: { id: "new-dbg" } }], nodes: [{ id: "new-dbg", name: "Log", type: "debug" }] }
+], [], null, {});
+assert.strictEqual(openEnded.pause, false, "an open-ended run adding its own nodes doesn't pause");
+const openEndedEdit = api.diffGateDecision([
+  { t: "edit", node: { id: "users-inject", name: "Timestamp", type: "inject" } }
+], [], null, {});
+assert.strictEqual(openEndedEdit.pause, true, "an open-ended run editing an existing node pauses");
+assert.strictEqual(openEndedEdit.reason, "out-of-target");
+
 // Node-RED 5.x: undo is RED.history.pop() ("core:undo"); there's no undo().
 const stack = [];
 let popped = null;
