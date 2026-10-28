@@ -850,6 +850,7 @@
 .fp-send-menu-panel { position: absolute; right: 0; bottom: 100%; z-index: 5; display: flex; flex-direction: column; min-width: 110px; padding: 4px; border: 1px solid var(--red-ui-secondary-border-color, #bbb); border-radius: 5px; background: var(--red-ui-primary-background, #fff); box-shadow: 0 2px 8px rgba(0,0,0,.2); }
 .fp-send-menu-panel button { border: 0; padding: 6px 8px; text-align: left; background: transparent; color: inherit; cursor: pointer; white-space: nowrap; }
 .fp-send-menu-panel button:hover { background: rgba(31, 136, 229, .12); }
+.fp-send-menu-armed { color: #1f88e5; border-color: #1f88e5; font-weight: 600; white-space: nowrap; }
 .fp-auto-toggle { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; white-space: nowrap; cursor: pointer; }
 
 /* Armed Execute action (e.g. Generate toggled on) — lit blue, matching the
