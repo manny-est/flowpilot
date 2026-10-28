@@ -84,7 +84,7 @@ const {
 } = require("./lib/chat-data");
 const { extractJsonObject } = require("./lib/envelope");
 const { repairEnvelope } = require("./lib/validator");
-const { enforceAgentContract } = require("./lib/agent-contract");
+const { enforceAgentContract, AGENT_MUTATION_FIELDS } = require("./lib/agent-contract");
 const { isProviderShapedResponse } = require("./lib/provider-shape-check");
 const { dockerLocalhostHintSuffix } = require("./lib/docker-localhost-hint");
 const providerPresets = require("./lib/provider-presets");
@@ -1964,6 +1964,45 @@ function flowPilotRuntime(RED) {
     return { result: classified.result, messages: classified.messages, chatOptions: null, answerPhase: false };
   }
 
+  // An agent-strategy final reply may not carry flow/changes: writes go
+  // through apply_step so the diff gate and the run's Undo cover them. Some
+  // one-shot models (gpt-4.1 on Document, found in the C6 gate) still write
+  // the whole result into that reply, which the contract strips, ending
+  // the run in a 422. Give such a reply one corrective turn with the same
+  // tools instead of failing; a second inline reply falls through as before.
+  const AGENT_INLINE_WRITE_RETRY = "Your reply put the changes in JSON, but FlowPilot only applies " +
+    "changes made with the apply_step tool. Make the same changes now with apply_step (one call per " +
+    "plan item), then reply with a short summary and no flow, changes or newNodes fields.";
+
+  function hasInlineMutation(content) {
+    let parsed = null;
+    try { parsed = extractJsonObject(String(content || "")); } catch (err) { return false; }
+    if (!parsed || typeof parsed !== "object") { return false; }
+    return AGENT_MUTATION_FIELDS.some(function (field) {
+      return Array.isArray(parsed[field]) && parsed[field].length > 0;
+    });
+  }
+
+  async function retryInlineMutation(provider, activeProvider, messages, result, chatOptions) {
+    const alreadyRetried = messages.some(function (m) {
+      return m && m.role === "user" && m.content === AGENT_INLINE_WRITE_RETRY;
+    });
+    if (alreadyRetried || !result || result.toolCalls || result.fallbackToClassic ||
+      !hasInlineMutation(result.content)) { return null; }
+    const retryMessages = messages.concat([
+      { role: "assistant", content: result.content || "" },
+      { role: "user", content: AGENT_INLINE_WRITE_RETRY }
+    ]);
+    warnNumCtxOverflow(retryMessages, activeProvider, "agent-inline-write-retry");
+    const retried = await chatWithAgentCap(provider, activeProvider, retryMessages, chatOptions);
+    maybeLogDebugEvent("agent_inline_write_retry", {
+      providerBaseUrl: activeProvider && activeProvider.baseUrl,
+      model: activeProvider && activeProvider.model,
+      toolCallCount: retried && retried.toolCalls ? retried.toolCalls.length : 0
+    });
+    return { result: retried, messages: retryMessages };
+  }
+
   // The user's reply to Tier C's routing question arrives on /agent-step as
   // a tool result for a tier-c- ask_user call. Sending it on to the model
   // would just make it obey the classifier prompt and print a bare letter, so
@@ -2870,6 +2909,16 @@ function flowPilotRuntime(RED) {
         result = execution.strategy === "agent"
           ? await chatWithAgentCap(provider, activeProvider, messages, chatOptions)
           : await provider.chat(activeProvider, messages, chatOptions);
+        const writesOffered = offeredTools.some(function (tool) {
+          return tool && tool.function && tool.function.name === "apply_step";
+        });
+        if (execution.strategy === "agent" && mode !== "chat" && writesOffered) {
+          const retried = await retryInlineMutation(provider, activeProvider, messages, result, chatOptions);
+          if (retried) {
+            result = retried.result;
+            finalMessages = retried.messages;
+          }
+        }
       }
       if (answerPhase) {
         result = stripAnswerPhaseProposals(result);

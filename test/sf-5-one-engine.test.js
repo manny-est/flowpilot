@@ -115,9 +115,88 @@ async function assertNoToolsProviderMatrix() {
   }
 }
 
+// A one-shot model that writes the whole result into its final JSON (gpt-4.1
+// on Document, C6 gate) gets one corrective turn to use apply_step, instead of
+// the contract stripping the flow and the run ending in a 422.
+function inlineDocumentReply() {
+  return JSON.stringify({
+    explanation: "Documented the flow.",
+    flow: [{ id: "c1", type: "comment", name: "Read me", info: "What this does", wires: [] }]
+  });
+}
+
+function isRetryTurn(body) {
+  const last = body && body.messages && body.messages[body.messages.length - 1];
+  return !!(last && last.role === "user" && /only applies changes made with the apply_step tool/.test(last.content));
+}
+
+async function assertInlineWriteRetried() {
+  const fake = await startFakeProvider({
+    reply: function (body) { return isRetryTurn(body) ? "" : inlineDocumentReply(); },
+    toolCalls: function (body) {
+      return isRetryTurn(body)
+        ? [{ id: "call-2", type: "function", function: { name: "apply_step", arguments: "{\"summary\":\"Add a comment\"}" } }]
+        : null;
+    }
+  });
+  try {
+    const p = provider(fake.port, { supportsTools: true });
+    const runtime = loadRuntime({ activeProviderId: p.id, providers: [p] });
+    const out = await call(runtime, "POST", "/flowpilot/agent-step", {
+      strategy: "agent", entry: "document", mode: "document", prompt: "Document these nodes",
+      context: CONTEXT, messages: [{ role: "system", content: "x" }, { role: "user", content: "doc" }]
+    });
+    assert.strictEqual(out.status, 200);
+    assert.strictEqual(out.body.toolCalls[0].function.name, "apply_step", "the retry's write reaches the client loop");
+    const calls = fake.requests.filter(function (r) { return /\/chat\/completions$/.test(r.url); });
+    assert.strictEqual(calls.length, 2, "exactly one corrective turn");
+    assert.ok(toolNames(calls[1]).indexOf("apply_step") !== -1, "the retry still offers the write tools");
+    const sent = calls[1].body.messages;
+    assert.strictEqual(sent.filter(function (m) { return m.role === "system"; }).length, 1);
+    assert.strictEqual(sent[sent.length - 2].role, "assistant");
+  } finally {
+    fake.close();
+  }
+}
+
+async function assertInlineWriteRetriedOnlyOnce() {
+  const fake = await startFakeProvider({ reply: inlineDocumentReply() });
+  try {
+    const p = provider(fake.port, { supportsTools: true });
+    const runtime = loadRuntime({ activeProviderId: p.id, providers: [p] });
+    const out = await call(runtime, "POST", "/flowpilot/agent-step", {
+      strategy: "agent", entry: "document", mode: "document", prompt: "Document these nodes",
+      context: CONTEXT, messages: [{ role: "system", content: "x" }, { role: "user", content: "doc" }]
+    });
+    assert.strictEqual(out.status, 422, "a second inline reply still fails under the contract");
+    assert.strictEqual(fake.requests.filter(function (r) { return /\/chat\/completions$/.test(r.url); }).length, 2);
+  } finally {
+    fake.close();
+  }
+}
+
+async function assertSummaryFinalNotRetried() {
+  const fake = await startFakeProvider({ reply: JSON.stringify({ explanation: "Added the comment." }) });
+  try {
+    const p = provider(fake.port, { supportsTools: true });
+    const runtime = loadRuntime({ activeProviderId: p.id, providers: [p] });
+    await call(runtime, "POST", "/flowpilot/agent-step", {
+      strategy: "agent", entry: "document", mode: "document", prompt: "Document these nodes",
+      context: CONTEXT, messages: [{ role: "system", content: "x" }, { role: "user", content: "doc" }]
+    });
+    assert.strictEqual(fake.requests.filter(function (r) { return /\/chat\/completions$/.test(r.url); }).length, 1,
+      "a normal summary final is not retried");
+  } finally {
+    fake.close();
+  }
+}
+
 (async function () {
   await assertToolProviderMatrix();
   await assertNoToolsProviderMatrix();
+  await assertInlineWriteRetried();
+  await assertInlineWriteRetriedOnlyOnce();
+  await assertSummaryFinalNotRetried();
   console.log("sf-5 one-engine tests passed");
 })().catch(function (err) {
   console.error(err);
