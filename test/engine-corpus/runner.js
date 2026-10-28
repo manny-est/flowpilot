@@ -440,7 +440,10 @@ async function runAgentCase(testCase, token) {
       record.result = applyWriteToFixture(call, parts); ledger = gate.ledger; messages = appendTool(messages, call, record.result);
     }
     if (stopped) { break; }
-    if (steps >= MAX_STEPS) { kind = writes.length ? "write_allowed" : "loop_exhausted"; break; }
+    // Reaching the step limit is a failure even after clean writes: a run
+    // that keeps writing costs time and tokens (architect's call, step b;
+    // the product guard is polish item #32).
+    if (steps >= MAX_STEPS) { kind = "loop_exhausted"; break; }
     steps++;
     const stepBody = { messages: messages, mode: testCase.entry, prompt: testCase.prompt, context: parts.context,
       intake: parts.intake, targetLock: parts.targetLock, strategy: "agent", entry: testCase.entry,
