@@ -39,6 +39,24 @@ assert.deepStrictEqual(model.validation.map((check) => check.status), ["pass", "
 assert.strictEqual(model.run.state, "proven");
 assert.strictEqual(model.run.label, "Run: proven — Output: hello world");
 assert.strictEqual(model.tokenCount, 13, "token count sums all usage records");
+assert.deepStrictEqual(fn.changed[0].lines.map((line) => line.kind), ["remove", "add", "same"],
+  "a replaced line shows - before +, like a unified diff");
+
+// Validation runs after every write; the card keeps one row per node+check
+// with the latest result (live: every check was listed twice).
+const repeated = cards.buildResultCardModel({ events: [
+  { t: "validation", checks: [
+    { nodeId: "a", check: "wire", status: "fail", message: "missing" },
+    { nodeId: "a", check: "lint", status: "warning", message: "review" }
+  ] },
+  { t: "validation", checks: [
+    { nodeId: "a", check: "wire", status: "pass", message: "ok" },
+    { nodeId: "a", check: "lint", status: "warning", message: "review" },
+    { nodeId: "b", check: "wire", status: "pass", message: "ok" }
+  ] }
+] });
+assert.deepStrictEqual(repeated.validation.map((c) => c.nodeId + ":" + c.check + ":" + c.status),
+  ["a:wire:pass", "a:lint:warning", "b:wire:pass"]);
 
 assert.strictEqual(cards.buildResultCardModel({}).run.label, "Run: not run");
 assert.strictEqual(cards.buildResultCardModel({ verifyResults: [{ evidence: [] }] }).run.label, "Run: not provable here");
