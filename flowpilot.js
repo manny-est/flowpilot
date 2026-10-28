@@ -85,6 +85,7 @@ const { enforceAgentContract } = require("./lib/agent-contract");
 const { isProviderShapedResponse } = require("./lib/provider-shape-check");
 const { dockerLocalhostHintSuffix } = require("./lib/docker-localhost-hint");
 const providerPresets = require("./lib/provider-presets");
+const paramCompat = require("./lib/param-compat");
 const API_KEY_UNCHANGED = createStorage.API_KEY_UNCHANGED;
 const UPDATE_CHECK_URL = "https://registry.npmjs.org/-/package/@manny-est/node-red-flowpilot/dist-tags";
 const UPDATE_CHECK_SUCCESS_TTL_MS = 6 * 60 * 60 * 1000;
@@ -233,6 +234,29 @@ module.exports = function flowPilotRuntime(RED) {
   global.__flowPilotRuntimeInitialized = true;
 
   const storage = createStorage(RED.settings.userDir);
+
+  // One process-wide persistence hook is shared by both provider adapters.
+  // Compatibility records are stored by provider id and model; the trusted
+  // save path preserves confirmedBaseUrl because this data does not change
+  // the provider credentials or endpoint.
+  paramCompat.setCompatHook(function (learned) {
+    const settings = storage.getSettings();
+    const providers = (settings.providers || []).map(function (provider) {
+      if (!learned || provider.id !== learned.providerId) { return provider; }
+      const paramCompatByModel = Object.assign({}, provider.paramCompat || {});
+      paramCompatByModel[learned.model] = learned.entry;
+      return Object.assign({}, provider, { paramCompat: paramCompatByModel });
+    });
+    if (learned.persist !== false) {
+      storage.saveSettings(Object.assign({}, settings, { providers: providers }), { trustConfirmation: true });
+    }
+    storage.appendAudit({
+      action: "param_compat_learned",
+      providerName: learned.providerName,
+      model: learned.model,
+      fix: learned.fix
+    });
+  });
 
   // ---------------------------------------------------------------------
   // Client-held conversation history. The frontend sends a capped
@@ -1208,9 +1232,19 @@ module.exports = function flowPilotRuntime(RED) {
   // array built so far (so the caller/frontend can append the tool results
   // and continue via /flowpilot/agent-step) — nothing is recorded to the
   // transcript yet, since this isn't the final answer for the turn.
-  async function runChat(prompt, contextMode, context, history, historyTruncated, conversationId, useTools, strategy) {
+  async function runChat(prompt, contextMode, context, history, historyTruncated, conversationId, useTools, strategy, compatOptions) {
     const settings = storage.getSettings();
     const activeProvider = storage.getActiveProvider(settings);
+
+    if (compatOptions && compatOptions.resetCompat) {
+      getProvider(activeProvider).resetCompat(activeProvider);
+      if (activeProvider.paramCompat && activeProvider.model) {
+        delete activeProvider.paramCompat[activeProvider.model];
+      }
+    }
+    if (compatOptions && compatOptions.persistCompat === false) {
+      activeProvider._compatPersist = false;
+    }
 
     // Shared with /flowpilot/test (contextMode === "connectivity-test"),
     // which IS the confirming check itself and is exempt — every other
@@ -2008,7 +2042,9 @@ module.exports = function flowPilotRuntime(RED) {
       // This IS the provider-confirmation check (ADR-007) — the one request
       // allowed to touch a not-yet-confirmed baseUrl. runChat("connectivity-
       // test") skips the confirmation gate for exactly this call.
-      const { settings, activeProvider, result, perf, chatMessage } = await runChat(prompt, "connectivity-test");
+      const { settings, activeProvider, result, perf, chatMessage } = await runChat(
+        prompt, "connectivity-test", undefined, undefined, undefined, undefined,
+        false, undefined, { resetCompat: true, persistCompat: false });
 
       // Strict pass criterion (B3): a 200 with SOME JSON body is not enough
       // — an internal service or a cloud metadata endpoint can return that
@@ -2040,6 +2076,9 @@ module.exports = function flowPilotRuntime(RED) {
 
       // Capability probe — connectivity already succeeded above, so a
       // probe failure here just means "no tool support", not a /test failure.
+      // The entry was reset once before the connectivity chat above (runChat
+      // resetCompat), so the probe continues from what that chat learned
+      // (e.g. a dropped temperature) and Test Provider reports both.
       // Persist the result on the provider profile for the agentic tool-calling path.
       const probe = await getProvider(activeProvider).probeTools(activeProvider);
       const reasoning = getProvider(activeProvider).detectReasoning(result.raw);
@@ -2060,6 +2099,7 @@ module.exports = function flowPilotRuntime(RED) {
               isReasoningModel: reasoning.isReasoningModel,
               reasoningProbedAt: new Date().toISOString(),
               probedModel: activeProvider.model,
+              paramCompat: activeProvider.paramCompat || {},
               // The check above passed — this exact baseUrl is now
               // confirmed. Cleared automatically (reconcileProviderSecrets,
               // lib/storage.js) the moment baseUrl or apiKey changes.
@@ -2073,6 +2113,9 @@ module.exports = function flowPilotRuntime(RED) {
       const toolLabel = probe.supportsTools
         ? "✓ Connected · ✓ Supports tools"
         : "✓ Connected · ⚠ No tool support — compatibility mode";
+      const adjustments = paramCompat.describe(activeProvider.paramCompat &&
+        activeProvider.paramCompat[activeProvider.model]);
+      const adjustmentLabel = adjustments.length ? " · Adjusted: " + adjustments.length : "";
       const reasoningLabel = reasoning.isReasoningModel ? " · Reasoning model" : "";
 
       res.json({
@@ -2082,7 +2125,8 @@ module.exports = function flowPilotRuntime(RED) {
           supportsTools: probe.supportsTools,
           isReasoningModel: reasoning.isReasoningModel,
           probedModel: activeProvider.model,
-          label: toolLabel + reasoningLabel
+          adjustments: adjustments,
+          label: toolLabel + adjustmentLabel + reasoningLabel
         }
       });
     } catch (err) {

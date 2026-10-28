@@ -2,6 +2,35 @@
 
 All notable changes to FlowPilot are documented here.
 
+## [0.6.5] - 2026-10-27
+
+### Fixed
+- **OpenAI's newer models (GPT-5 family and later) and Claude's newer models
+  rejected FlowPilot's requests.** FlowPilot now adapts automatically. When a
+  provider rejects a request parameter (for example a custom `temperature`,
+  the older `max_tokens`, `temperature` together with `top_p`, or a forced
+  tool choice), FlowPilot removes or translates that parameter, retries once,
+  and remembers the adjustment for that provider and model in your settings.
+- **Test Provider now shows what was adjusted**, for example
+  "temperature omitted (model only accepts its default)" or
+  "reasoning_effort: none for tool calls". Models that can't use tools through
+  OpenAI's Chat Completions API (such as `gpt-6.1-sol`) show a clear
+  "no tool support" result, and plain chat still works.
+- **An empty reply that was cut off at the length limit** (a reasoning model
+  that spent its whole budget thinking) is retried once with a higher limit.
+- Claude replies that hit the length limit are now reported as truncated, like
+  other providers, so FlowPilot's existing truncation handling applies.
+
+### Changed
+- **Temperature is now only sent when you set it.** The Temperature field is
+  empty by default ("model default"). If your saved temperature was 0.2 (the
+  old default), it's cleared so the model's own default applies; any other
+  value you chose is kept. For local servers such as LocalAI this means the
+  model's configured default is used instead of 0.2.
+- Requests to `api.openai.com` send `max_completion_tokens`; other
+  OpenAI-compatible servers still get `max_tokens`.
+- FlowPilot keeps using Anthropic API version `2023-06-01`.
+
 ## [0.6.4] - 2026-10-24
 
 ### Fixed
