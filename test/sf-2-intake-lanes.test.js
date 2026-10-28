@@ -2,7 +2,7 @@
 
 const assert = require("assert");
 const intake = require("../lib/core/intake");
-const { chooseLane } = require("../lib/core/lanes");
+const { chooseLane, dispatchForLane } = require("../lib/core/lanes");
 
 function base(message, extra) {
   return intake.buildIntake(message, {}, Object.assign({
@@ -74,6 +74,23 @@ const table = [
   ["C1 targeted behavior via build", chooseLane(Object.assign({ message: "make this inject fire every 5 s" }, selected), { action: "build" }).lane, "DIRECT"]
 ];
 table.forEach(function (row) { assert.strictEqual(row[1], row[2], row[0]); });
+
+const proposal = { action: "modify", summary: "Change Shaper" };
+[
+  ["DIRECT", {}, "direct"], ["DIRECT", { auto: false }, "plan"],
+  ["DIRECT", { restricted: true }, "plan"], ["PLAN", {}, "plan"],
+  ["ASK", {}, "ask"], [undefined, {}, "plan"],
+  ["DIRECT", { planFirst: true }, "plan"]
+].forEach(function (row) {
+  assert.strictEqual(dispatchForLane(row[0], proposal, row[1]).kind, row[2],
+    "proposal dispatch " + row[0] + " / " + JSON.stringify(row[1]));
+});
+
+const once = base("Change Alpha", { oneShotFlags: { planFirst: true } });
+assert.strictEqual(once.flags.planFirst, true, "one-shot Plan first reaches intake");
+assert.strictEqual(base("Change Alpha").flags.planFirst, false, "one-shot Plan first is not persisted");
+assert.strictEqual(base("Change Alpha", { oneShotFlags: { justDoIt: true } }).flags.justDoIt, true,
+  "one-shot Just do it reaches intake");
 
 console.log("SF-2 intake/lanes tests passed");
 

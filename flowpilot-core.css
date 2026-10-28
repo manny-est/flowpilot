@@ -829,6 +829,29 @@
     border-top: 1px solid var(--red-ui-secondary-border-color, #ddd);
 }
 
+.fp-working-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+    padding: 6px 8px;
+    border-radius: 5px;
+    background: rgba(31, 136, 229, 0.10);
+    color: var(--red-ui-secondary-text-color, #667);
+    font-size: 12px;
+}
+.fp-working-stop { margin-left: 2px; }
+.fp-empty-state { margin: 24px auto; max-width: 520px; text-align: center; color: var(--red-ui-secondary-text-color, #777); }
+.fp-empty-title { margin-bottom: 10px; font-weight: 600; }
+.fp-empty-examples { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+.fp-empty-example { border: 1px solid var(--red-ui-secondary-border-color, #ccc); border-radius: 5px; padding: 6px 8px; background: transparent; color: inherit; cursor: pointer; }
+.fp-empty-example:hover { border-color: #1f88e5; color: #1f88e5; }
+.fp-send-menu-wrap { position: relative; display: inline-flex; }
+.fp-send-menu-panel { position: absolute; right: 0; bottom: 100%; z-index: 5; display: flex; flex-direction: column; min-width: 110px; padding: 4px; border: 1px solid var(--red-ui-secondary-border-color, #bbb); border-radius: 5px; background: var(--red-ui-primary-background, #fff); box-shadow: 0 2px 8px rgba(0,0,0,.2); }
+.fp-send-menu-panel button { border: 0; padding: 6px 8px; text-align: left; background: transparent; color: inherit; cursor: pointer; white-space: nowrap; }
+.fp-send-menu-panel button:hover { background: rgba(31, 136, 229, .12); }
+.fp-auto-toggle { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; white-space: nowrap; cursor: pointer; }
+
 /* Armed Execute action (e.g. Generate toggled on) — lit blue, matching the
    mode color-coding's blue = "about to propose changes" on #fp-prompt's border. */
 .fp-intents .red-ui-button.fp-action-armed {
@@ -1789,91 +1812,6 @@
     flex: 1 0 100%;
 }
 
-/* ---- R11-5: Plan/Act bar and mode row (functional restyle only) ---- */
-.fp-planact-bar {
-    display: flex;
-    gap: 6px;
-    margin-bottom: 4px;
-}
-
-.fp-planact {
-    flex: 1;
-    padding: 5px 8px;
-    border-radius: 4px;
-    border: 1px solid #2a333c;
-    background: transparent;
-    color: #8a96a3;
-    font-weight: 600;
-    cursor: pointer;
-}
-
-.fp-planact:disabled {
-    opacity: 0.45;
-    cursor: default;
-}
-
-.fp-planact-plan.fp-planact-on {
-    color: #cc7a00;
-    border-color: rgba(255, 152, 0, 0.6);
-    background: rgba(255, 152, 0, 0.12);
-    box-shadow: 0 0 10px -2px rgba(255, 152, 0, 0.8);
-}
-
-.fp-planact-act.fp-planact-on {
-    color: #1f88e5;
-    border-color: rgba(31, 136, 229, 0.6);
-    background: rgba(31, 136, 229, 0.12);
-    box-shadow: 0 0 10px -2px rgba(31, 136, 229, 0.8);
-}
-
-/* Flex row: a fifth indicator (X-Ray) is one more MODE_INDICATORS entry. */
-.fp-mode-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    margin-bottom: 4px;
-}
-
-.fp-mode-indicator {
-    flex: 1 1 0;
-    min-width: 0;
-    padding: 2px 4px;
-    border: 1px solid #2a333c;
-    border-radius: 3px;
-    background: transparent;
-    color: #8a96a3;
-    opacity: 0.55;
-    font-size: 11px;
-    cursor: pointer;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.fp-mode-indicator i {
-    margin-right: 4px;
-}
-
-.fp-mode-indicator:hover {
-    opacity: 0.85;
-}
-
-/* The agent's proposed mode: lit, still muted. */
-.fp-mode-indicator.fp-mode-proposed {
-    opacity: 0.8;
-    color: #1f88e5;
-    border-color: rgba(31, 136, 229, 0.35);
-}
-
-/* A user pin: fully lit. */
-.fp-mode-indicator.fp-action-armed {
-    opacity: 1;
-    color: #1f88e5;
-    border-color: rgba(31, 136, 229, 0.7);
-    background: rgba(31, 136, 229, 0.15);
-    box-shadow: 0 0 8px -2px rgba(31, 136, 229, 0.8);
-}
-
 /* Stage 5: which routing tier was chosen and why (display only). */
 .fp-tier-why {
     margin-top: 4px;
@@ -1895,7 +1833,7 @@
     #fp-root * { min-width: 0; box-sizing: border-box; }
     .fp-header, .fp-compose { padding: 8px; }
     .fp-messages { padding: 0 6px 8px 6px; overflow-x: hidden; }
-    .fp-header-row, .fp-view-buttons, .fp-planact-bar, .fp-review-actions,
+    .fp-header-row, .fp-view-buttons, .fp-review-actions,
     .fp-propose-buttons-row, .fp-propose-add-plan { gap: 4px; }
     .fp-logo { width: 28px; height: 28px; flex: 0 0 28px; }
     .fp-title { font-size: 16px; }
@@ -1913,7 +1851,8 @@
     .fp-propose-plan-text { flex: 1 1 100%; }
     .fp-propose-add-plan { flex-wrap: wrap; }
     .fp-propose-plan-input { flex: 1 1 100%; }
-    .fp-mode-indicator { white-space: normal; line-height: 1.2; }
-    .fp-mode-indicator i { margin-right: 1px; }
+    .fp-working-status { align-items: flex-start; flex-wrap: wrap; }
+    .fp-empty-examples { display: block; }
+    .fp-empty-example { display: block; width: 100%; margin-bottom: 4px; text-align: left; }
     .fp-status-strip { flex-wrap: wrap; gap: 3px; }
 }
