@@ -2702,6 +2702,7 @@ function flowPilotRuntime(RED) {
   // from /test, which stays a minimal connectivity check.
 
   RED.httpAdmin.post("/flowpilot/chat", RED.auth.needsPermission("settings.write"), async function (req, res) {
+    startKeepalive(req, res, !!(req.body && req.body.strategy === "agent"));
     const prompt = req.body && req.body.prompt;
 
     if (!prompt || !String(prompt).trim()) {
@@ -2850,7 +2851,102 @@ function flowPilotRuntime(RED) {
     };
   }
 
+  // Keep long non-streaming model calls alive through reverse proxies that
+  // otherwise see no response bytes for 60–120 seconds. The route handlers
+  // keep using res.status(...).json(...); this wrapper only changes the
+  // response once the keepalive has actually started, so short requests and
+  // early failures retain their ordinary status codes.
+  function startKeepalive(req, res, enabled) {
+    if (!enabled) { return; }
+
+    const originalStatus = res.status.bind(res);
+    const originalJson = res.json.bind(res);
+    const originalEnd = typeof res.end === "function" ? res.end.bind(res) : null;
+    const originalWrite = typeof res.write === "function" ? res.write.bind(res) : null;
+    const originalSetHeader = typeof res.setHeader === "function" ? res.setHeader.bind(res) : null;
+    let responseStatus = 200;
+    let keepaliveStarted = false;
+    let finished = false;
+    let disconnected = false;
+    let startTimer = null;
+    let heartbeatTimer = null;
+
+    function stopTimers() {
+      if (startTimer) { clearTimeout(startTimer); startTimer = null; }
+      if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+    }
+
+    function cleanup() {
+      stopTimers();
+    }
+
+    function finish() {
+      finished = true;
+      cleanup();
+    }
+
+    function writeHeartbeat() {
+      if (finished || disconnected || !keepaliveStarted || !originalWrite) { return; }
+      if (res.writableEnded || res.destroyed) { finish(); return; }
+      try { originalWrite(" "); } catch (err) { finish(); }
+    }
+
+    function begin() {
+      if (finished || disconnected || res.headersSent || !originalWrite) { return; }
+      keepaliveStarted = true;
+      originalStatus(200);
+      if (originalSetHeader) { originalSetHeader("Content-Type", "application/json; charset=utf-8"); }
+      writeHeartbeat();
+      heartbeatTimer = setInterval(writeHeartbeat, 15000);
+    }
+
+    function sendJson(body) {
+      if (finished || disconnected) { return res; }
+      if (!keepaliveStarted) {
+        originalStatus(responseStatus);
+        originalJson(body);
+        finish();
+        return res;
+      }
+
+      let responseBody = body;
+      if (responseStatus >= 400 || (body && body.error && body.code)) {
+        responseBody = Object.assign({}, body || {});
+        responseBody.error = responseBody.error || responseBody.message || "Request failed.";
+        responseBody.code = responseStatus >= 400 ? responseStatus : Number(responseBody.code) || responseStatus;
+      }
+      if (originalSetHeader) { originalSetHeader("Content-Type", "application/json; charset=utf-8"); }
+      if (originalEnd) {
+        originalEnd(JSON.stringify(responseBody));
+      } else {
+        originalJson(responseBody);
+      }
+      finish();
+      return res;
+    }
+
+    res.status = function (status) {
+      responseStatus = status;
+      return res;
+    };
+    res.json = sendJson;
+
+    if (typeof req.on === "function") {
+      req.on("close", function () {
+        if (finished) { return; }
+        disconnected = true;
+        cleanup();
+      });
+    }
+    if (typeof res.on === "function") {
+      res.on("finish", finish);
+      res.on("error", finish);
+    }
+    startTimer = setTimeout(begin, 15000);
+  }
+
   RED.httpAdmin.post("/flowpilot/agent-step", RED.auth.needsPermission("settings.write"), async function (req, res) {
+    startKeepalive(req, res, !!(req.body && req.body.strategy === "agent"));
     const settings = storage.getSettings();
     const activeProvider = storage.getActiveProvider(settings);
     const execution = requireExecutionContract(req, res, settings, activeProvider);
@@ -4295,6 +4391,7 @@ function flowPilotRuntime(RED) {
   }
 
   RED.httpAdmin.post("/flowpilot/generate", RED.auth.needsPermission("settings.write"), async function (req, res) {
+    startKeepalive(req, res, !!(req.body && req.body.strategy === "agent"));
     const settings = storage.getSettings();
     const activeProvider = storage.getActiveProvider(settings);
     const execution = requireExecutionContract(req, res, settings, activeProvider);
@@ -4353,13 +4450,18 @@ function flowPilotRuntime(RED) {
   // buildSystemPrompt's planning preamble. Later loop iterations (fix
   // proposals) go through /flowpilot/modify instead, not this route.
   RED.httpAdmin.post("/flowpilot/build", RED.auth.needsPermission("settings.write"), async function (req, res) {
+    const buildSettings = storage.getSettings();
+    const buildProvider = storage.getActiveProvider(buildSettings);
+    startKeepalive(req, res, !!(req.body &&
+      (req.body.strategy === "agent" ||
+        (req.body.strategy === undefined && buildProvider && buildProvider.supportsTools === true))));
     const prompt = req.body && req.body.prompt;
 
     if (!prompt || !String(prompt).trim()) {
       return res.status(400).json({ error: "A description of what to build is required." });
     }
 
-    const settings = storage.getSettings();
+    const settings = buildSettings;
     const activeProvider = storage.getActiveProvider(settings);
     const hasStrategy = req.body && req.body.strategy !== undefined;
     const execution = hasStrategy
@@ -4452,7 +4554,12 @@ function flowPilotRuntime(RED) {
   });
 
   RED.httpAdmin.post("/flowpilot/document", RED.auth.needsPermission("settings.write"), async function (req, res) {
-    const settings = storage.getSettings();
+    const documentSettings = storage.getSettings();
+    const documentProvider = storage.getActiveProvider(documentSettings);
+    startKeepalive(req, res, !!(req.body &&
+      (req.body.strategy === "agent" ||
+        (req.body.strategy === undefined && documentProvider && documentProvider.supportsTools === true))));
+    const settings = documentSettings;
     const activeProvider = storage.getActiveProvider(settings);
     const hasStrategy = req.body && req.body.strategy !== undefined;
     const execution = hasStrategy
@@ -4519,6 +4626,7 @@ function flowPilotRuntime(RED) {
   });
 
   RED.httpAdmin.post("/flowpilot/modify", RED.auth.needsPermission("settings.write"), async function (req, res) {
+    startKeepalive(req, res, !!(req.body && req.body.strategy === "agent"));
     const settings = storage.getSettings();
     const activeProvider = storage.getActiveProvider(settings);
     const execution = requireExecutionContract(req, res, settings, activeProvider);
