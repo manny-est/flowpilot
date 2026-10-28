@@ -139,6 +139,7 @@ function load() {
     "setState:function(v){activeRunState=v; activeRunCancelled=false;}, " +
     "setQueued:function(v){queuedMessage=v; updateQueuedIndicator();}, " +
     "setRequest:function(v){fpCurrentAgentRequest=v;}, " +
+    "gen:function(){return runCancelGeneration;}, " +
     "get:function(){return {state:activeRunState, cancelled:activeRunCancelled, queued:queuedMessage, records:messageRecords.slice()};}" +
     "};\n})();\n");
   vm.runInNewContext(source, context, { filename: "flowpilot-core.js" });
@@ -218,6 +219,37 @@ function buttons(dom) { return dom.created.filter(node => node.selector === "<bu
   h.api.end("clear-chat");
   h.context.ajaxCalls[0].options.success({ message: "late response" });
   assert.strictEqual(h.api.get().records.length, before, "late response was ignored");
+}
+
+
+// Stop with a message queued behind the run: the text goes back into the
+// prompt box instead of staying "queued" with nothing left to flush it.
+{
+  const h = load();
+  h.api.busy(true);
+  h.api.setQueued({ text: "do this next", deferred: false });
+  h.dom.elements["#fp-prompt"].value = "";
+  h.api.end("stop-button");
+  assert.strictEqual(h.api.get().queued, null, "no message is left queued after Stop");
+  assert.strictEqual(h.dom.elements["#fp-prompt"].value, "do this next", "the queued text is back in the prompt box");
+  assert.strictEqual(h.dom.elements["#fp-send"].props.disabled, false);
+}
+
+// Work that isn't tied to a busy run (a card's Test it) checks the cancel
+// generation, not the sticky cancelled flag: after a Stop, a proof started
+// later is not treated as cancelled.
+{
+  const h = load();
+  h.api.busy(true);
+  const before = h.api.gen();
+  h.api.end("stop-button");
+  assert.strictEqual(h.api.gen(), before + 1, "Stop bumps the cancel generation");
+  assert.strictEqual(h.api.get().cancelled, true, "late responses of the stopped run stay ignored");
+  const startedAfterStop = h.api.gen();
+  assert.strictEqual(h.api.gen(), startedAfterStop, "a proof started after Stop sees no cancellation");
+  const src = fs.readFileSync(path.join(__dirname, "..", "lib", "core", "main.js"), "utf8");
+  assert.ok(/function collect\(deployResult\) \{\s*buildVerifyWaitTimer = null;\s*if \(verifyCancelled\(\)\)/.test(src),
+    "the proof's collect step checks its own generation, not isRunCancelled()");
 }
 
 console.log("P1-36 clear-ends-run tests passed");
