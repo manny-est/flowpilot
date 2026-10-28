@@ -79,4 +79,12 @@ assert.strictEqual(proof.isFlowPilotTap({ id: "u", type: "debug", name: "FlowPil
   "a user's debug node, even one with the same name, is not a tap");
 assert.strictEqual(proof.isFlowPilotTap({ id: "f", type: "function", statusVal: "fp-tap:x" }), false, "only debug nodes are taps");
 
+// The card quotes the flow's output: the last debug observation, not the
+// first (live: an inject tap's "hello" was quoted instead of "HELLO").
+const quoted = cards.buildResultCardModel({ verifyResults: [{ evidenceCount: 2, evidence: [
+  { kind: "debug", node: "FlowPilot test", value: "hello" },
+  { kind: "debug", node: "FlowPilot test", value: "HELLO" }
+] }] }).run.label;
+assert.ok(/HELLO/.test(quoted) && !/"hello"/.test(quoted), "the run line quotes the most downstream output");
+
 console.log("SF-8 runtime-proof tests passed");
