@@ -62,4 +62,32 @@ assert.strictEqual(cards.buildResultCardModel({ verifyResults: [{
 assert.strictEqual(proof.runtimeBuildCanConverge({ state: "no-output", evidenceCount: 0 }, true), false);
 assert.strictEqual(proof.runtimeBuildCanConverge({ state: "observed", evidenceCount: 1 }, true), true);
 
+
+// Without a trigger (none found, or trigger consent declined), a source node
+// nothing feeds is not a goal: an isolated inject firing on its own must not
+// prove an unwired flow.
+const noTrigger = proof.runtimeGoalObserve([
+  node("inject", "inject", "Every 5 min", 1),
+  node("fn", "function", "Format weather", 1),
+  node("store", "function", "Store to global", 1)
+], [], null);
+assert.deepStrictEqual(noTrigger.tapNodeIds, []);
+assert.strictEqual(proof.runtimeProofOutcome([], noTrigger).state, "no-output");
+
+// Partly wired: inject -> fn is connected, the store node is not. Observed at
+// fn, but the label names what the trigger never reached.
+const partly = proof.runtimeGoalObserve([
+  node("inject", "inject", "Trigger", 1),
+  node("fn", "function", "Format", 1),
+  node("store", "function", "Store to global", 1)
+], [link("inject", "fn")], "inject");
+assert.deepStrictEqual(partly.tapNodeIds, ["fn"]);
+const partlyOutcome = proof.runtimeProofOutcome([
+  { kind: "debug", nodeId: "fn", value: "22", valueType: "string" }
+], partly);
+assert.strictEqual(partlyOutcome.label, "Run: observed — 22 (at Format) · not reached: Store to global");
+assert.strictEqual(cards.buildResultCardModel({ verifyResults: [Object.assign({ evidenceCount: 1,
+  evidence: [{ kind: "debug", node: "Format", value: "22" }] }, partlyOutcome)] }).run.label,
+  "Run: observed — 22 (at Format) · not reached: Store to global");
+
 console.log("P1-38 honest-proof tests passed");
