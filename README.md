@@ -1,12 +1,12 @@
 ```
- ███████████ ████                           ███████████   ███  ████            █████   
-░░███░░░░░░█░░███                          ░░███░░░░░███ ░░░  ░░███           ░░███    
- ░███   █ ░  ░███   ██████  █████ ███ █████ ░███    ░███ ████  ░███   ██████  ███████  
- ░███████    ░███  ███░░███░░███ ░███░░███  ░██████████ ░░███  ░███  ███░░███░░░███░   
- ░███░░░█    ░███ ░███ ░███ ░███ ░███ ░███  ░███░░░░░░   ░███  ░███ ░███ ░███  ░███    
+ ███████████ ████                           ███████████   ███  ████            █████
+░░███░░░░░░█░░███                          ░░███░░░░░███ ░░░  ░░███           ░░███
+ ░███   █ ░  ░███   ██████  █████ ███ █████ ░███    ░███ ████  ░███   ██████  ███████
+ ░███████    ░███  ███░░███░░███ ░███░░███  ░██████████ ░░███  ░███  ███░░███░░░███░
+ ░███░░░█    ░███ ░███ ░███ ░███ ░███ ░███  ░███░░░░░░   ░███  ░███ ░███ ░███  ░███
  ░███  ░     ░███ ░███ ░███ ░░███████████   ░███         ░███  ░███ ░███ ░███  ░███ ███
- █████       █████░░██████   ░░████░████    █████        █████ █████░░██████   ░░█████ 
-░░░░░       ░░░░░  ░░░░░░     ░░░░ ░░░░    ░░░░░        ░░░░░ ░░░░░  ░░░░░░     ░░░░░  
+ █████       █████░░██████   ░░████░████    █████        █████ █████░░██████   ░░█████
+░░░░░       ░░░░░  ░░░░░░     ░░░░ ░░░░    ░░░░░        ░░░░░ ░░░░░  ░░░░░░     ░░░░
 ```
 
 <div align="center">
@@ -18,15 +18,18 @@
 [![Node.js](https://img.shields.io/badge/Node.js-16%2B-green)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)](#)
 
-**[Watch the walkthrough](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/full-intro-demo.mp4)** · **[User Guide](USER-GUIDE.md)** · **[Project Overview](PROJECT-OVERVIEW.md)** · **[Report a Bug](https://github.com/manny-est/flowpilot/issues)**
+**[Watch the walkthrough (older UI)](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/full-intro-demo.mp4)** · **[User Guide](USER-GUIDE.md)** · **[Project Overview](PROJECT-OVERVIEW.md)** · **[Report a Bug](https://github.com/manny-est/flowpilot/issues)**
 
 </div>
 
 ---
 
-FlowPilot is an AI-powered development assistant that lives in the Node-RED editor sidebar. It talks natively to **Anthropic (Claude models)** or to **any OpenAI-compatible API** (OpenAI, LocalAI, Ollama, etc.) and helps you generate, modify, document, and discuss your flows — without ever acting behind your back.
+FlowPilot is an AI assistant in the Node-RED editor sidebar. It works with
+**Anthropic** models and **OpenAI-compatible** APIs, including OpenAI, LocalAI,
+and Ollama. It reads your flows, answers questions about the real nodes, and
+helps you make changes while keeping you in control.
 
-![FlowPilot sidebar](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/sidebar-chat-overview.png)
+![FlowPilot result card after a direct change](docs/images/result-card.png)
 
 ## Table of contents
 
@@ -43,45 +46,52 @@ FlowPilot is an AI-powered development assistant that lives in the Node-RED edit
 ## Design principles
 
 | Principle | What it means |
-|---|---|
-| **Reuse Node-RED** | Built on native capabilities (undo, import, deploy, selection, events) instead of parallel systems. |
-| **User-initiated only** | FlowPilot never changes your flow without an explicit request. |
-| **Complete visibility** | Every proposed change is shown as a diff/review before it's applied. In opt-in agentic mode, each step is gated by its own Proceed/Skip prompt instead — you're still in control of what lands on the canvas. |
-| **Undo first** | Every change goes through Node-RED's native undo (`Ctrl+Z`), including multi-part changes (insertions + rewires + new nodes) as a single step. |
-| **Open architecture** | Provider-agnostic: native Anthropic support, or any OpenAI-compatible REST endpoint. No lock-in to one AI platform. |
-| **Simple and lightweight** | Favors simple, maintainable solutions over speculative complexity. |
+| --- | --- |
+| **Reuse Node-RED** | FlowPilot uses Node-RED's selection, editor history, undo, wiring, and deploy behavior. |
+| **User-initiated only** | FlowPilot sends requests only when you ask. Questions are read-only. |
+| **Visible decisions** | Clear targeted changes run and are shown afterward with one-step **Undo**. Bigger or open-ended requests show a plan first, and risky operations ask before they run. |
+| **Undo first** | A direct run is one Node-RED undo step, including its connected changes. |
+| **Open architecture** | Use native Anthropic support or any OpenAI-compatible REST endpoint. |
+| **Simple and lightweight** | The interface keeps the decision in the prompt, with **Auto**, a one-message **▾** choice, and **Send**. |
 
 ## Privacy & data
 
-FlowPilot sends data to an AI provider **only when you trigger a request** — nothing happens in the background. When you do, it sends the context you've given it: your selected nodes and their wiring, any debug messages you've attached, and your conversation history.
+FlowPilot sends data to an AI provider **only when you trigger a request**. A
+request may include selected nodes and wiring, attached Debug messages, and
+recent conversation history.
 
-Before anything is sent, that context is sanitized:
+Before sending, FlowPilot strips editor-internal fields and redacts values that
+look like secrets such as credentials, tokens, API keys, and authorization
+headers. Node-RED's separate credential store is never included. A warning
+appears when context may still contain sensitive configuration or code.
 
-- Editor-internal fields are stripped.
-- Values that look like secrets (credentials, tokens, API keys, auth headers) are redacted.
-- Node-RED's separate credential store is **never** included.
-- A warning (⚠) appears in the status strip when a selection might still contain sensitive configuration or code, so you can review before sending.
-
-> **Tip:** Because your flow contents leave your Node-RED instance when you send a request, a local or private AI provider (LocalAI, Ollama, etc.) is recommended for sensitive or proprietary flows. You choose the provider, and nothing is sent anywhere you didn't configure.
-
-See the [User Guide](USER-GUIDE.md#privacy-and-safety) for the full details.
+Because flow contents leave Node-RED when you send a request, use a local or
+private provider for sensitive or proprietary flows. See the [User
+Guide](USER-GUIDE.md#privacy-and-safety) for details.
 
 ## Features
 
-- 💬 **Chat** — a read-only copilot that can see your selected nodes and their connections, with multi-turn conversation memory.
-- ✨ **Generate** — describe a flow in plain language and get a new set of nodes + wiring, reviewed and imported on your terms.
-- 🛠️ **Modify** — select existing nodes, describe a change, and review a diff before applying (property changes, rewiring, additions, removals).
-- 📝 **Document** — auto-generate a "Read Me" comment node summarizing a selection.
-- 🔍 **Review / Suggest / custom intents** — ask FlowPilot to critique or suggest improvements to a selection.
-- 🧠 **Conversational memory** — FlowPilot remembers recent exchanges (configurable depth) and carries that context into Generate/Modify/Document, with a clear notice when older messages are truncated.
-- ❓ **Clarifying questions** — if an instruction is too vague to act on safely, FlowPilot asks ONE question instead of guessing.
-- 🤖 **Agentic mode** (opt-in, Settings) — Generate and Modify can work step by step instead of one big review-then-apply diff: each step (insert, rewire, rename, remove, group) lands on the canvas as it's proposed, gated by its own Proceed/Skip consent prompt for anything beyond the safest node types. The summary you see when a run finishes is built from what the tools actually reported happened, not just the model's own retelling — if a step failed or was skipped, it says so.
-- ⚡ **Streaming replies** — optional SSE streaming for chat responses.
-- 🏗️ **`/build`** — describe a goal and FlowPilot plans it, proposes a first flow, then walks an interactive build → deploy → debug → review → fix loop with you, bounded by a configurable iteration cap. Every step still goes through the same diff-review-then-apply flow as Modify.
-- 🗂️ **Group handling** — FlowPilot sees which group a selected node belongs to, and Generate/Build/Modify can create, extend, rename, and ungroup visual groups, not just individual nodes.
-- 🪟 **Pop-out window** — the full chat/action-bar/status-strip cockpit in a separate browser window, handy for multi-monitor setups.
-- 🎚️ **Personality slider** — an adjustable captain-voice intensity (1–10) for conversational framing; technical content (explanations, diffs, errors) always stays plain regardless of setting.
-- ⌨️ **`/compact` / `/expand` / `/disable` / `/enable`** — instant, deterministic slash commands for label visibility and enabling/disabling the selected node(s); no AI round-trip.
+- 💬 **Questions with real context** — FlowPilot reads your flows and can quote
+  the actual nodes and connections. Asking a question does not change them.
+- ✨ **Simple Flow changes** — clear targeted changes run directly with **Auto**
+  and finish with a result card and one-step **Undo**.
+- 🧭 **Plan cards** — bigger or open-ended requests show a summary, steps, and
+  risky operations before **Approve** runs them.
+- ❓ **Target clarification** — ambiguous requests show **Which one?** with
+  candidate nodes and their tab names.
+- 🛡️ **Consent and safety gates** — deletes, deployments that include your own
+  edits, and external side-effecting nodes ask with **Proceed** or **Skip this
+  step**.
+- ✅ **Validation and runtime proof** — writes are checked, and **Test it** can
+  verify a flow with temporary FlowPilot test nodes that are cleaned up.
+- ⏯️ **Auto, one-shot choices, and Restricted mode** — turn Auto off for a plan
+  on every change, choose **Plan first** or **Just do it** for one message, or
+  prevent deployment entirely with **Restricted mode**.
+- 🗂️ **Saved prompts** — type `/` to fill a saved prompt or use a built-in
+  command; choosing a prompt does not send it.
+- 🪟 **Pop-out window** — use the same controls and cards in a separate window.
+- 🧠 **Conversation memory** — continue a conversation and recall earlier
+  conversations from the Flight log.
 
 ## Requirements
 
@@ -90,7 +100,8 @@ See the [User Guide](USER-GUIDE.md#privacy-and-safety) for the full details.
 
 ## Install
 
-In the Node-RED editor: **Menu → Manage palette → Install**, search for `@manny-est/node-red-flowpilot`, and click **Install**.
+In the Node-RED editor, open **Menu → Manage palette → Install**, search for
+`@manny-est/node-red-flowpilot`, and click **Install**.
 
 Or, from your Node-RED user directory:
 
@@ -100,69 +111,73 @@ npm install @manny-est/node-red-flowpilot
 node-red
 ```
 
-> **Restart required.** Restart Node-RED (or the container) after installing or updating — FlowPilot's editor UI is cached server-side, so a browser refresh alone is not enough.
+> **Restart required.** Restart Node-RED, or the container, after installing or updating. A browser refresh alone does not reload the cached editor UI.
 
 ### Docker / container setup
 
-Install into the mounted Node-RED user directory. If your user directory is `/data` (or `/workspaces/nodered`, etc.), this folder should exist:
+Install into the mounted Node-RED user directory. If it is `/data`, the
+package should be at:
 
 ```text
-<node-red-userDir>/node_modules/@manny-est/node-red-flowpilot
+/data/node_modules/@manny-est/node-red-flowpilot
 ```
 
-Restart the Node-RED container/process after updating the package files directly — the plugin server caches assembled scripts in memory.
+Restart the Node-RED container or process after updating package files.
 
 ### Where FlowPilot stores its data
 
-FlowPilot stores its own settings and logs separately from the plugin code, under `<node-red-userDir>/flowpilot/`:
+FlowPilot stores its settings and logs under
+`<node-red-userDir>/flowpilot/`:
 
 | Path | Contents |
-|---|---|
-| `settings.json` | Provider configs (including API keys), custom intents, conversation/streaming preferences |
-| `audit.log` | A log of every generate/modify/document action |
-| `chats/` | Lightweight per-session chat logs |
+| --- | --- |
+| `settings.json` | Provider configuration, saved prompts, and behavior settings |
+| `audit.log` | A log of generate, modify, document, and related actions |
+| `chats/` | Lightweight per-session conversation logs |
 | `backups/` | Pre-change backups |
 
 ## Provider setup
 
-Open the FlowPilot sidebar, click the settings (gear) icon, and add a provider.
+Open the FlowPilot sidebar, click the gear icon, add a provider, and click
+**Pre-flight check** to save and verify it.
 
 ### Anthropic (Claude models)
 
 | Field | Value |
-|---|---|
-| Provider type | `Anthropic` |
-| Provider name | `Claude` (or any label) |
-| Base URL | leave blank (uses `api.anthropic.com`) |
-| API key | your Anthropic API key — if it returns an `anthropic-workspace-id is required` error, create a new key in the Anthropic Console scoped to a single workspace |
-| Model | e.g. `claude-opus-5`, or click **Refresh models** |
+| --- | --- |
+| Provider | `Anthropic` |
+| Provider name | `Claude`, or any label |
+| Base URL | Leave blank for `api.anthropic.com` |
+| API key | Your Anthropic API key |
+| Model | A model name, or **Refresh models** |
 
-### Example: LocalAI (OpenAI-compatible)
+### OpenAI-compatible APIs
 
-| Field | Value |
-|---|---|
-| Provider type | `OpenAI-compatible` |
-| Provider name | `LocalAI` (or any label) |
+| Field | Example |
+| --- | --- |
+| Provider | `OpenAI-compatible` |
+| Provider name | `LocalAI`, or any label |
 | Base URL | `http://localhost:8080` |
-| API key | blank unless your instance requires one |
-| Model | your model name |
+| API key | Blank unless required by the service |
+| Model | Your model name |
 | Temperature | `0.2` |
 
-> **Docker note:** If Node-RED is running in Docker, `localhost` refers to the Node-RED container, not the Docker host. Use the provider's container name, Docker network alias, or host IP instead, e.g.:
-> ```text
-> http://localai:8080
-> http://172.17.0.1:8080
-> ```
-
-Click **Pre-flight check** to save and verify connectivity.
+When Node-RED runs in Docker, `localhost` refers to the Node-RED container.
+Use the provider's container name, Docker network alias, or host IP instead,
+for example `http://localai:8080` or `http://172.17.0.1:8080`.
 
 ## Examples
 
-The `examples/` folder includes a couple of small starter flows, available from the editor's **Import → Examples → FlowPilot** menu — see [USER-GUIDE.md](USER-GUIDE.md#examples) for what they're for.
+The `examples/` folder is available from **Import → Examples → FlowPilot** in
+the editor. It includes a Getting Started flow and a Dad Joke Demo. See the
+[User Guide](USER-GUIDE.md#examples) for details.
 
 ## Development status
 
-FlowPilot is under active development. Every change is reviewable and undoable, but as with any AI-assisted tool, review proposed changes before applying them — especially on flows you care about.
+Version 0.7.0 introduces Simple Flow: clear changes run directly and finish
+with a result card and one-step **Undo**, larger requests show a plan card
+first, and risky operations ask before they run. See the
+[changelog](CHANGELOG.md) for release details.
 
 ## Feedback
 
