@@ -36,8 +36,8 @@ assert.strictEqual(fn.changed.length, 1, "property changes are retained");
 assert.ok(fn.changed[0].lines.some((line) => line.kind === "remove" && /1/.test(line.text)), "function removal is a line diff");
 assert.ok(fn.changed[0].lines.some((line) => line.kind === "add" && /2/.test(line.text)), "function addition is a line diff");
 assert.deepStrictEqual(model.validation.map((check) => check.status), ["pass", "fail", "warning"]);
-assert.strictEqual(model.run.state, "proven");
-assert.strictEqual(model.run.label, 'Run: proven — Output: "hello world"');
+assert.strictEqual(model.run.state, "observed");
+assert.strictEqual(model.run.label, 'Run: observed — hello world (at Output)');
 assert.strictEqual(model.tokenCount, 13, "token count sums all usage records");
 assert.deepStrictEqual(fn.changed[0].lines.map((line) => line.kind), ["remove", "add", "same"],
   "a replaced line shows - before +, like a unified diff");
@@ -59,13 +59,13 @@ assert.deepStrictEqual(repeated.validation.map((c) => c.nodeId + ":" + c.check +
   ["a:wire:pass", "a:lint:warning", "b:wire:pass"]);
 
 assert.strictEqual(cards.buildResultCardModel({}).run.label, "Run: not run");
-assert.strictEqual(cards.buildResultCardModel({ verifyResults: [{ evidence: [] }] }).run.label, "Run: not provable here");
+assert.strictEqual(cards.buildResultCardModel({ verifyResults: [{ evidence: [] }] }).run.label, "Run: not observable here");
 // Per-write canvas checks ("verified" events) are not runs.
 assert.strictEqual(cards.buildResultCardModel({ events: [{ t: "verified", opId: "w1", detail: true }] }).run.label, "Run: not run");
 // Only the last runtime check decides, like the run's own outcome.
 assert.strictEqual(cards.buildResultCardModel({ verifyResults: [
   { evidenceCount: 1, evidence: [{ node: "Out", value: "x" }] }, { evidenceCount: 0, evidence: [] }
-] }).run.state, "not-provable", "an earlier observation followed by a failing check isn't proof");
+] }).run.state, "not-observable", "an earlier observation followed by a failing check isn't observed");
 
 function fakeHistory() {
   const entries = [];
