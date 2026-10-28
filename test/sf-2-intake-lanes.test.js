@@ -108,6 +108,10 @@ assert.deepStrictEqual(intake.nodeCandidates({ id: "t1" }, "Rename Shaper").map(
 assert.strictEqual(intake.nodeCandidates({ id: "t1" }, "fix it").length, 4, "no match falls back to the open tab's nodes");
 const named = intake.nodeCandidates({ id: "t1" }, "Add a debug node after the Elsewhere node").map(function (c) { return c.id; });
 assert.strictEqual(named[0], "x", "a node the user names on another tab outranks open-tab type matches");
+global.RED.nodes.workspace = function (id) { return { t1: { id: "t1", label: "Flow 1" }, t2: { id: "t2", label: "Flow 2" } }[id] || null; };
+global.RED.nodes.node = function () { return null; }; // as in Node-RED 5: tabs aren't nodes
+assert.strictEqual(intake.nodeCandidates({ id: "t1" }, "the Elsewhere node")[0].tabLabel, "Flow 2",
+  "an off-tab candidate carries its tab's label");
 delete global.RED;
 console.log("SF-2 picker candidate tests passed");
 
