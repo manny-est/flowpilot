@@ -254,25 +254,19 @@ function laneForRequest(body, result) {
   const proposal = calls.find(function (call) {
     return call && call.function && call.function.name === PROPOSE_ACTION_NAME;
   });
-  const ask = calls.find(function (call) {
-    return call && call.function && call.function.name === "ask_user";
-  });
-  let classification;
-  if (proposal) {
-    let args = {};
-    try { args = JSON.parse(proposal.function.arguments || "{}"); } catch (err) { args = {}; }
-    classification = args;
-  } else if (ask) {
-    classification = { kind: "unclear", unclear: true };
-  } else {
-    classification = { kind: result.message ? "answer" : "unclear" };
-  }
+  if (!proposal) { return null; }
+  let classification = {};
+  try { classification = JSON.parse(proposal.function.arguments || "{}"); } catch (err) { classification = {}; }
   const context = body.context && typeof body.context === "object" ? body.context : {};
   const intake = Object.assign({
     message: body.prompt || "",
     activeSelectionIds: Array.isArray(context.nodes) ? context.nodes.map(function (n) { return n && n.id; }).filter(Boolean) : []
   }, body.intake || {});
   return chooseLane(intake, classification);
+}
+
+function laneFields(lane) {
+  return lane ? { lane: lane.lane, reason: lane.reason } : {};
 }
 
 function runDeterministicPreRouter(prompt, context) {
@@ -2773,10 +2767,12 @@ function flowPilotRuntime(RED) {
         await runChat(prompt, "selected-nodes", req.body.context, history, historyTruncated,
           req.body.conversationId, useTools, req.body.strategy);
       const lane = laneForRequest(req.body, result);
-      maybeLogDebugEvent("lane", {
-        mode: "chat", runId: req.body.runId || null,
-        lane: lane.lane, reason: lane.reason, intake: req.body.intake || null
-      });
+      if (lane) {
+        maybeLogDebugEvent("lane", {
+          mode: "chat", runId: req.body.runId || null,
+          lane: lane.lane, reason: lane.reason, intake: req.body.intake || null
+        });
+      }
 
       storage.appendAudit(Object.assign({
         action: "chat",
@@ -2792,8 +2788,8 @@ function flowPilotRuntime(RED) {
         return res.json(fallbackBody);
       }
       if (toolCalls) {
-        const toolBody = { toolCalls: toolCalls, messages: messages, content: result.content || null,
-          usage: result.usage || null, lane: lane.lane, reason: lane.reason };
+        const toolBody = Object.assign({ toolCalls: toolCalls, messages: messages, content: result.content || null,
+          usage: result.usage || null }, laneFields(lane));
         if (answerPhase) { toolBody.answerPhase = true; }
         return res.json(toolBody);
       }
@@ -2804,8 +2800,6 @@ function flowPilotRuntime(RED) {
         usage: result.usage || null
       };
       if (answerPhase) { body.answerPhase = true; }
-      body.lane = lane.lane;
-      body.reason = lane.reason;
       const suggestedAction = extractSuggestedAction(chatData);
       if (suggestedAction) { body.suggestedAction = suggestedAction; }
       const questionOptions = extractQuestionOptions(chatData);
@@ -3079,10 +3073,12 @@ function flowPilotRuntime(RED) {
       }
 
       const lane = laneForRequest(req.body, result);
-      maybeLogDebugEvent("lane", {
-        mode: mode, runId: execution.runId,
-        lane: lane.lane, reason: lane.reason, intake: req.body.intake || null
-      });
+      if (lane) {
+        maybeLogDebugEvent("lane", {
+          mode: mode, runId: execution.runId,
+          lane: lane.lane, reason: lane.reason, intake: req.body.intake || null
+        });
+      }
 
       if (result.fallbackToClassic) {
         const fallbackBody = { fallbackToClassic: true, usage: result.usage || null };
@@ -3114,14 +3110,12 @@ function flowPilotRuntime(RED) {
           responseContent: result.content || null,
           debugNote: execution.debugNote || undefined
         });
-        const toolBody = {
+        const toolBody = Object.assign({
           toolCalls: result.toolCalls,
           toolTiers: toolTierMap(result.toolCalls),
           content: result.content || null,
-          usage: result.usage || null,
-          lane: lane.lane,
-          reason: lane.reason
-        };
+          usage: result.usage || null
+        }, laneFields(lane));
         if (answerPhase) { toolBody.answerPhase = true; }
         return res.json(toolBody);
       }
@@ -3152,8 +3146,6 @@ function flowPilotRuntime(RED) {
             }
           : function (r) { return finalizeSimpleGeneration(r, execution); };
         const { status, body } = finalize(generated);
-        body.lane = lane.lane;
-        body.reason = lane.reason;
         return res.status(status).json(body);
       }
 
@@ -3165,8 +3157,6 @@ function flowPilotRuntime(RED) {
         usage: result.usage || null
       };
       if (answerPhase) { body.answerPhase = true; }
-      body.lane = lane.lane;
-      body.reason = lane.reason;
       const suggestedAction = extractSuggestedAction(split.data);
       if (suggestedAction) { body.suggestedAction = suggestedAction; }
       const questionOptions = extractQuestionOptions(split.data);
@@ -4478,17 +4468,17 @@ function flowPilotRuntime(RED) {
       );
       if (generated.toolCalls) {
         const lane = laneForRequest(req.body, generated);
-        maybeLogDebugEvent("lane", { mode: "generate", runId: req.body.runId || null,
-          lane: lane.lane, reason: lane.reason, intake: req.body.intake || null });
-        return res.json({
+        if (lane) {
+          maybeLogDebugEvent("lane", { mode: "generate", runId: req.body.runId || null,
+            lane: lane.lane, reason: lane.reason, intake: req.body.intake || null });
+        }
+        return res.json(Object.assign({
           toolCalls: generated.toolCalls,
           toolTiers: generated.toolTiers,
           messages: generated.messages,
           content: generated.content,
-          usage: generated.usage,
-          lane: lane.lane,
-          reason: lane.reason
-        });
+          usage: generated.usage
+        }, laneFields(lane)));
       }
       recordTranscriptTurn(req.body.conversationId, "generate", prompt, transcriptTextFromGenerationResult(generated));
       const { status, body } = finalize(generated);
@@ -4547,17 +4537,17 @@ function flowPilotRuntime(RED) {
         );
         if (built.toolCalls) {
           const lane = laneForRequest(req.body, built);
-          maybeLogDebugEvent("lane", { mode: "build", runId: req.body.runId || null,
-            lane: lane.lane, reason: lane.reason, intake: req.body.intake || null });
-          return res.json({
+          if (lane) {
+            maybeLogDebugEvent("lane", { mode: "build", runId: req.body.runId || null,
+              lane: lane.lane, reason: lane.reason, intake: req.body.intake || null });
+          }
+          return res.json(Object.assign({
             toolCalls: built.toolCalls,
             toolTiers: built.toolTiers,
             messages: built.messages,
             content: built.content,
-            usage: built.usage,
-            lane: lane.lane,
-            reason: lane.reason
-          });
+            usage: built.usage
+          }, laneFields(lane)));
         }
         recordTranscriptTurn(req.body.conversationId, "build", prompt, transcriptTextFromGenerationResult(built));
         const { status, body } = finalizeSimpleGeneration(built, execution);
@@ -4588,17 +4578,17 @@ function flowPilotRuntime(RED) {
       );
       if (built.toolCalls) {
         const lane = laneForRequest(req.body, built);
-        maybeLogDebugEvent("lane", { mode: "build", runId: req.body.runId || null,
-          lane: lane.lane, reason: lane.reason, intake: req.body.intake || null });
-        return res.json({
+        if (lane) {
+          maybeLogDebugEvent("lane", { mode: "build", runId: req.body.runId || null,
+            lane: lane.lane, reason: lane.reason, intake: req.body.intake || null });
+        }
+        return res.json(Object.assign({
           toolCalls: built.toolCalls,
           toolTiers: built.toolTiers,
           messages: built.messages,
           content: built.content,
-          usage: built.usage,
-          lane: lane.lane,
-          reason: lane.reason
-        });
+          usage: built.usage
+        }, laneFields(lane)));
       }
       recordTranscriptTurn(req.body.conversationId, "build", prompt, transcriptTextFromGenerationResult(built));
       const { status, body } = finalizeSimpleGeneration(built, execution);
@@ -4660,17 +4650,17 @@ function flowPilotRuntime(RED) {
       );
       if (documented.toolCalls) {
         const lane = laneForRequest(req.body, documented);
-        maybeLogDebugEvent("lane", { mode: "document", runId: req.body.runId || null,
-          lane: lane.lane, reason: lane.reason, intake: req.body.intake || null });
-        return res.json({
+        if (lane) {
+          maybeLogDebugEvent("lane", { mode: "document", runId: req.body.runId || null,
+            lane: lane.lane, reason: lane.reason, intake: req.body.intake || null });
+        }
+        return res.json(Object.assign({
           toolCalls: documented.toolCalls,
           toolTiers: documented.toolTiers,
           messages: documented.messages,
           content: documented.content,
-          usage: documented.usage,
-          lane: lane.lane,
-          reason: lane.reason
-        });
+          usage: documented.usage
+        }, laneFields(lane)));
       }
       recordTranscriptTurn(req.body.conversationId, "document", userPrompt, transcriptTextFromGenerationResult(documented));
       const { status, body } = finalizeSimpleGeneration(documented, execution);
@@ -4732,17 +4722,17 @@ function flowPilotRuntime(RED) {
       );
       if (result.toolCalls) {
         const lane = laneForRequest(req.body, result);
-        maybeLogDebugEvent("lane", { mode: "modify", runId: req.body.runId || null,
-          lane: lane.lane, reason: lane.reason, intake: req.body.intake || null });
-        return res.json({
+        if (lane) {
+          maybeLogDebugEvent("lane", { mode: "modify", runId: req.body.runId || null,
+            lane: lane.lane, reason: lane.reason, intake: req.body.intake || null });
+        }
+        return res.json(Object.assign({
           toolCalls: result.toolCalls,
           toolTiers: result.toolTiers,
           messages: result.messages,
           content: result.content,
-          usage: result.usage,
-          lane: lane.lane,
-          reason: lane.reason
-        });
+          usage: result.usage
+        }, laneFields(lane)));
       }
       recordTranscriptTurn(req.body.conversationId, "modify", String(prompt).trim(), transcriptTextFromGenerationResult(result));
       const { status, body } = finalize(result);
