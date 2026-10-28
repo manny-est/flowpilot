@@ -323,10 +323,10 @@ function classify(endpoint, status, body) {
 
 function finalAgentKind(body, wrote) {
   if (wrote) { return "write_allowed"; }
+  // ask_target is the browser's ASK picker: lane ASK, needs_selection or
+  // ask_user. A prose reply that asks in words is not a picker.
   if (body && String(body.lane || "").toUpperCase() === "ASK") { return "ask_target"; }
-  if (body && body.question) { return "ask_target"; }
-  const text = String((body && (body.message || body.content || body.prose || body.explanation)) || "");
-  return /which one|select|choose|clarif|what do you mean|need.*node|ask/i.test(text) ? "ask_target" : "refused";
+  return "refused";
 }
 
 function proposalKind(call, wrote) { return wrote ? "write_allowed" : (toolArgs(call).needs_selection === true ? "ask_target" : "refused"); }
