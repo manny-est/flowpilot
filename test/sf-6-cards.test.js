@@ -126,4 +126,18 @@ const mem = consentLib.createConsentMemory();
 mem.rememberOperation("t", "delete", null);
 assert.strictEqual(mem.hasOperation("t", "delete", "n1"), false, "memory has no delete wildcard");
 
+// Live (Spark): a Build proposal with no plan items listed no risks. The
+// action and the summary count too.
+const buildRisks = cards.planRiskPrediction({ plan_items: [], proposeAction: {
+  action: "build",
+  summary: "Build a flow that fetches https://api.github.com/zen every minute and logs it to debug"
+} }, () => null);
+assert.deepStrictEqual(buildRisks.map((r) => r.operation + ":" + (r.type || "")).sort(),
+  ["create:http request", "deploy:"], "build predicts deploy and the http request it implies");
+const modifyRisks = cards.planRiskPrediction({ plan_items: [], proposeAction: {
+  action: "modify", summary: "Make the existing request fetch the API with a longer timeout"
+} }, () => null);
+assert.strictEqual(modifyRisks.filter((r) => r.operation === "create").length, 0,
+  "a modify that mentions fetching doesn't predict a new node");
+
 console.log("SF-6 card tests passed");
