@@ -1,402 +1,472 @@
 #!/usr/bin/env node
 "use strict";
 
-// W1 Corpus Runner — FlowPilot Phase 10
-// ───────────────────────────────────────
-// Sends structured test cases to a live FlowPilot / Node-RED instance,
-// classifies each response by failure kind, writes results-<ts>.json.
-//
-// Usage (from host, nodered-test port-forwarded to 1880):
-//   node runner.js
-//   NR_URL=http://localhost:1880 node runner.js
-//
-// Usage (inside the nodered-test container):
-//   docker exec nodered-test node /path/to/runner.js
-//
-// Env vars:
-//   NR_URL      Base URL of Node-RED admin (default: http://127.0.0.1:1880)
-//   NR_USER     Username for adminAuth  (default: fp-test)
-//   NR_PASS     Password (required; no default. Test-instance credentials
-//               live in dev-docs, never in the repo)
-//   DELAY_MS    Milliseconds between requests (default: 4000)
-//   OUTPUT_DIR  Directory to write results JSON (default: this script's dir)
-//
-// PRECONDITION as of 2026-08-30 (ADR-007, the provider-confirmation gate):
-// every case here hits an operational route (generate/modify/agent-step),
-// which now 409s with "provider_unconfirmed" unless the corpus's target
-// provider has already passed a real POST /flowpilot/test. This is NOT
-// something the corpus itself can do (the check requires strict
-// provider-shape validation on a real response, deliberately not fakeable)
-// — run Test Provider once via the UI (or POST /flowpilot/test directly)
-// against whichever provider NR_URL/activeProviderId points at before
-// running this. Confirmation is cleared automatically whenever that
-// provider's baseUrl or apiKey changes, so this can silently start failing
-// again after any settings reset — if EVERY case suddenly shows
-// provider_unconfirmed, this is why, not a real regression.
+// FlowPilot engine corpus runner. Classic cases exercise the operational
+// endpoints directly. Simple Flow cases exercise the browser-shaped agent
+// loop, but answer reads from their fixture and only run the two browser
+// gates; no write is ever executed here.
 
+const crypto = require("crypto");
+const fs = require("fs");
+const http = require("http");
 const https = require("https");
+const path = require("path");
+const vm = require("vm");
 
-// "expect" is one kind, or (R11-10, 2026-10-26) a list of acceptable kinds
-// for cases whose meaning changed when routing moved into Plan.
+const NR_URL = process.env.NR_URL || "http://127.0.0.1:1880";
+const NR_USER = process.env.NR_USER || "fp-test";
+const NR_PASS = process.env.NR_PASS;
+const DELAY_MS = parseInt(process.env.DELAY_MS || "4000", 10);
+const MAX_STEPS = parseInt(process.env.AGENT_LOOP_MAX_STEPS || "8", 10);
+const OUTPUT_DIR = process.env.OUTPUT_DIR || __dirname;
+const CASES_FILE = path.join(__dirname, "cases.json");
+const cases = JSON.parse(fs.readFileSync(CASES_FILE, "utf8"));
+const CORPUS_SHA256 = crypto.createHash("sha256").update(fs.readFileSync(CASES_FILE)).digest("hex");
+
 function expectMatches(expect, kind) {
   return Array.isArray(expect) ? expect.indexOf(kind) !== -1 : expect === kind;
 }
-const http  = require("http");
-const fs    = require("fs");
-const path  = require("path");
-
-const NR_URL     = process.env.NR_URL     || "http://127.0.0.1:1880";
-const NR_USER    = process.env.NR_USER    || "fp-test";
-const NR_PASS    = process.env.NR_PASS;
-const DELAY_MS   = parseInt(process.env.DELAY_MS || "4000", 10);
-const OUTPUT_DIR = process.env.OUTPUT_DIR || __dirname;
-
-const CASES_FILE = path.join(__dirname, "cases.json");
-const cases = JSON.parse(fs.readFileSync(CASES_FILE, "utf8"));
-
-// ── HTTP helper ────────────────────────────────────────────────────────────
 
 function post(url, body, token) {
   return new Promise(function (resolve, reject) {
-    const parsed   = new URL(url);
-    const lib      = parsed.protocol === "https:" ? https : http;
-    const bodyStr  = JSON.stringify(body);
-    const headers  = {
-      "Content-Type":   "application/json",
-      "Content-Length": Buffer.byteLength(bodyStr)
-    };
-    if (token) headers["Authorization"] = "Bearer " + token;
-
-    const req = lib.request({
+    const parsed = new URL(url);
+    const client = parsed.protocol === "https:" ? https : http;
+    const raw = JSON.stringify(body);
+    const headers = { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(raw) };
+    if (token) { headers.Authorization = "Bearer " + token; }
+    const req = client.request({
       hostname: parsed.hostname,
-      port:     parsed.port || (parsed.protocol === "https:" ? 443 : 80),
-      path:     parsed.pathname,
-      method:   "POST",
-      headers:  headers
+      port: parsed.port || (parsed.protocol === "https:" ? 443 : 80),
+      path: parsed.pathname + parsed.search,
+      method: "POST",
+      headers: headers
     }, function (res) {
       let data = "";
-      res.on("data", function (c) { data += c; });
+      res.on("data", function (chunk) { data += chunk; });
       res.on("end", function () {
-        let parsed;
-        try { parsed = JSON.parse(data); } catch (e) { parsed = { _raw: data }; }
-        resolve({ status: res.statusCode, body: parsed });
+        let parsedBody;
+        try { parsedBody = JSON.parse(data); } catch (err) { parsedBody = { _raw: data }; }
+        resolve({ status: res.statusCode, body: parsedBody });
       });
     });
-
     req.on("error", reject);
-    req.write(bodyStr);
+    req.write(raw);
     req.end();
   });
 }
 
-function sleep(ms) {
-  return new Promise(function (r) { setTimeout(r, ms); });
-}
-
-// ── Auth ───────────────────────────────────────────────────────────────────
+function sleep(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
 
 async function getToken() {
-  const res = await post(NR_URL + "/auth/token", {
-    client_id:  "node-red-admin",
-    grant_type: "password",
-    scope:      "*",
-    username:   NR_USER,
-    password:   NR_PASS
+  if (!NR_PASS) { throw new Error("NR_PASS is required"); }
+  const result = await post(NR_URL + "/auth/token", {
+    client_id: "node-red-admin", grant_type: "password", scope: "*",
+    username: NR_USER, password: NR_PASS
   });
-  if (res.status !== 200 || !res.body.access_token) {
-    throw new Error("Auth failed (HTTP " + res.status + "): " + JSON.stringify(res.body));
+  if (result.status !== 200 || !result.body || !result.body.access_token) {
+    throw new Error("Auth failed (HTTP " + result.status + "): " + JSON.stringify(result.body));
   }
-  return res.body.access_token;
+  return result.body.access_token;
 }
 
-// ── Classification ─────────────────────────────────────────────────────────
-// Returns one of:
-//   success | question | prose | mode_redirect | asked_permission |
-//   parse_error | wrong_envelope | wrong_content | no_changes |
-//   empty_flow | fixed_script_success | fixed_script_error |
-//   bad_request | server_error | http_error | network_error
+// consent.js is loaded exactly as the Node export is loaded by product code.
+// diff-gate.js is a browser fragment, so load it in a vm context in the same
+// spirit as build-core-script.js's shared closure.
+function loadGateModules() {
+  const consent = require(path.join(__dirname, "..", "..", "lib", "core", "consent.js"));
+  const source = fs.readFileSync(path.join(__dirname, "..", "..", "lib", "core", "diff-gate.js"), "utf8");
+  const context = {};
+  vm.runInNewContext(source + "\nthis.__flowPilotDiffGate = {" +
+    "getDiffGateThreshold:getDiffGateThreshold," +
+    "createDiffGateState:createDiffGateState," +
+    "diffGateDecision:diffGateDecision" +
+    "};", context, { filename: "lib/core/diff-gate.js" });
+  return {
+    consent: consent,
+    diffGate: context.__flowPilotDiffGate,
+    intake: require(path.join(__dirname, "..", "..", "lib", "core", "intake.js"))
+  };
+}
 
-const PERMISSION_RE = /\b(should\s+i|would\s+you\s+like|shall\s+i|do\s+you\s+want|want\s+me\s+to|may\s+i)\b/i;
+const GATES = loadGateModules();
+
+function clone(value) { return value === undefined ? value : JSON.parse(JSON.stringify(value)); }
+function safeJsonParse(value) { if (typeof value !== "string") { return null; } try { return JSON.parse(value); } catch (err) { return null; } }
+function toolName(call) { return call && call.function && call.function.name; }
+function toolArgs(call) { return safeJsonParse(call && call.function && call.function.arguments) || {}; }
+
+function buildConnections(nodes, allNodes) {
+  const list = Array.isArray(nodes) ? nodes : [];
+  const byId = {};
+  list.forEach(function (node) { if (node && node.id) { byId[node.id] = node; } });
+  const inputs = {};
+  list.forEach(function (node) { inputs[node.id] = []; });
+  const edges = [];
+  list.forEach(function (node) {
+    (Array.isArray(node.wires) ? node.wires : []).forEach(function (targets, fromPort) {
+      (Array.isArray(targets) ? targets : []).forEach(function (targetId) {
+        if (!byId[targetId]) { return; }
+        edges.push({ fromId: node.id, fromPort: fromPort, toId: targetId });
+        inputs[targetId].push({ fromId: node.id, fromPort: fromPort });
+      });
+    });
+  });
+  return {
+    nodes: list.map(clone), edges: edges,
+    perNode: list.map(function (node) {
+      return {
+        id: node.id, label: (node.name || node.id) + " [" + node.type + "]", type: node.type,
+        flowId: node.z || null, inputs: inputs[node.id] || [],
+        outputs: (Array.isArray(node.wires) ? node.wires : []).map(function (targets, port) {
+          return { port: port, to: (Array.isArray(targets) ? targets : []).filter(function (id) { return !!byId[id]; }) };
+        })
+      };
+    }),
+    scopeNodeCount: list.length,
+    instanceNodeCount: Array.isArray(allNodes) ? allNodes.length : list.length
+  };
+}
+
+function fixtureParts(testCase) {
+  const flow = Array.isArray(testCase.flow) ? testCase.flow : [];
+  const tab = flow.find(function (node) { return node && node.type === "tab"; }) || { id: "corpus-tab", label: "Corpus tab" };
+  const nodes = flow.filter(function (node) { return node && node.type !== "tab" && node.type !== "group"; });
+  const allCandidates = nodes.filter(function (node) { return node.z === tab.id; }).map(function (node) {
+    return { id: node.id, name: node.name || node.id, type: node.type, z: node.z || null,
+      tabLabel: tab.label, inActiveTab: true };
+  });
+  const genericName = /^(debug|inject|function|change|switch|comment|node|template|delay|trigger|link in|link out|http request|http in|http response|mqtt in|mqtt out)$/;
+  const lowerPrompt = String(testCase.prompt || "").toLowerCase();
+  const matched = allCandidates.map(function (candidate) {
+    const name = String(candidate.name || "").toLowerCase();
+    const nameHit = !!name && lowerPrompt.indexOf(name) !== -1;
+    const realName = nameHit && name !== String(candidate.type || "").toLowerCase() && !genericName.test(name);
+    const typeHit = lowerPrompt.indexOf(String(candidate.type || "").toLowerCase()) !== -1;
+    return { candidate: candidate, score: (realName ? 20 : nameHit ? 2 : 0) + (typeHit ? 1 : 0) };
+  }).filter(function (entry) { return entry.score > 0; }).sort(function (a, b) { return b.score - a.score; });
+  const candidates = (matched.length ? matched.map(function (entry) { return entry.candidate; }) : allCandidates).slice(0, 6);
+  const selected = Array.isArray(testCase.selected) ? testCase.selected.slice() : [];
+  const intake = GATES.intake.buildIntake(testCase.prompt, {}, {
+    activeSelectionIds: function () { return selected.slice(); }, activeTab: { id: tab.id, label: tab.label }, candidates: candidates,
+    touchedIndex: GATES.intake.createTouchedNodeIndex()
+  });
+  const contextIds = selected.length ? selected : intake.targetIds;
+  const contextNodes = contextIds.map(function (id) {
+    return nodes.find(function (node) { return node.id === id; });
+  }).filter(Boolean).map(clone);
+  const context = { nodes: contextNodes, connections: buildConnections(contextNodes, nodes),
+    activeTab: { id: tab.id, label: tab.label } };
+  return { flow: flow, tab: tab, nodes: nodes, candidates: candidates, intake: intake,
+    context: context, targetLock: GATES.intake.lockTargetIds(context) };
+}
+
+function readTool(call, parts, context) {
+  const name = toolName(call);
+  const args = toolArgs(call);
+  const nodes = parts.nodes;
+  if (name === "read_node") {
+    const node = (args.id && nodes.find(function (item) { return item.id === args.id; })) ||
+      (args.name && nodes.find(function (item) { return item.name === args.name; }));
+    return node ? clone(node) : { error: "No node found matching " + JSON.stringify(args) + "." };
+  }
+  if (name === "list_flows") { return { flows: [{ id: parts.tab.id, label: parts.tab.label, type: "tab", nodeCount: nodes.length }] }; }
+  if (name === "search_flow") {
+    const query = String(args.query || "").toLowerCase();
+    const type = String(args.type || "").toLowerCase();
+    return { results: nodes.filter(function (node) {
+      return (!query || String(node.name || "").toLowerCase().indexOf(query) !== -1 || String(node.type || "").toLowerCase().indexOf(query) !== -1) &&
+        (!type || String(node.type || "").toLowerCase().indexOf(type) !== -1);
+    }).map(function (node) { return { id: node.id, name: node.name || "", type: node.type, flowId: node.z || null }; }) };
+  }
+  if (name === "get_connections") {
+    if (args.id) {
+      const node = nodes.find(function (item) { return item.id === args.id; });
+      if (!node) { return { error: "No node found for id " + args.id + "." }; }
+      const linked = [node];
+      nodes.forEach(function (other) {
+        const out = (other.wires || []).some(function (targets) { return (targets || []).indexOf(node.id) !== -1; });
+        const inLink = (node.wires || []).some(function (targets) { return (targets || []).indexOf(other.id) !== -1; });
+        if ((out || inLink) && linked.indexOf(other) === -1) { linked.push(other); }
+      });
+      return buildConnections(linked, nodes);
+    }
+    return buildConnections(context.nodes.length ? context.nodes : nodes, nodes);
+  }
+  if (name === "get_selection") {
+    return context.nodes.length ? { selected: true, nodes: clone(context.nodes), groupCount: 0 } :
+      { selected: false, message: "Nothing is currently selected in the editor." };
+  }
+  if (name === "read_debug") { return { messages: [], totalBuffered: 0 }; }
+  return { error: "Unsupported read tool: " + name };
+}
+
+const WRITE_TOOLS = new Set(["apply_step", "remove_step", "rename_node", "group_nodes", "deploy_flows"]);
+
+// Mirrors collectWriteToolConsentItems in lib/core/main.js:2452-2503.
+// apply_step changes→modify-config, wires→rewire, newNodes→create;
+// remove_step→delete, rename_node→modify-config, deploy_flows→deploy.
+function consentItems(call, parts) {
+  const name = toolName(call), args = toolArgs(call), byId = {};
+  parts.nodes.forEach(function (node) { byId[node.id] = node; });
+  function item(op, id, type) { return { op: op, nodeId: id || null, type: type || (byId[id] && byId[id].type) || null }; }
+  if (name === "apply_step") {
+    const items = [];
+    (args.newNodes || []).forEach(function (node) { items.push(item("create", node && node.id, node && node.type)); });
+    (args.newWires || []).forEach(function (wire) { if (wire) { items.push(item("rewire", wire.from)); items.push(item("rewire", wire.to)); } });
+    (args.changes || []).forEach(function (change) { if (change) { items.push(item("modify-config", change.id)); } });
+    return items;
+  }
+  if (name === "remove_step") { return [item("delete", args.nodeId)]; }
+  if (name === "rename_node") { return [item("modify-config", args.nodeId)]; }
+  if (name === "deploy_flows") { return [item("deploy", null, null)]; }
+  // group_nodes is write-safe in the browser, so it intentionally has no
+  // consent item even though it is still checked by the diff gate.
+  return [];
+}
+
+function ledgerForWrite(call, parts) {
+  const name = toolName(call), args = toolArgs(call), byId = {}, out = [], seen = {};
+  parts.nodes.forEach(function (node) { byId[node.id] = node; });
+  function add(id, created) {
+    if (!id || seen[id]) { return; }
+    seen[id] = true;
+    out.push({ id: String(id), name: byId[id] ? (byId[id].name || "(unnamed)") : "(unnamed)",
+      type: byId[id] ? byId[id].type : "(unknown)", created: !!created });
+  }
+  if (name === "apply_step") {
+    (args.newNodes || []).forEach(function (node) { if (node) { add(node.id, true); } });
+    (args.changes || []).forEach(function (change) { if (change) { add(change.id, false); } });
+    // diff-gate's link ledger counts the source node, not the target node.
+    (args.newWires || []).forEach(function (wire) { if (wire) { add(wire.from, false); } });
+  } else if (name === "remove_step") { add(args.nodeId, false);
+  } else if (name === "rename_node") { add(args.nodeId, false);
+  } else if (name === "group_nodes") { (args.nodeIds || []).forEach(function (id) { add(id, false); }); }
+  return out;
+}
+
+function synthesizeWriteResult(call) {
+  const name = toolName(call), args = toolArgs(call), checks = [];
+  if (name === "apply_step") {
+    (args.newNodes || []).forEach(function (node) { checks.push({ check: "exists", nodeId: node.id, expected: true, actual: true, pass: true }); });
+    (args.changes || []).forEach(function (change) {
+      Object.keys(change.set || {}).filter(function (key) { return key !== "wires"; }).forEach(function (prop) {
+        checks.push({ check: "property", nodeId: change.id, prop: prop, expected: change.set[prop], actual: change.set[prop], pass: true });
+      });
+      (change.set && change.set.wires || []).forEach(function (targets, port) {
+        (targets || []).forEach(function (toId) { checks.push({ check: "wire", fromId: change.id, fromPort: port, toId: toId, expected: toId, actual: toId, pass: true }); });
+      });
+    });
+    (args.newWires || []).forEach(function (wire) { checks.push({ check: "wire", fromId: wire.from, fromPort: wire.fromPort || 0, toId: wire.to, expected: wire.to, actual: wire.to, pass: true }); });
+  } else if (name === "remove_step") {
+    checks.push({ check: "absent", nodeId: args.nodeId, expected: false, actual: false, pass: true });
+  } else if (name === "rename_node") {
+    checks.push({ check: "property", nodeId: args.nodeId, prop: "name", expected: args.name, actual: args.name, pass: true });
+  } else if (name === "group_nodes") {
+    checks.push({ check: "exists", nodeId: args.name, expected: true, actual: true, pass: true });
+  }
+  if (!checks.length) { checks.push({ check: "exists", nodeId: "(write)", expected: true, actual: true, pass: true }); }
+  return { requested: clone(args), checks: checks, allPass: true };
+}
+
+function evaluateWriteTool(call, lockedTargets, parts, state, priorLedger) {
+  const items = consentItems(call, parts);
+  const decisions = toolName(call) === "group_nodes" ? ["auto"] : (items.length ? items.map(function (item) {
+    return GATES.consent.decideConsent(item.op, item.type, { nodeId: item.nodeId });
+  }) : ["ask"]);
+  const consent = decisions.indexOf("ask") !== -1 ? "ask" : "auto";
+  const ledger = (priorLedger || []).concat(ledgerForWrite(call, parts));
+  const diff = GATES.diffGate.diffGateDecision(ledger, lockedTargets, state, {});
+  return { consent: consent, consentItems: items, diff: diff, ledger: ledger, result: synthesizeWriteResult(call) };
+}
+
+function classifyCannedToolCall(call, parts, lockedTargets) {
+  const name = toolName(call);
+  if (name === "ask_user") { return "ask_target"; }
+  if (name === "propose_action") { return toolArgs(call).needs_selection === true ? "ask_target" : "refused"; }
+  const state = GATES.diffGate.createDiffGateState(lockedTargets, {});
+  const gate = evaluateWriteTool(call, lockedTargets, parts, state, []);
+  if (gate.consent === "ask") { return "consent_ask"; }
+  if (gate.diff.pause) { return "diff_gate_pause"; }
+  return "write_allowed";
+}
+
+function appendAssistant(messages, body) { return (messages || []).concat([{ role: "assistant", content: body.content || null, tool_calls: body.toolCalls }]); }
+function appendTool(messages, call, result) { return messages.concat([{ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) }]); }
 
 function classify(endpoint, status, body) {
-  if (status === 0)   return "network_error";
-  if (status === 400 && body && body.error === "strategy_required") return "strategy_required";
-  if (status === 409 && body && body.error === "agent_strategy_unavailable") return "agent_strategy_unavailable";
-  if (status >= 500)  return "server_error";
-  if (status === 400) return "bad_request";
-
-  // 422 = parse/validation failure from processGenerationContent or
-  //        reference-validation inside finalizeModifyResult
+  if (status === 0) { return "network_error"; }
+  if (status === 400 && body && body.error === "strategy_required") { return "strategy_required"; }
+  if (status === 409 && body && body.error === "agent_strategy_unavailable") { return "agent_strategy_unavailable"; }
+  if (status >= 500) { return "server_error"; }
+  if (status === 400) { return "bad_request"; }
   if (status === 422) {
-    const err = (body && body.error) || "";
-    if (/could not parse/i.test(err))                              return "parse_error";
-    if (/did not contain a.+flow|recognizable modify fields/i.test(err)) return "wrong_envelope";
-    if (/not in the selection|wire references|group references/i.test(err)) return "wrong_content";
-    return "parse_error";   // fallback for other 422 shapes
+    const error = (body && body.error) || "";
+    if (/did not contain a.+flow|recognizable modify fields/i.test(error)) { return "wrong_envelope"; }
+    if (/not in the selection|wire references|group references/i.test(error)) { return "wrong_content"; }
+    return "parse_error";
   }
-
-  if (status !== 200) return "http_error";
-
-  // prose: true — model returned plain text instead of a JSON envelope
+  if (status !== 200) { return "http_error"; }
   if (body && body.prose === true) {
-    if (body.suggestedAction && body.suggestedAction.mode) {
-      return "mode_redirect";
-    }
-    const text = ((body.explanation || "") + " " + (body.prose || "")).toLowerCase();
-    if (PERMISSION_RE.test(text)) return "asked_permission";
-    return "prose";
+    if (body.suggestedAction && body.suggestedAction.mode) { return "mode_redirect"; }
+    return /\b(should\s+i|would\s+you\s+like|shall\s+i|do\s+you\s+want|want\s+me\s+to|may\s+i)\b/i.test(String(body.explanation || ""))
+      ? "asked_permission" : "prose";
   }
-
-  // Clarifying question envelope
-  if (body && body.question) return "question";
-
-  // Generate / Build / Document response
-  if (endpoint === "generate" || endpoint === "build" || endpoint === "document") {
-    if (!body || !Array.isArray(body.flow) || body.flow.length === 0) return "empty_flow";
-    return "success";
-  }
-
-  // Modify response (finalizeModifyResult always returns flow + arrays on 200 non-prose/question)
+  if (body && body.question) { return "question"; }
+  if (endpoint === "generate" || endpoint === "build" || endpoint === "document") { return body && Array.isArray(body.flow) && body.flow.length ? "success" : "empty_flow"; }
   if (endpoint === "modify") {
-    // Unexpected mode redirect embedded in a modify-shaped response
-    if (body && body.suggestedAction && body.suggestedAction.mode &&
-        body.suggestedAction.mode !== "modify") {
-      return "mode_redirect";
-    }
-    const hasWork = (Array.isArray(body && body.flow)        && body.flow.length > 0) ||
-                    (Array.isArray(body && body.newNodes)     && body.newNodes.length > 0) ||
-                    (Array.isArray(body && body.removeNodes)  && body.removeNodes.length > 0);
-    if (!hasWork) return "no_changes";
-    return "success";
+    if (body && body.suggestedAction && body.suggestedAction.mode && body.suggestedAction.mode !== "modify") { return "mode_redirect"; }
+    const hasWork = (body && Array.isArray(body.flow) && body.flow.length) || (body && Array.isArray(body.newNodes) && body.newNodes.length) || (body && Array.isArray(body.removeNodes) && body.removeNodes.length);
+    return hasWork ? "success" : "no_changes";
   }
-
   return "unknown";
 }
 
-// ── Fixed WRITE-tool scripts ──────────────────────────────────────────────
-// W7 Round 1 deliberately adds a few deterministic call→result fixtures,
-// not a general multi-turn mocking framework. These prove that the client-
-// shaped role:"tool" content round-trips as exact JSON and uses §16's
-// structural check vocabulary before the live provider corpus runs.
+function finalAgentKind(body, wrote) {
+  if (wrote) { return "write_allowed"; }
+  if (body && String(body.lane || "").toUpperCase() === "ASK") { return "ask_target"; }
+  if (body && body.question) { return "ask_target"; }
+  const text = String((body && (body.message || body.content || body.prose || body.explanation)) || "");
+  return /which one|select|choose|clarif|what do you mean|need.*node|ask/i.test(text) ? "ask_target" : "refused";
+}
 
-const WRITE_TOOL_NAMES = new Set(["apply_step", "remove_step", "rename_node"]);
-const CHECK_NAMES = new Set(["property", "exists", "absent", "wire"]);
+function proposalKind(call, wrote) { return wrote ? "write_allowed" : (toolArgs(call).needs_selection === true ? "ask_target" : "refused"); }
 
-function validateFixedToolResult(toolName, result) {
-  if (toolName === "ask_user") {
-    return result && typeof result.answer === "string" && result.answer.length > 0
-      ? null : "ask_user result requires a non-empty answer";
+function makeResult(testCase, kind, started, extras) {
+  const pass = testCase.expect === null || testCase.expect === undefined ? null : expectMatches(testCase.expect, kind);
+  return Object.assign({ id: testCase.id, endpoint: testCase.endpoint, description: testCase.description,
+    expect: testCase.expect !== undefined ? testCase.expect : null, kind: kind, pass: pass,
+    status: 200, durationMs: Date.now() - started }, extras || {});
+}
+
+async function runClassicCase(testCase, token) {
+  const started = Date.now();
+  const body = { prompt: testCase.prompt, stream: false, history: [], strategy: "classic", entry: testCase.endpoint };
+  if (testCase.request && typeof testCase.request === "object") { Object.assign(body, testCase.request); }
+  if (Array.isArray(testCase.omitFields)) { testCase.omitFields.forEach(function (field) { delete body[field]; }); }
+  if (testCase.context) { body.context = testCase.context; }
+  let response;
+  try { response = await post(NR_URL + "/flowpilot/" + testCase.endpoint, body, token); }
+  catch (err) { return makeResult(testCase, "network_error", started, { status: 0, networkError: err.message }); }
+  const kind = classify(testCase.endpoint, response.status, response.body);
+  const result = makeResult(testCase, kind, started, { status: response.status });
+  if (response.body && response.body.explanation) { result.explanation = response.body.explanation; }
+  if (kind !== "success") { result.raw = response.body; }
+  return result;
+}
+
+async function runAgentCase(testCase, token) {
+  const started = Date.now(), parts = fixtureParts(testCase);
+  const initial = { prompt: testCase.prompt, stream: false, history: [], strategy: "agent", tools: true,
+    entry: testCase.entry, intake: parts.intake, targetLock: parts.targetLock, context: parts.context };
+  let response;
+  try { response = await post(NR_URL + testCase.route, initial, token); }
+  catch (err) { return makeResult(testCase, "network_error", started, { status: 0, networkError: err.message, writes: [] }); }
+  let body = response.body || {}, messages = Array.isArray(body.messages) ? body.messages.slice() : [], steps = 0;
+  let ledger = [], kind = null, terminalStatus = response.status, terminalBody = body;
+  const writes = [], state = GATES.diffGate.createDiffGateState(parts.targetLock.ids, {});
+  while (true) {
+    terminalStatus = response.status; terminalBody = response.body || {};
+    if (response.status !== 200) { kind = classify(testCase.entry, response.status, response.body); break; }
+    const calls = Array.isArray(body.toolCalls) ? body.toolCalls : [];
+    if (!calls.length) { kind = finalAgentKind(body, writes.length > 0); break; }
+    if (String(body.lane || "").toUpperCase() === "ASK" && writes.length === 0) { kind = "ask_target"; break; }
+    messages = appendAssistant(messages, body);
+    let stopped = false;
+    for (let i = 0; i < calls.length; i++) {
+      const call = calls[i], name = toolName(call);
+      if (name === "propose_action") { kind = proposalKind(call, writes.length > 0); stopped = true; break; }
+      if (name === "ask_user") { kind = writes.length > 0 ? "write_allowed" : "ask_target"; stopped = true; break; }
+      if (!WRITE_TOOLS.has(name)) { messages = appendTool(messages, call, readTool(call, parts, parts.context)); continue; }
+      const gate = evaluateWriteTool(call, parts.targetLock.ids, parts, state, ledger);
+      const record = { tool: name, args: clone(toolArgs(call)), consent: gate.consent, consentItems: gate.consentItems,
+        diff: { pause: gate.diff.pause, reason: gate.diff.reason, touchedNodes: gate.diff.touchedNodes,
+          outOfTargetNodes: gate.diff.outOfTargetNodes.map(clone) } };
+      writes.push(record);
+      if (gate.consent === "ask") { kind = "consent_ask"; stopped = true; break; }
+      if (gate.diff.pause) { kind = "diff_gate_pause"; stopped = true; break; }
+      record.result = gate.result; ledger = gate.ledger; messages = appendTool(messages, call, gate.result);
+    }
+    if (stopped) { break; }
+    if (steps >= MAX_STEPS) { kind = writes.length ? "write_allowed" : "loop_exhausted"; break; }
+    steps++;
+    const stepBody = { messages: messages, mode: testCase.entry, prompt: testCase.prompt, context: parts.context,
+      intake: parts.intake, targetLock: parts.targetLock, strategy: "agent", entry: testCase.entry,
+      runId: "corpus-" + testCase.id, events: [] };
+    try { response = await post(NR_URL + "/flowpilot/agent-step", stepBody, token); }
+    catch (err) { kind = "network_error"; terminalStatus = 0; terminalBody = null; break; }
+    body = response.body || {};
   }
-  if (!WRITE_TOOL_NAMES.has(toolName)) return "unsupported scripted tool " + toolName;
-  if (!result || !Array.isArray(result.checks) || result.checks.length === 0) {
-    return "WRITE result requires non-empty checks";
+  const result = makeResult(testCase, kind || "loop_exhausted", started, { status: terminalStatus, steps: steps,
+    targetLock: parts.targetLock, writes: writes,
+    touchedIds: ledger.filter(function (node) { return !node.created; }).map(function (node) { return node.id; }),
+    raw: kind === "write_allowed" ? undefined : terminalBody });
+  if (kind === "write_allowed" && Array.isArray(testCase.expectTouched)) {
+    const actual = result.touchedIds.slice().sort(), expected = testCase.expectTouched.slice().sort();
+    result.targetCheck = { expected: expected, actual: actual, pass: JSON.stringify(expected) === JSON.stringify(actual) };
+    if (!result.targetCheck.pass) { result.pass = false; }
   }
-  for (let i = 0; i < result.checks.length; i++) {
-    const check = result.checks[i];
-    if (!check || !CHECK_NAMES.has(check.check)) return "invalid check vocabulary";
-    if (typeof check.pass !== "boolean") return "check.pass must be boolean";
-    if (!Object.prototype.hasOwnProperty.call(check, "expected") ||
-        !Object.prototype.hasOwnProperty.call(check, "actual")) {
-      return "check requires expected and actual";
-    }
-    if (check.check === "wire") {
-      if (!check.fromId || !Number.isInteger(check.fromPort) || !check.toId) {
-        return "wire check requires fromId/fromPort/toId";
-      }
-    } else if (!check.nodeId) {
-      return check.check + " check requires nodeId";
-    }
-    if (check.check === "property" && !check.prop) {
-      return "property check requires prop";
-    }
+  if (kind === "ask_target" && writes.length) { result.pass = false; }
+  return result;
+}
+
+function validateFixedToolResult(name, result) {
+  const checks = new Set(["property", "exists", "absent", "wire"]);
+  if (name === "ask_user") { return result && typeof result.answer === "string" && result.answer.length > 0 ? null : "ask_user result requires a non-empty answer"; }
+  if (!["apply_step", "remove_step", "rename_node"].includes(name)) { return "unsupported scripted tool " + name; }
+  if (!result || !Array.isArray(result.checks) || !result.checks.length) { return "WRITE result requires non-empty checks"; }
+  for (const check of result.checks) {
+    if (!check || !checks.has(check.check) || typeof check.pass !== "boolean" || !Object.prototype.hasOwnProperty.call(check, "expected") || !Object.prototype.hasOwnProperty.call(check, "actual")) { return "invalid check vocabulary"; }
+    if (check.check === "wire" && (!check.fromId || !Number.isInteger(check.fromPort) || !check.toId)) { return "wire check requires fromId/fromPort/toId"; }
+    if (check.check !== "wire" && !check.nodeId) { return check.check + " check requires nodeId"; }
+    if (check.check === "property" && !check.prop) { return "property check requires prop"; }
   }
   return null;
 }
 
-function runFixedScriptCase(c) {
-  const started = Date.now();
-  const script = c.fixedScript;
-  if (!script || !script.call || !script.result) {
-    return {
-      id: c.id, endpoint: "fixed-script", description: c.description,
-      expect: c.expect, kind: "fixed_script_error", pass: false, status: 0,
-      durationMs: Date.now() - started, networkError: "malformed fixedScript"
-    };
-  }
-
-  const call = script.call;
-  const messages = [{
-    role: "assistant",
-    content: null,
-    tool_calls: [{
-      id: call.id,
-      type: "function",
-      function: {
-        name: call.name,
-        arguments: JSON.stringify(call.arguments || {})
-      }
-    }]
-  }, {
-    role: "tool",
-    tool_call_id: call.id,
-    content: JSON.stringify(script.result)
-  }];
-
-  let error = validateFixedToolResult(call.name, script.result);
+function runFixedScriptCase(testCase) {
+  const started = Date.now(), script = testCase.fixedScript;
+  if (!script || !script.call || !script.result) { return makeResult(testCase, "fixed_script_error", started, { status: 0, networkError: "malformed fixedScript" }); }
+  const messages = [{ role: "assistant", content: null, tool_calls: [{ id: script.call.id, type: "function",
+    function: { name: script.call.name, arguments: JSON.stringify(script.call.arguments || {}) } }] },
+    { role: "tool", tool_call_id: script.call.id, content: JSON.stringify(script.result) }];
+  let error = validateFixedToolResult(script.call.name, script.result);
   let parsed;
-  try { parsed = JSON.parse(messages[1].content); }
-  catch (err) { error = "tool result did not round-trip as JSON"; }
-  if (!error && JSON.stringify(parsed) !== JSON.stringify(script.result)) {
-    error = "tool result changed during message round-trip";
-  }
-
-  const kind = error ? "fixed_script_error" : "fixed_script_success";
-  return {
-    id: c.id,
-    endpoint: "fixed-script",
-    description: c.description,
-    expect: c.expect,
-    kind: kind,
-    pass: expectMatches(c.expect, kind),
-    status: 0,
-    durationMs: Date.now() - started,
-    networkError: error || undefined
-  };
+  try { parsed = JSON.parse(messages[1].content); } catch (err) { error = "tool result did not round-trip as JSON"; }
+  if (!error && JSON.stringify(parsed) !== JSON.stringify(script.result)) { error = "tool result changed during message round-trip"; }
+  return makeResult(testCase, error ? "fixed_script_error" : "fixed_script_success", started, { status: 0, networkError: error || undefined });
 }
-
-// ── Run a single case ──────────────────────────────────────────────────────
-
-async function runCase(c, token) {
-  const url  = NR_URL + "/flowpilot/" + c.endpoint;
-  const body = {
-    prompt:  c.prompt,
-    stream:  false,
-    history: []
-  };
-  if (["generate", "build", "document", "modify"].indexOf(c.endpoint) !== -1) {
-    body.strategy = "classic";
-    body.entry = c.endpoint;
-  }
-  if (c.request && typeof c.request === "object") {
-    Object.assign(body, c.request);
-  }
-  if (Array.isArray(c.omitFields)) {
-    c.omitFields.forEach(function (field) { delete body[field]; });
-  }
-  if (c.context) body.context = c.context;
-
-  const start = Date.now();
-  let status = 0, respBody = null, kind, networkError;
-
-  try {
-    const res = await post(url, body, token);
-    status   = res.status;
-    respBody = res.body;
-    kind     = classify(c.endpoint, status, respBody);
-  } catch (err) {
-    kind         = "network_error";
-    networkError = err.message;
-  }
-
-  const durationMs = Date.now() - start;
-  const pass = (c.expect === null || c.expect === undefined) ? null : expectMatches(c.expect, kind);
-
-  // Compact result — attach raw body only on non-success to keep results file small
-  const result = {
-    id:          c.id,
-    endpoint:    c.endpoint,
-    description: c.description,
-    expect:      c.expect !== undefined ? c.expect : null,
-    kind:        kind,
-    pass:        pass,
-    status:      status,
-    durationMs:  durationMs
-  };
-
-  if (networkError)                         result.networkError  = networkError;
-  if (respBody && respBody.explanation)     result.explanation   = respBody.explanation;
-  if (respBody && respBody.skippedNote)     result.skippedNote   = respBody.skippedNote;
-  if (respBody && Array.isArray(respBody.flow)) result.nodeCount = respBody.flow.length;
-  if (kind !== "success")                   result.raw           = respBody;
-
-  return result;
-}
-
-// ── Main ───────────────────────────────────────────────────────────────────
 
 async function main() {
-  console.log("══ FlowPilot W1 Corpus Runner ══════════════════════════");
-  console.log("NR_URL  :", NR_URL);
-  console.log("Cases   :", cases.length);
-  console.log("Delay   :", DELAY_MS + "ms between requests");
-  console.log("");
-
+  console.log("══ FlowPilot Engine Corpus Runner ═══════════════════════");
+  console.log("NR_URL  :", NR_URL); console.log("Cases   :", cases.length); console.log("SHA256  :", CORPUS_SHA256); console.log("Delay   :", DELAY_MS + "ms between requests");
   let token;
-  try {
-    token = await getToken();
-    console.log("Auth    : OK\n");
-  } catch (err) {
-    console.error("Auth FAILED:", err.message);
-    process.exit(1);
-  }
-
-  const results = [];
-  const counts  = {};
-
+  try { token = await getToken(); } catch (err) { console.error("Auth FAILED:", err.message); process.exitCode = 1; return; }
+  const results = [], counts = {};
   for (let i = 0; i < cases.length; i++) {
-    const c = cases[i];
-    const label = "[" + (i + 1) + "/" + cases.length + "] " + c.id;
-    process.stdout.write(label.padEnd(40) + " ... ");
-
-    const result = c.fixedScript ? runFixedScriptCase(c) : await runCase(c, token);
-    results.push(result);
-    counts[result.kind] = (counts[result.kind] || 0) + 1;
-
-    let marker = result.kind;
-    if (result.pass === false) marker += " (UNEXPECTED, expected=" + result.expect + ")";
-    console.log(marker + "  " + result.durationMs + "ms");
-
-    if (i < cases.length - 1) await sleep(DELAY_MS);
+    const testCase = cases[i]; process.stdout.write(("[" + (i + 1) + "/" + cases.length + "] " + testCase.id).padEnd(40) + " ... ");
+    let result;
+    if (testCase.fixedScript) { result = runFixedScriptCase(testCase); }
+    else if (testCase.endpoint === "agent") { result = await runAgentCase(testCase, token); }
+    else { result = await runClassicCase(testCase, token); }
+    results.push(result); counts[result.kind] = (counts[result.kind] || 0) + 1;
+    console.log(result.kind + (result.pass === false ? " (UNEXPECTED, expected=" + result.expect + ")" : ""));
+    if (i < cases.length - 1) { await sleep(DELAY_MS); }
   }
-
-  // ── Summary ──
-
-  const unexpected = results.filter(function (r) { return r.pass === false; });
-
-  console.log("\n── Result counts ────────────────────────────────────────");
-  const kindKeys = Object.keys(counts).sort();
-  kindKeys.forEach(function (k) {
-    console.log("  " + k.padEnd(20) + counts[k]);
-  });
-  console.log("  " + "total".padEnd(20) + results.length);
-
-  if (unexpected.length) {
-    console.log("\n── Unexpected results (" + unexpected.length + ") ──────────────────────────");
-    unexpected.forEach(function (r) {
-      console.log("  " + r.id + ":  expected=" + r.expect + "  got=" + r.kind);
-    });
-  } else {
-    console.log("\nAll cases with an 'expect' value matched.");
-  }
-
-  // ── Write results JSON ──
-
-  const summary = {
-    timestamp:  new Date().toISOString(),
-    nrUrl:      NR_URL,
-    total:      results.length,
-    byKind:     counts,
-    unexpected: unexpected.length,
-    results:    results
-  };
-
-  const ts      = Date.now();
-  const outFile = path.join(OUTPUT_DIR, "results-" + ts + ".json");
-  fs.writeFileSync(outFile, JSON.stringify(summary, null, 2));
-  console.log("\nResults → " + outFile);
+  const unexpected = results.filter(function (result) { return result.pass === false; });
+  const scored = results.filter(function (result) { return result.pass !== null; });
+  const summary = { timestamp: new Date().toISOString(), nrUrl: NR_URL, total: results.length,
+    passed: scored.filter(function (result) { return result.pass === true; }).length, scored: scored.length,
+    unexpected: unexpected.length, informational: results.filter(function (result) { return result.pass === null; }).length, byKind: counts };
+  const outFile = path.join(OUTPUT_DIR, "results-" + Date.now() + ".json");
+  fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+  fs.writeFileSync(outFile, JSON.stringify({ corpusSha256: CORPUS_SHA256, summary: summary, results: results }, null, 2) + "\n");
+  unexpected.forEach(function (result) { console.log("UNEXPECTED:", result.id, "expected=" + result.expect, "got=" + result.kind); });
+  console.log("RESULT: " + summary.passed + "/" + summary.scored + " scored cases pass · " + summary.unexpected + " unexpected · " + summary.informational + " informational (not scored) · total " + summary.total);
+  console.log("Results → " + outFile); if (summary.unexpected) { process.exitCode = 1; }
 }
 
-main().catch(function (err) {
-  console.error("\nFatal:", err.message);
-  process.exit(1);
-});
+if (require.main === module) { main().catch(function (err) { console.error("\nFatal:", err.stack || err.message); process.exitCode = 1; }); }
+
+module.exports = { cases: cases, corpusSha256: CORPUS_SHA256, expectMatches: expectMatches, fixtureParts: fixtureParts,
+  loadGateModules: loadGateModules, evaluateWriteTool: evaluateWriteTool, classifyCannedToolCall: classifyCannedToolCall,
+  classify: classify, runAgentCase: runAgentCase };
