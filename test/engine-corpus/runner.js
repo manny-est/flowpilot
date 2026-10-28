@@ -401,7 +401,8 @@ async function runAgentCase(testCase, token) {
   }
   const result = makeResult(testCase, kind || "loop_exhausted", started, { status: terminalStatus, steps: steps,
     targetLock: parts.targetLock, writes: writes,
-    touchedIds: ledger.filter(function (node) { return !node.created; }).map(function (node) { return node.id; }),
+    touchedIds: ledger.filter(function (node) { return !node.created; }).map(function (node) { return node.id; })
+      .filter(function (id, index, list) { return list.indexOf(id) === index; }),
     raw: kind === "write_allowed" ? undefined : terminalBody });
   if (kind === "write_allowed" && Array.isArray(testCase.expectTouched)) {
     const actual = result.touchedIds.slice().sort(), expected = testCase.expectTouched.slice().sort();
