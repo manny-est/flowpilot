@@ -66,15 +66,13 @@ async function assertToolProviderMatrix() {
       assert.strictEqual(request.body.tool_choice, "required", "agent action requires a tool call");
     });
 
-    // An old client request cannot restore the retired classic choice for a
-    // tool provider: the server normalizes it to the capability-selected
-    // agent engine.
-    const oldClient = await call(runtime, "POST", "/flowpilot/generate",
+    // An explicit "classic" is honored: it's the client's retry-without-
+    // tools fallback when a tool request fails (stale capability probe).
+    const fallback = await call(runtime, "POST", "/flowpilot/generate",
       generationBody("generate", "classic"));
-    assert.strictEqual(oldClient.status, 200, "old classic request still accepted for compatibility");
-    const oldRequest = fake.requests.filter(function (request) { return request.url.indexOf("/models") === -1; })[4];
-    assert.strictEqual(oldRequest.body.tool_choice, "required", "tool provider ignores retired classic choice");
-    assert.ok(toolNames(oldRequest).indexOf("apply_step") !== -1, "old classic request still receives WRITE tools");
+    assert.strictEqual(fallback.status, 200, "classic fallback request accepted");
+    const fallbackRequest = fake.requests.filter(function (request) { return request.url.indexOf("/models") === -1; })[4];
+    assert.strictEqual(fallbackRequest.body.tools, undefined, "classic fallback sends no tools");
   } finally {
     fake.close();
   }

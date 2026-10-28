@@ -2712,11 +2712,13 @@ function flowPilotRuntime(RED) {
       return null;
     }
     return {
-      // Capability, not the retired settings choices, selects the engine.
-      // A tool provider is always agent-strategy; a no-tools provider is
-      // always classic-strategy. An explicit agent request on a no-tools
-      // provider was rejected above so the corpus can prove that guard.
-      strategy: toolProvider ? "agent" : "classic",
+      // Capability, not the retired settings choices, selects the engine:
+      // a tool provider defaults to the agent strategy, a no-tools provider
+      // is always classic (an explicit agent request on one was rejected
+      // above). An explicit "classic" is honored: it's the client's
+      // retry-without-tools fallback when a tool request fails (e.g. the
+      // model was swapped since the last capability probe).
+      strategy: toolProvider && body.strategy !== "classic" ? "agent" : "classic",
       entry: body.entry,
       conversationId: body.conversationId || null,
       runId: body.runId || null,
