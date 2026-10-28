@@ -78,4 +78,21 @@ assert.strictEqual(needs("write-gated", "apply_step", { changes: [{ id: "http1",
 assert.strictEqual(needs("write-gated", "apply_step", { newWires: [{ from: "fn1", to: "ph-dbg" }] }, { idMap: { "ph-dbg": "dbg1" } }), false,
   "a node created earlier in the run is classified by its real type via the run id map");
 assert.strictEqual(needs("write-gated", "deploy_flows", { summary: "x" }), true, "deploy always asks");
+
+// SF-6 plan card (live, Spark): Approve listed "Add a http request node", but
+// wiring it in and setting its URL still asked. An approved create covers
+// wiring/configuring the node the run created; nothing else.
+const approvedHttp = { approvedOperations: [{ operation: "create", type: "http request", nodeId: null }] };
+assert.strictEqual(needs("write-gated", "apply_step", { newNodes: [{ id: "h", type: "http request" }],
+  newWires: [{ from: "fn1", to: "h" }] }, approvedHttp), false, "approved create + its wire doesn't ask");
+assert.strictEqual(needs("write-gated", "apply_step", { changes: [{ id: "ph-h", set: { url: "u" } }] },
+  Object.assign({ idMap: { "ph-h": "http2" } }, approvedHttp)), true,
+  "an unknown live type still asks even if run-created");
+LIVE.http2 = { type: "http request" };
+assert.strictEqual(needs("write-gated", "apply_step", { changes: [{ id: "ph-h", set: { url: "u" } }] },
+  Object.assign({ idMap: { "ph-h": "http2" } }, approvedHttp)), false, "configuring the run's own approved node doesn't ask");
+assert.strictEqual(needs("write-gated", "apply_step", { changes: [{ id: "http1", set: { url: "u" } }] }, approvedHttp), true,
+  "an existing http request node the run didn't create still asks");
+assert.strictEqual(needs("write-gated", "apply_step", { newNodes: [{ id: "m", type: "mqtt out" }],
+  newWires: [{ from: "fn1", to: "m" }] }, approvedHttp), true, "a type the plan didn't list still asks");
 console.log("consent-classifier tests passed (" + cells + " table cells)");
