@@ -100,4 +100,22 @@ assert.ok(init.indexOf("Fill saved prompt") !== -1, "slash menu labels saved pro
 assert.ok(init.indexOf("applyIntentText(command.text)") !== -1, "saved prompt selection fills instead of sending");
 assert.strictEqual(main.indexOf("loopHoldStep"), -1, "main client no longer reads loopHoldStep");
 assert.strictEqual(main.indexOf("showHelperButtons"), -1, "main client no longer reads showHelperButtons");
+// A read never fails because the migrated copy can't be written: the user's
+// providers must still load (a failed write used to return bare defaults).
+{
+  const ro = makeProfile({
+    providers: [{ id: "keep-me", providerName: "LocalAI", baseUrl: "http://localhost:8080" }],
+    activeProviderId: "keep-me",
+    buildEngine: "classic"
+  });
+  const realRename = fs.renameSync;
+  fs.renameSync = function () { throw new Error("EROFS: read-only file system"); };
+  let loaded;
+  try { loaded = ro.storage.getSettings(); } finally { fs.renameSync = realRename; }
+  assert.strictEqual(loaded._error, undefined, "a failed migration write doesn't turn the read into an error");
+  assert.strictEqual(loaded.providers[0].id, "keep-me", "the user's providers still load");
+  assert.strictEqual(loaded.buildEngine, undefined, "the migration still applies in memory");
+  assert.ok(/buildEngine/.test(fs.readFileSync(ro.file, "utf8")), "the file is untouched when the write fails");
+}
+
 console.log("SF-10 client settings assertions passed");
