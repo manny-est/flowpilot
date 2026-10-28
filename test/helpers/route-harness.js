@@ -51,6 +51,12 @@ function startFakeProvider(options) {
   const opts = options || {};
   const requests = [];
   const server = http.createServer(function (req, res) {
+    if (opts.delayMs) {
+      const end = res.end.bind(res);
+      res.end = function (chunk) {
+        setTimeout(function () { end(chunk); }, opts.delayMs);
+      };
+    }
     let raw = "";
     req.on("data", function (c) { raw += c; });
     req.on("end", function () {
@@ -58,6 +64,11 @@ function startFakeProvider(options) {
       try { body = raw ? JSON.parse(raw) : null; } catch (e) { body = raw; }
       requests.push({ method: req.method, url: req.url, body: body });
       res.setHeader("Content-Type", "application/json");
+      if (opts.status) {
+        res.statusCode = opts.status;
+        res.end(opts.responseBody || JSON.stringify({ error: "fake provider failure" }));
+        return;
+      }
       if (opts.mode === "not-provider") {
         res.end(JSON.stringify({ hello: "this is not an AI provider" }));
         return;
@@ -126,7 +137,8 @@ function loadRuntime(settings) {
 
 // Invokes a captured route handler with a fake req/res. Resolves with
 // { status, body } (JSON body), or { status, sse } for streamed responses.
-function call(runtime, method, route, body) {
+function call(runtime, method, route, body, options) {
+  const callOptions = options || {};
   const handler = runtime.routes[method + " " + route];
   if (!handler) { return Promise.reject(new Error("no route " + method + " " + route)); }
   return new Promise(function (resolve, reject) {
@@ -139,14 +151,28 @@ function call(runtime, method, route, body) {
       send: function (b) { resolve({ status: status, body: b }); return res; },
       type: function () { return res; },
       set: function () { return res; },
-      setHeader: function () {},
+      // Like Node: headers can't change once the body has started (SF-9's
+      // late-failure path crashed Node-RED on exactly this).
+      setHeader: function () {
+        if (res.headersSent) { throw new Error("Cannot set headers after they are sent to the client"); }
+      },
       writeHead: function (s) { status = s; res.headersSent = true; },
       flushHeaders: function () { res.headersSent = true; },
       write: function (chunk) { res.headersSent = true; sse += chunk; return true; },
       end: function (chunk) { if (chunk) { sse += chunk; } resolve({ status: status, sse: sse }); },
       on: function () {}
     };
-    const req = { body: body, params: {}, query: {}, on: function () {}, headers: {} };
+    const requestHandlers = {};
+    const req = {
+      body: body, params: {}, query: {}, headers: {},
+      on: function (event, fn) { (requestHandlers[event] = requestHandlers[event] || []).push(fn); }
+    };
+    if (callOptions.disconnectAfterMs !== undefined) {
+      setTimeout(function () {
+        (requestHandlers.close || []).forEach(function (fn) { fn(); });
+        if (callOptions.resolveOnDisconnect) { resolve({ disconnected: true }); }
+      }, callOptions.disconnectAfterMs);
+    }
     try { Promise.resolve(handler(req, res)).catch(reject); } catch (e) { reject(e); }
   });
 }
