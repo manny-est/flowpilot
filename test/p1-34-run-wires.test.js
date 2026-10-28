@@ -179,7 +179,10 @@ const pendingResult = callApply(pendingApi, {
   summary: "Forward reference",
   newNodes: [{ id: "n1", type: "inject", wires: [["n2"]], outputs: 1 }]
 }, pendingMap, pendingHistory, pendingState);
-assert.strictEqual(pendingResult.allPass, false, "an unresolved wire is not reported as a successful step");
+assert.notStrictEqual(pendingResult.allPass, false,
+  "a forward wire waiting for its node is not a failed step (a failed step invites the model to redo it)");
+assert.ok(/Waiting to connect: n1 → n2/.test(pendingResult.note || "") && /don't recreate/.test(pendingResult.note),
+  "the tool result tells the model the wire is waiting and not to redo the step");
 assert.deepStrictEqual(Array.from(pendingResult.wires.pending, function (wire) {
   return [wire.from, wire.to];
 }), [["n1", "n2"]], "the tool result reports the unresolved wire as pending");
