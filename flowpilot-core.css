@@ -83,6 +83,11 @@
     line-height: 1.45;
 }
 
+/* Long paths and hints wrap at any width (300px: the settings.json path and
+   a hint pushed past the panel edge). */
+.fp-warning code, .fp-consent-hint, .fp-consent-hint code { overflow-wrap: anywhere; }
+.fp-warning code, .fp-consent-hint code { white-space: normal; word-break: break-all; }
+
 .fp-messages {
     flex: 1;
     min-height: 0;
@@ -1075,14 +1080,13 @@
     margin-top: 8px;
 }
 
-.fp-custom-intents {
+.fp-saved-prompts {
     margin: 8px 0;
 }
 
-.fp-custom-intent-row {
+.fp-saved-prompt-row {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
+    flex-wrap: wrap;
     gap: 8px;
     padding: 6px 8px;
     margin-bottom: 4px;
@@ -1090,11 +1094,14 @@
     border-radius: 5px;
 }
 
-.fp-custom-intent-label {
-    font-weight: 600;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
+.fp-saved-prompt-row input,
+.fp-saved-prompt-row textarea {
+    flex: 1 1 100%;
+    min-width: 0;
+}
+
+.fp-saved-prompt-row textarea {
+    min-height: 64px;
 }
 
 /* Context indicators and the provider/Send footer merged
@@ -1437,6 +1444,7 @@
 
 .fp-settings-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 8px;
 }
 
@@ -1831,6 +1839,15 @@
    query measured the browser window, so these rules never applied to a
    narrow sidebar on a normal screen (found in the C4 live check). */
 @container fp-root (max-width: 220px) {
+    /* Settings at 180px: the nested form/group/warning padding added up to
+       ~136px of chrome in a 174px panel (one word per line, inputs cut). */
+    .fp-form { padding: 8px 6px; }
+    .fp-settings-group, .fp-provider-advanced { padding: 0 6px 8px 6px; }
+    .fp-warning { margin: 8px 0; padding: 6px 8px; overflow-wrap: anywhere; }
+    .fp-warning code, .fp-form code { white-space: normal; overflow-wrap: anywhere; word-break: break-all; }
+    .fp-form input, .fp-form select, .fp-form textarea { width: 100%; max-width: 100%; min-width: 0; }
+    .fp-settings-actions { flex-wrap: wrap; gap: 4px; }
+    .fp-settings-actions > * { max-width: 100%; white-space: normal; }
     #fp-root * { min-width: 0; box-sizing: border-box; }
     .fp-header, .fp-compose { padding: 8px; }
     .fp-messages { padding: 0 6px 8px 6px; overflow-x: hidden; }
@@ -1856,4 +1873,7 @@
     .fp-empty-examples { display: block; }
     .fp-empty-example { display: block; width: 100%; margin-bottom: 4px; text-align: left; }
     .fp-status-strip { flex-wrap: wrap; gap: 3px; }
+    .fp-saved-prompt-row { display: block; padding: 5px; }
+    .fp-saved-prompt-row input, .fp-saved-prompt-row textarea,
+    .fp-saved-prompt-row button { width: 100%; margin-top: 4px; }
 }
