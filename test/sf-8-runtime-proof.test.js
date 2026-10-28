@@ -68,4 +68,15 @@ assert.strictEqual(cards.buildResultCardModel({
   verifyResults: [{ evidenceCount: 1, evidence: [{ node: "FlowPilot test", value: "hello" }] }]
 }).run.label, 'Run: proven — FlowPilot test: "hello"');
 
+// Node-RED exports only declared defaults, so after a deploy or reload a tap
+// has no fpTap property. The saved statusVal tag must still identify it, or
+// cleanup-on-load finds nothing.
+const reloadedTap = { id: "t9", type: "debug", name: "FlowPilot test", statusVal: "fp-tap:run-42", tostatus: false };
+assert.strictEqual(proof.isFlowPilotTap(reloadedTap), true, "a reloaded tap is still recognised");
+assert.strictEqual(proof.runtimeTapRunId(reloadedTap), "run-42");
+assert.deepStrictEqual(proof.runtimeTapIdSet([reloadedTap], "run-42"), { t9: true });
+assert.strictEqual(proof.isFlowPilotTap({ id: "u", type: "debug", name: "FlowPilot test", statusVal: "payload" }), false,
+  "a user's debug node, even one with the same name, is not a tap");
+assert.strictEqual(proof.isFlowPilotTap({ id: "f", type: "function", statusVal: "fp-tap:x" }), false, "only debug nodes are taps");
+
 console.log("SF-8 runtime-proof tests passed");
