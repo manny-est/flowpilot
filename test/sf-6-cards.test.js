@@ -37,7 +37,7 @@ assert.ok(fn.changed[0].lines.some((line) => line.kind === "remove" && /1/.test(
 assert.ok(fn.changed[0].lines.some((line) => line.kind === "add" && /2/.test(line.text)), "function addition is a line diff");
 assert.deepStrictEqual(model.validation.map((check) => check.status), ["pass", "fail", "warning"]);
 assert.strictEqual(model.run.state, "proven");
-assert.strictEqual(model.run.label, "Run: proven — Output: hello world");
+assert.strictEqual(model.run.label, 'Run: proven — Output: "hello world"');
 assert.strictEqual(model.tokenCount, 13, "token count sums all usage records");
 assert.deepStrictEqual(fn.changed[0].lines.map((line) => line.kind), ["remove", "add", "same"],
   "a replaced line shows - before +, like a unified diff");

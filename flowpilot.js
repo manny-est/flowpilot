@@ -1049,7 +1049,7 @@ function flowPilotRuntime(RED) {
 
   // Converged Build (R11-6, ADR-010): the two runtime steps Build adds to the
   // engine. Both execute client-side like every WRITE tool. deploy_flows is
-  // consent-gated as the "deploy" operation (consent.js: always asks);
+  // consent-gated only when the editor has user-owned undeployed edits;
   // verify_runtime only observes, apart from firing the trigger node, which
   // consent.js classifies as "trigger".
   const BUILD_RUNTIME_TOOLS = [
@@ -1059,7 +1059,8 @@ function flowPilotRuntime(RED) {
       function: {
         name: "deploy_flows",
         description: "Deploy the current editor flows to the Node-RED runtime so the build can be tested. " +
-          "The user approves every deploy. The result says whether the deploy happened and how many " +
+          "Deploy the current editor flows. FlowPilot asks only when this conversation has user-owned " +
+          "undeployed edits; the result says whether the deploy happened and how many " +
           "deploy attempts remain for this build.",
         parameters: {
           type: "object",
@@ -1077,13 +1078,14 @@ function flowPilotRuntime(RED) {
       function: {
         name: "verify_runtime",
         description: "Check the deployed flow's real behaviour: optionally fire a trigger node (an inject), " +
-          "then return the debug messages and node statuses observed since the last deploy. Use it after " +
-          "every deploy_flows, and judge success only from what it returns.",
+          "then return only this run's FlowPilot-tap messages and statuses from nodes this run touched. " +
+          "Use it after every deploy_flows, and judge success only from what it returns.",
         parameters: {
           type: "object",
           properties: {
             summary: { type: "string", description: "Short description of this verification step." },
             trigger_node_id: { type: "string", description: "Id of the node to fire first (normally the inject node), as named in apply_step." },
+            observe: { type: "array", items: { type: "string" }, description: "Node ids whose output should be observed. FlowPilot adds temporary, tagged test taps in parallel; omit to observe run-created/changed terminal nodes." },
             expect: { type: "string", description: "What the debug output should show if the goal is met." },
             wait_ms: { type: "number", description: "How long to collect output after triggering, 1000-15000 ms. Default 4000." }
           },
