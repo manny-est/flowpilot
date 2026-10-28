@@ -1075,14 +1075,13 @@
     margin-top: 8px;
 }
 
-.fp-custom-intents {
+.fp-saved-prompts {
     margin: 8px 0;
 }
 
-.fp-custom-intent-row {
+.fp-saved-prompt-row {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
+    flex-wrap: wrap;
     gap: 8px;
     padding: 6px 8px;
     margin-bottom: 4px;
@@ -1090,11 +1089,14 @@
     border-radius: 5px;
 }
 
-.fp-custom-intent-label {
-    font-weight: 600;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
+.fp-saved-prompt-row input,
+.fp-saved-prompt-row textarea {
+    flex: 1 1 100%;
+    min-width: 0;
+}
+
+.fp-saved-prompt-row textarea {
+    min-height: 64px;
 }
 
 /* Context indicators and the provider/Send footer merged
@@ -1856,4 +1858,7 @@
     .fp-empty-examples { display: block; }
     .fp-empty-example { display: block; width: 100%; margin-bottom: 4px; text-align: left; }
     .fp-status-strip { flex-wrap: wrap; gap: 3px; }
+    .fp-saved-prompt-row { display: block; padding: 5px; }
+    .fp-saved-prompt-row input, .fp-saved-prompt-row textarea,
+    .fp-saved-prompt-row button { width: 100%; margin-top: 4px; }
 }
