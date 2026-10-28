@@ -1569,6 +1569,13 @@
     white-space: normal;
     text-align: left;
     overflow-wrap: anywhere;
+    /* red-ui-button-small has a fixed height; let a wrapped label (the tab
+       name on its second line) grow the button instead of being clipped. */
+    height: auto;
+    min-height: 20px;
+    line-height: 1.3;
+    padding-top: 2px;
+    padding-bottom: 2px;
 }
 
 .fp-propose-mode-row {
