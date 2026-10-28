@@ -223,7 +223,7 @@ function makePreRouterResult(action, verb, prompt, context, needsSelection) {
     return typeof id === "string" && id;
   });
   const summary = needsSelection
-    ? "Select the node(s) you want FlowPilot to work on, then press Act - I'll " + verb + " them as described."
+    ? "Pick the node below (or select it on the canvas), then Approve - I'll " + verb + " it as described."
     : "I will " + verb + " as requested: " + String(prompt || "").trim();
   return {
     toolCalls: [{
@@ -1154,7 +1154,11 @@ function flowPilotRuntime(RED) {
       const buildReadTools = AGENT_READ_TOOLS.filter(function (tool) {
         return BUILD_READ_TOOL_NAMES.indexOf(tool.function.name) !== -1;
       });
-      return providerToolDefinitions(buildReadTools.concat(WRITE_TOOLS, BUILD_RUNTIME_TOOLS));
+      const runtimeTools = settings && settings.restricted === true
+        ? BUILD_RUNTIME_TOOLS.filter(function (tool) {
+          return tool.function.name !== "deploy_flows";
+        }) : BUILD_RUNTIME_TOOLS;
+      return providerToolDefinitions(buildReadTools.concat(WRITE_TOOLS, runtimeTools));
     }
     const writesEnabled = ["modify", "generate", "document"].indexOf(mode) !== -1 &&
       writesAllowed !== false && activeProvider && activeProvider.supportsTools === true;

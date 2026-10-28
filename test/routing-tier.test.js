@@ -154,6 +154,8 @@ try {
 
   const store = createStorage(tmpDir);
   const settings = store.getSettings();
+  assert.strictEqual(settings.auto, true, "Auto defaults on");
+  assert.strictEqual(settings.restricted, false, "Restricted defaults off");
   const byId = {};
   settings.providers.forEach(function (p) { byId[p.id] = p; });
 

@@ -2,7 +2,7 @@
 
 const assert = require("assert");
 const intake = require("../lib/core/intake");
-const { chooseLane } = require("../lib/core/lanes");
+const { chooseLane, dispatchForLane } = require("../lib/core/lanes");
 
 function base(message, extra) {
   return intake.buildIntake(message, {}, Object.assign({
@@ -75,6 +75,23 @@ const table = [
 ];
 table.forEach(function (row) { assert.strictEqual(row[1], row[2], row[0]); });
 
+const proposal = { action: "modify", summary: "Change Shaper" };
+[
+  ["DIRECT", {}, "direct"], ["DIRECT", { auto: false }, "plan"],
+  ["DIRECT", { restricted: true }, "plan"], ["PLAN", {}, "plan"],
+  ["ASK", {}, "ask"], [undefined, {}, "plan"],
+  ["DIRECT", { planFirst: true }, "plan"]
+].forEach(function (row) {
+  assert.strictEqual(dispatchForLane(row[0], proposal, row[1]).kind, row[2],
+    "proposal dispatch " + row[0] + " / " + JSON.stringify(row[1]));
+});
+
+const once = base("Change Alpha", { oneShotFlags: { planFirst: true } });
+assert.strictEqual(once.flags.planFirst, true, "one-shot Plan first reaches intake");
+assert.strictEqual(base("Change Alpha").flags.planFirst, false, "one-shot Plan first is not persisted");
+assert.strictEqual(base("Change Alpha", { oneShotFlags: { justDoIt: true } }).flags.justDoIt, true,
+  "one-shot Just do it reaches intake");
+
 console.log("SF-2 intake/lanes tests passed");
 
 // Picker candidates rank nodes the message names by type or name, open tab
@@ -89,7 +106,25 @@ assert.deepStrictEqual(debugs.slice(0, 2).sort(), ["a", "b"], "open-tab debug no
 assert.ok(debugs.indexOf("k") === -1 && debugs.indexOf("s") === -1, "non-matching nodes aren't offered when something matches");
 assert.deepStrictEqual(intake.nodeCandidates({ id: "t1" }, "Rename Shaper").map(function (c) { return c.id; }), ["s"], "a name match wins");
 assert.strictEqual(intake.nodeCandidates({ id: "t1" }, "fix it").length, 4, "no match falls back to the open tab's nodes");
+const named = intake.nodeCandidates({ id: "t1" }, "Add a debug node after the Elsewhere node").map(function (c) { return c.id; });
+assert.strictEqual(named[0], "x", "a node the user names on another tab outranks open-tab type matches");
+global.RED.nodes.workspace = function (id) { return { t1: { id: "t1", label: "Flow 1" }, t2: { id: "t2", label: "Flow 2" } }[id] || null; };
+global.RED.nodes.node = function () { return null; }; // as in Node-RED 5: tabs aren't nodes
+assert.strictEqual(intake.nodeCandidates({ id: "t1" }, "the Elsewhere node")[0].tabLabel, "Flow 2",
+  "an off-tab candidate carries its tab's label");
 delete global.RED;
+// A selection the user didn't make for this message (live, SF-7: a run left
+// a node on another tab selected) must not redirect an explicitly named change.
+const shaperCands = [{ id: "s", name: "Shaper", type: "function", inActiveTab: true },
+  { id: "k", name: "Kick", type: "inject", inActiveTab: true }];
+assert.deepStrictEqual(intake.resolveIntakeTarget("Rename the Shaper node to Stamper", ["leftover"], shaperCands, null),
+  { kind: "named", ids: ["s"] }, "an explicit name beats a selection that doesn't contain it");
+assert.deepStrictEqual(intake.resolveIntakeTarget("Rename Shaper to Stamper", ["s"], shaperCands, null),
+  { kind: "selection", ids: ["s"] }, "a selection that contains the named node stays the selection");
+assert.deepStrictEqual(intake.resolveIntakeTarget("Copy Shaper's code into this node", ["k"], shaperCands, null),
+  { kind: "selection", ids: ["k"] }, "'this node' points at the selection; the name is a reference");
+assert.deepStrictEqual(intake.resolveIntakeTarget("Rename the debug node", ["k"], [{ id: "d", name: "Debug", type: "debug", inActiveTab: true }], null),
+  { kind: "selection", ids: ["k"] }, "a generic name never overrides the selection");
 console.log("SF-2 picker candidate tests passed");
 
 // Name resolution is safe (live-found: "Rename the debug node" resolved to a
