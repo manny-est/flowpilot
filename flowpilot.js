@@ -1920,6 +1920,107 @@ function flowPilotRuntime(RED) {
     };
   }
 
+  // What happens once a Tier C letter is known. An answer on a tool provider
+  // hands off to a read-only answer turn; an action gets the narrow
+  // {summary, plan_items} follow-up. Shared by /chat and by /agent-step when
+  // the user answers Tier C's own "What would you like FlowPilot to do?"
+  // question, so both routes end in the same lanes.
+  async function followTierCClassification(provider, activeProvider, settings, classified, answerMessages) {
+    const letter = classified.parsed && classified.parsed.letter;
+    if (letter === "A" && activeProvider.supportsTools === true) {
+      const answerTools = agentToolsFor(settings, activeProvider, "chat", undefined, true);
+      const answerOptions = agentTurnOptions(settings, {
+        tools: answerTools,
+        toolChoice: "auto"
+      });
+      warnNumCtxOverflow(answerMessages, activeProvider, "chat-tier-c-answer-handoff");
+      const answered = await chatWithAgentCap(provider, activeProvider, answerMessages, answerOptions);
+      maybeLogDebugEvent("tier_c_answer_handoff", {
+        mode: "chat",
+        providerBaseUrl: activeProvider && activeProvider.baseUrl,
+        model: activeProvider && activeProvider.model,
+        messages: answerMessages,
+        offeredTools: offeredToolNames(answerOptions),
+        classification: classified.parsed
+      });
+      return { result: answered, messages: answerMessages, chatOptions: answerOptions, answerPhase: true };
+    }
+    if (letter >= "B" && letter <= "E" && activeProvider.supportsTools === true) {
+      const summary = await runTierCActionSummary(provider, activeProvider, settings, classified);
+      if (summary) {
+        return {
+          result: tierCClassificationToResult(
+            classified.classificationContent,
+            classified.prompt,
+            classified.context,
+            summary.details
+          ).result,
+          messages: summary.messages,
+          chatOptions: null,
+          answerPhase: false
+        };
+      }
+    }
+    return { result: classified.result, messages: classified.messages, chatOptions: null, answerPhase: false };
+  }
+
+  // The user's reply to Tier C's routing question arrives on /agent-step as
+  // a tool result for a tier-c- ask_user call. Sending it on to the model
+  // would just make it obey the classifier prompt and print a bare letter, so
+  // the five fixed options map straight to their letter and anything typed
+  // under "Other" is classified (tools off) instead.
+  async function classifyTierCAskAnswer(provider, activeProvider, settings, messages, prompt, context) {
+    const last = messages[messages.length - 1];
+    if (!last || last.role !== "tool" || typeof last.tool_call_id !== "string" ||
+      last.tool_call_id.indexOf(TIER_C_TOOL_CALL_ID_PREFIX) !== 0) { return null; }
+    let askIndex = -1;
+    for (let i = messages.length - 2; i >= 0; i--) {
+      const calls = messages[i] && messages[i].role === "assistant" && messages[i].tool_calls;
+      if (Array.isArray(calls) && calls.some(function (call) {
+        return call && call.id === last.tool_call_id && call.function && call.function.name === "ask_user";
+      })) { askIndex = i; break; }
+    }
+    if (askIndex < 1) { return null; }
+    let answer = last.content;
+    try {
+      const parsedAnswer = JSON.parse(last.content);
+      if (parsedAnswer && typeof parsedAnswer.answer === "string") { answer = parsedAnswer.answer; }
+    } catch (err) {
+      // Plain-text tool result; use it as is.
+    }
+    const optionLetters = {
+      "answer a question": "A", "create nodes": "B", "change nodes": "C",
+      "document nodes": "D", "build and verify": "E"
+    };
+    const classificationMessages = messages.slice(0, askIndex);
+    const letter = optionLetters[String(answer || "").trim().toLowerCase()];
+    let content = letter;
+    let finalMessages = classificationMessages;
+    if (!letter) {
+      const reply = await chatWithAgentCap(provider, activeProvider, messages, agentTurnOptions(settings, undefined));
+      content = reply && reply.content || "";
+      finalMessages = messages;
+    }
+    const mapped = tierCClassificationToResult(content, prompt, context);
+    maybeLogDebugEvent("tier_c_classification", {
+      mode: "chat",
+      providerBaseUrl: activeProvider && activeProvider.baseUrl,
+      model: activeProvider && activeProvider.model,
+      messages: finalMessages,
+      responseContent: content,
+      classification: mapped.parsed,
+      fromAskAnswer: true
+    });
+    return {
+      result: mapped.result,
+      messages: letter ? classificationMessages : finalMessages,
+      parsed: mapped.parsed,
+      classificationContent: content,
+      prompt: prompt,
+      context: context
+    };
+  }
+
   // Answer phase is read-only by contract. If a provider ignores the narrowed
   // tool list and emits propose_action anyway, drop just that call so it
   // never reaches the Act chip; read-tool calls in the same turn still run.
@@ -2074,47 +2175,22 @@ function flowPilotRuntime(RED) {
           const classified = await runTierCClassification(
             provider, activeProvider, settings, classificationMessages, prompt, context
           );
-          result = classified.result;
-          finalMessages = classified.messages;
-          if (classified.parsed.letter === "A" && activeProvider.supportsTools === true) {
-            const answerMessages = buildPlanRoutingMessages(
-              systemPrompt,
-              history,
-              historyTruncated,
-              context,
-              prompt
-            );
-            const answerTools = agentToolsFor(settings, activeProvider, "chat", undefined, true);
-            const answerOptions = agentTurnOptions(settings, {
-              tools: answerTools,
-              toolChoice: "auto"
-            });
-            chatOptions = answerOptions;
-            warnNumCtxOverflow(answerMessages, activeProvider, "chat-tier-c-answer-handoff");
-            result = await chatWithAgentCap(provider, activeProvider, answerMessages, answerOptions);
-            finalMessages = answerMessages;
-            answerPhase = true;
-            maybeLogDebugEvent("tier_c_answer_handoff", {
-              mode: "chat",
-              providerBaseUrl: activeProvider && activeProvider.baseUrl,
-              model: activeProvider && activeProvider.model,
-              messages: answerMessages,
-              offeredTools: offeredToolNames(answerOptions),
-              classification: classified.parsed
-            });
-          } else if (classified.parsed.letter >= "B" && classified.parsed.letter <= "E" &&
-            activeProvider.supportsTools === true) {
-            const summary = await runTierCActionSummary(provider, activeProvider, settings, classified);
-            if (summary) {
-              result = tierCClassificationToResult(
-                classified.classificationContent,
-                prompt,
-                context,
-                summary.details
-              ).result;
-              finalMessages = summary.messages;
-            }
-          }
+          classified.prompt = prompt;
+          classified.context = context;
+          const answerMessages = buildPlanRoutingMessages(
+            systemPrompt,
+            history,
+            historyTruncated,
+            context,
+            prompt
+          );
+          const followed = await followTierCClassification(
+            provider, activeProvider, settings, classified, answerMessages
+          );
+          result = followed.result;
+          finalMessages = followed.messages;
+          if (followed.chatOptions) { chatOptions = followed.chatOptions; }
+          answerPhase = followed.answerPhase;
         } else {
           result = await chatWithAgentCap(provider, activeProvider, messages, chatOptions);
         }
@@ -2755,7 +2831,7 @@ function flowPilotRuntime(RED) {
     }
     const mode = req.body.mode || "chat";
     const context = req.body && req.body.context;
-    const answerPhase = req.body && req.body.answerPhase === true;
+    let answerPhase = req.body && req.body.answerPhase === true;
 
     try {
       let finalMessages = messages;
@@ -2774,14 +2850,32 @@ function flowPilotRuntime(RED) {
       // unchanged and Anthropic converts only the outer message envelope to
       // native tool_result blocks.
       const provider = getProvider(activeProvider);
-      let result = execution.strategy === "agent"
-        ? await chatWithAgentCap(provider, activeProvider, messages, chatOptions)
-        : await provider.chat(activeProvider, messages, chatOptions);
+      const askPrompt = (req.body.intake && typeof req.body.intake.message === "string")
+        ? req.body.intake.message : (req.body.prompt || "");
+      const askClassified = execution.strategy === "agent" && mode === "chat"
+        ? await classifyTierCAskAnswer(provider, activeProvider, settings, messages, askPrompt, context)
+        : null;
+      let result;
+      if (askClassified) {
+        const answerMessages = [{ role: "system", content: buildChatSystemPrompt(settings, { strategy: "agent" }) }]
+          .concat(askClassified.messages.slice(1));
+        const followed = await followTierCClassification(
+          provider, activeProvider, settings, askClassified, answerMessages
+        );
+        result = followed.result;
+        finalMessages = followed.messages;
+        if (followed.chatOptions) { chatOptions = followed.chatOptions; }
+        answerPhase = followed.answerPhase;
+      } else {
+        result = execution.strategy === "agent"
+          ? await chatWithAgentCap(provider, activeProvider, messages, chatOptions)
+          : await provider.chat(activeProvider, messages, chatOptions);
+      }
       if (answerPhase) {
         result = stripAnswerPhaseProposals(result);
       } else if (execution.strategy === "agent") {
         const validated = await validateProposeActionToolCalls(
-          activeProvider, messages, result, mode, context,
+          activeProvider, finalMessages, result, mode, context,
           function (retryMessages) {
             return chatWithAgentCap(provider, activeProvider, retryMessages, chatOptions);
           }
