@@ -810,7 +810,7 @@ function flowPilotRuntime(RED) {
           "property patches, at most one new node, and its immediate wires. " +
           "Use one call for the whole item, not one call per field. Existing " +
           "wire removal/replacement is expressed as a sparse " +
-          "changes[].set.wires final value.",
+          "changes[].set.wires final value. Create connected nodes together in one apply_step, with their wires, where you can. A wire to a node you'll create in a later step is connected when that node is created.",
         parameters: {
           type: "object",
           properties: {
