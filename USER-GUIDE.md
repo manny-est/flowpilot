@@ -1,42 +1,38 @@
 # FlowPilot — User Guide
 
-This guide covers installing FlowPilot, the parts of its sidebar UI, setting up an AI provider, and a walkthrough of every feature. For a high-level overview of what FlowPilot is and how it was built, see [PROJECT-OVERVIEW.md](PROJECT-OVERVIEW.md).
+FlowPilot is an AI assistant for building and understanding Node-RED flows. It
+reads the flows you point it at, answers questions about the real nodes, and
+helps you make changes while keeping the important decisions visible.
 
-▶ **[Watch a full walkthrough](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/full-intro-demo.mp4)** (MP4, ~30MB) — first launch, setting a provider, `/help`, and `/demo` end to end.
+▶ **[Watch a full walkthrough (older UI)](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/full-intro-demo.mp4)** (MP4) — this video shows the older FlowPilot interface, not the 0.7.0 Simple Flow UI.
 
 ## Table of contents
 
 - [Getting Started](#getting-started)
-- [UI Basics](#ui-basics)
-- [Set a Provider](#set-a-provider)
-- [Features](#features)
-  - [Chat](#chat)
-  - [Personality](#personality)
-  - [Query intents: Explain, Troubleshoot, Review, Suggest](#query-intents-explain-troubleshoot-review-suggest)
-  - [Generate](#generate)
-  - [Modify](#modify)
-  - [Group handling](#group-handling)
-  - [Build (the agentic loop)](#build-the-agentic-loop)
-  - [Document](#document)
-  - [Recall & Flight log](#recall--flight-log)
-  - [Pop-out window](#pop-out-window)
-  - [Debug context attachment](#debug-context-attachment)
-  - [Action chips and mode suggestions](#action-chips-and-mode-suggestions)
-  - [Clarifying questions](#clarifying-questions)
-  - [Agentic exploration](#agentic-exploration)
-  - [Streaming replies](#streaming-replies)
-  - [Slash commands](#slash-commands)
-  - [Privacy and safety](#privacy-and-safety)
+- [The sidebar at a glance](#the-sidebar-at-a-glance)
+- [Asking questions](#asking-questions)
+- [Making a change](#making-a-change)
+- [What asks first](#what-asks-first)
+- [Auto, ▾ and Restricted mode](#auto--and-restricted-mode)
+- [Checks and runtime proof](#checks-and-runtime-proof)
+- [Messages while it is working](#messages-while-it-is-working)
+- [Saved prompts and slash commands](#saved-prompts-and-slash-commands)
+- [Pop-out window](#pop-out-window)
+- [Slow models and errors](#slow-models-and-errors)
+- [Models without tool calling](#models-without-tool-calling)
+- [Settings reference](#settings-reference)
+- [Provider setup](#provider-setup)
+- [Privacy and safety](#privacy-and-safety)
+- [Recall and Flight log](#recall-and-flight-log)
 - [Examples](#examples)
-- [Bug Reports & Feature Requests](#bug-reports--feature-requests)
-
----
+- [Bug reports and feature requests](#bug-reports-and-feature-requests)
 
 ## Getting Started
 
 ### Install from the Palette
 
-In the Node-RED editor, open the menu (top-right) → **Manage palette** → **Install**, and search for `@manny-est/node-red-flowpilot`. Click **Install**.
+In the Node-RED editor, open **Menu → Manage palette → Install**, search for
+`@manny-est/node-red-flowpilot`, and click **Install**.
 
 ### Install via npm
 
@@ -45,265 +41,382 @@ From your Node-RED user directory:
 ```bash
 cd ~/.node-red
 npm install @manny-est/node-red-flowpilot
-```
-
-For a Docker/container setup, install into the mounted Node-RED user directory (commonly `/data`), so the package ends up at:
-
-```text
-<node-red-userDir>/node_modules/@manny-est/node-red-flowpilot
+node-red
 ```
 
 ### Restart Node-RED
 
-Either way, **restart Node-RED** (or the container) after installing or updating. FlowPilot's editor UI is cached server-side, so a browser refresh alone is not enough.
+Restart Node-RED, or restart the container, after installing or updating
+FlowPilot. A browser refresh is not enough because the editor UI is assembled
+and cached by the Node-RED server.
 
-### First launch
+### Find the FlowPilot tab
 
-![The FlowPilot tab in the Node-RED editor's sidebar](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/Node-Red-Tool-Menu.png)
+Open the FlowPilot sidebar tab. It is the paper-plane tab, usually grouped with
+Info and Debug on the right side of the editor. This part of Node-RED has not
+changed since the older release assets:
 
-Open the FlowPilot sidebar tab (the paper-plane icon, usually grouped with Info/Debug/etc. on the right edge of the editor) — or watch [a short clip of finding it](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/finding-flowpilot.mp4).
+![The FlowPilot tab in the Node-RED editor sidebar](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/Node-Red-Tool-Menu.png)
 
-On first launch, FlowPilot walks you through the basics in the chat panel and ends by pointing you at **Settings** to add a provider — see [Set a Provider](#set-a-provider) below. This walkthrough only appears once; it disappears for good after you save settings (which happens automatically the first time you run a **Pre-flight check**).
+You can also watch [a short clip of finding the FlowPilot tab](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/finding-flowpilot.mp4).
 
-![FlowPilot's first-run welcome and cockpit tour](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/first-run-welcome.png)
+On first launch, open Settings, add a provider, and run **Pre-flight check**.
+Then return to the chat panel and try one of the example prompts.
 
----
+## The sidebar at a glance
 
-## UI Basics
+The sidebar header has these controls:
 
-![The FlowPilot sidebar's Chat panel](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/sidebar-chat-overview.png)
+- The eraser starts a fresh conversation and clears its memory.
+- The magnifying glass opens Recall, which searches earlier conversations.
+- The bug icon opens recent Node-RED Debug sidebar output so you can attach a
+  message as context.
+- The chat icon returns to the conversation.
+- The clock opens the Flight log of saved conversations.
+- The pop-out icon opens the same FlowPilot controls in a separate window.
+- The gear opens Settings.
 
-The FlowPilot sidebar has three panels, switched using the icons in the header row (top-right of the sidebar):
+With no conversation, FlowPilot shows example prompts. They fill the prompt box
+when clicked; they do not send anything. The prompt box accepts a question or
+an instruction. Select nodes in the main editor when you want to target them,
+or name a node in your request.
 
-| Icon | Tooltip | What it does |
-| --- | --- | --- |
-| 🖉 eraser | Clear chat | Clears the chat and resets conversation memory |
-| 🔍 magnifying glass | Recall | Searches past conversations for text in the prompt box |
-| 🐛 bug | Debug log | View recent Debug sidebar output and attach it as context |
-| ✈ paper-plane | Chat | Switch to the Chat panel |
-| 🕐 clock | Flight log | Switch to the Flight log (past conversations) panel |
-| ⚙ gear | Settings | Switch to the Settings panel |
+Below the prompt box, the status line shows the current selection, context-size
+warnings, possible sensitive context, attached Debug messages, and the active
+provider. **Preview JSON** can show the sanitized node context that would be
+sent. At the right are **Clear**, **Auto**, the **▾** menu, and **Send**.
 
-### The Chat panel
+**Auto** is on by default. The **▾** menu offers a one-message choice of
+**Plan first**, **Just do it**, or **Normal**. The selected one-shot choice stays
+visible until that message is sent.
 
-This is FlowPilot's main view:
+![Empty FlowPilot chat with example prompts and sending controls](docs/images/sidebar-empty-state.png)
 
-- **Messages area** — your conversation with FlowPilot, including any review diffs, action chips, and clarifying questions.
-- **Query buttons** (orange, left side, above the prompt box) — **Explain**, **Troubleshoot**, **Review**, **Suggest**, plus any custom buttons you add. Clicking one pre-fills the prompt box with a ready-to-edit instruction and switches the prompt to an amber "Query" look.
-- **Execute buttons** (blue, right side, above the prompt box) — **Document**, **Generate**, **Modify**. Clicking one *arms* that mode (the prompt turns blue) — describe what you want and hit Send.
-- **Prompt box** — type your question or instruction here. Press **Enter** to send, **Shift+Enter** for a new line. Drag the handle in the top-right corner of the box to resize it.
-- **Status strip** (below the prompt) — shows how many nodes are selected, estimated context size, a credentials warning if relevant, any attached debug messages, and the active provider. **Clear** empties the prompt box; **Send** sends the request.
+FlowPilot also works at Node-RED's 180 px minimum sidebar width:
 
-### The Settings panel
+![FlowPilot at the 180 px minimum sidebar width](docs/images/narrow-sidebar.png)
 
-Configure AI providers, the system prompt, conversation memory, custom intent buttons, and safety warnings. See [Set a Provider](#set-a-provider) and the feature chapters below for details on each section.
+## Asking questions
 
-### The Flight log panel
+Type a question and press **Send**. FlowPilot first reads the relevant flows,
+including the nodes and connections it can inspect. Its answer can quote your
+real node names, properties, or function code instead of guessing from a
+generic description.
 
-A list of past conversations. Click one to load it back into Chat — new messages continue that conversation's memory. **Delete all** removes every saved transcript permanently.
+Questions are read-only. Asking what a flow does, why a node is connected, or
+how to troubleshoot a Debug message does not change the canvas or deploy
+anything.
 
----
+![An answer quoting real nodes from a flow](docs/images/answer.png)
 
-## Set a Provider
+If a request is too unclear to carry out safely, FlowPilot asks a question. If
+the target is a change and more than one node could match, it uses the
+**Which one?** picker described below.
 
-FlowPilot talks to **Anthropic** (Claude models) natively, or to any **OpenAI-compatible** API — OpenAI itself, LocalAI, Ollama (with its OpenAI-compatible endpoint), LM Studio, etc.
+## Making a change
 
-1. Open **Settings** (gear icon).
-2. Under **Providers**, click **+ Add** if you need a new provider slot (one is created for you by default).
-3. Pick a **Provider Type**: `OpenAI-compatible` (the default) or `Anthropic`.
-4. Fill in the fields below, then click **Pre-flight check**.
+Describe the result you want in plain language. Select a node for context when
+that is easiest, or name it in the request.
 
-| Field | OpenAI-compatible | Anthropic |
-| --- | --- | --- |
-| **Provider Name** | Any label, e.g. `LocalAI`, `OpenAI` | Any label, e.g. `Claude` |
-| **Base URL** | e.g. `http://localhost:8080` or `https://api.openai.com`. If Node-RED runs in Docker, `localhost` refers to the *Node-RED container*, not the Docker host — use the provider's container name, a Docker network alias, or a host IP (e.g. `http://172.17.0.1:8080`) instead. | Leave blank to use `api.anthropic.com` — only set this if routing through a proxy or gateway. |
-| **API Key** | Leave blank unless your provider requires one. | Required. If your key returns an `anthropic-workspace-id is required` error, it wasn't scoped to a single workspace when created — go to the Anthropic Console, create a new key, and choose a specific workspace at creation time. |
-| **Model** | Type a model name, or click **Refresh models** to fetch the provider's available models and pick from the list. | Same. |
-| **Temperature** | A starting value of `0.2` works well for most uses. | Same. |
+### A clear, targeted change
 
-![Provider settings: Base URL, API key, model, and temperature fields](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/sidebar-settings-providers.png)
+With **Auto** on, a clear change to a selected or named node normally runs
+straight away. Examples include renaming a node, fixing a function, or making
+an inject node fire every five seconds.
 
-Click **Pre-flight check**. This saves your settings and sends a small test request. A reply in the chat panel means you're connected.
+After the write, FlowPilot shows a result card. It includes:
 
-> **This step is required** — a provider must pass Pre-flight check before Chat, Generate, Modify, Document, or Build will send it anything; a provider you just added or just changed the Base URL/API key on starts unconfirmed until this check passes again.
+- the changes made to each node;
+- a line diff for function code;
+- the validation checks;
+- whether a runtime check ran and what it observed;
+- the tokens used; and
+- **Undo**, which reverses the whole run in one step.
 
-![A successful Pre-flight check reply in Chat](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/preflight-success.png)
+![Result card with a line diff, checks, and Undo](docs/images/result-card.png)
 
-You can configure multiple providers and switch between them with the **Active provider** dropdown — useful for comparing models, or keeping a cheap/fast provider and a more capable one side by side. **Remove** deletes the currently selected provider.
+The result card reports the editor change. If you also want FlowPilot to
+deploy and test the runtime, ask it to test the flow or use **Test it** when
+that control is available.
 
----
+### A bigger or open-ended request
 
-**Known limitation — Ollama context window:** Ollama's OpenAI-compatible
-API has no way to set the context length per request, and FlowPilot's
-prompts are large. If a model seems to ignore your instructions while
-using an Ollama provider, increase `OLLAMA_CONTEXT_LENGTH` on your Ollama
-server (or set `num_ctx` in a Modelfile). Settings shows this same note
-whenever the Ollama preset is selected.
+Requests such as “build me a flow that…” or a multi-part change show a plan
+card first. The card contains a summary, the steps FlowPilot intends to take,
+and risky operations listed up front. Review it and press **Approve** to run
+the plan. An operation that was not listed can still ask for consent during
+the run.
 
-## Features
+![Plan card with steps, risks, and Approve](docs/images/plan-card.png)
 
-### Chat
+### “Which one?”
 
-Ask FlowPilot anything in plain language. If you have nodes selected on the canvas, FlowPilot sees their configuration and wiring (sanitized — see [Privacy and safety](#privacy-and-safety) below) and can reason about them. Chat remembers recent exchanges (configurable under **Behavior → Remember last N exchanges**) so you can have a back-and-forth conversation.
+When a name or description matches several nodes, FlowPilot does not guess. It
+shows **Which one?** and lists candidates with their node names, types, and tab
+names. Pick the intended candidate, then FlowPilot continues with that target.
 
-### Personality
+![The Which one? picker showing candidates with tab names](docs/images/which-one.png)
 
-**Settings → Behavior → Personality** is a 1–10 slider controlling how much of a subtle airline-captain voice FlowPilot's conversational replies carry — 1 is a plain Node-RED engineer, 10 leans all the way into the bit. It only affects framing language (greetings, transitions, "what can you do?"). Explanations, diffs, troubleshooting, and errors always stay plain and accurate regardless of the setting.
+## What asks first
 
-### Query intents: Explain, Troubleshoot, Review, Suggest
+FlowPilot asks before operations that can have a larger effect. The prompt is
+shown as “FlowPilot wants to do this” with **Proceed** and **Skip this step**.
 
-One-click buttons that pre-fill the prompt box with a ready-to-edit instruction about your current selection:
+The normal asks-first cases are:
 
-| Button | What it does |
-| --- | --- |
-| **Explain** | Walks through what the selection does, step by step. |
-| **Troubleshoot** | Looks for disabled nodes, dead-end wires, and likely misconfigurations. |
-| **Review** | A design/architecture critique with concrete suggestions. |
-| **Suggest** | Suggests improvements or other Node-RED nodes that could help. |
+- deleting nodes;
+- deploying when the deployment would also include undeployed edits you made
+  yourself; and
+- creating, changing, or triggering nodes that reach outside Node-RED, such
+  as HTTP request, MQTT, exec, file, e-mail, TCP/UDP, WebSocket, or serial
+  nodes.
 
-You can add your own custom intent buttons under **Settings → Behavior → Custom intent buttons** — give it a label and the instruction text it should send.
+![Consent prompt with Proceed and Skip this step](docs/images/consent-ask.png)
 
-![Explain run on a selected node](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/query-explain-example.png)
+Every step that an approved plan listed as risky is covered by that approval.
+Other risky work still asks when FlowPilot reaches it. **Skip this step** lets
+the run continue without that operation; the result explains what was skipped.
 
-### Generate
+### “This turned out bigger than expected”
 
-Describe a new flow in plain language (e.g. "fetch the weather every hour and log it to a file") and click **Generate**, then **Send**. FlowPilot returns a flow fragment, which you review before doing anything with it — nothing is added to your canvas automatically. Approve it and FlowPilot hands the nodes to Node-RED's own import, so placement and undo (`Ctrl+Z`) work exactly like a normal paste.
+FlowPilot also pauses if a run starts changing nodes outside the target you
+gave it, or touches more nodes than expected. You can keep going with the
+expanded change or undo the run. The **Diff-gate pause above (changed nodes)**
+setting controls the default size threshold; it is 5 changed nodes.
 
-Try `/demo` in the prompt box for a ready-made example: it types a Generate request for a small "fetch a dad joke" flow into the box for you.
+## Auto, ▾ and Restricted mode
 
-![A Generate request and the resulting reply](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/generate-example.png)
+- **Auto on** lets clear, safely targeted changes run directly and sends bigger
+  requests through a plan card.
+- Turn **Auto** off to get a plan card for every change.
+- The **▾** menu sets **Plan first** or **Just do it** for the next message
+  only. **Normal** returns to the ordinary Simple Flow decision for that
+  message.
+- **Restricted mode**, in Settings, never deploys. Every change gets a plan
+  card and you deploy the flow yourself.
 
-![Generate's review step, with the raw flow JSON](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/generate-review-json.png)
+## Checks and runtime proof
 
-![Generate's review/diff before import](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/generate-review.png)
+FlowPilot validates after every write. Checks include whether node types are
+installed, whether wires point to real nodes, whether required settings are
+filled in, and whether Function code parses. Function code is checked, never
+run as part of syntax validation. If a check finds a fixable problem,
+FlowPilot can make another attempt before stopping.
 
-### Modify
+For a runtime proof, FlowPilot adds its own temporary Debug nodes named
+“FlowPilot test” next to the relevant output, deploys, triggers the flow, and
+reads the messages they receive. It then removes those nodes and deploys again
+so they are not left in the flow. **Test it** on a result card runs the same
+proof on demand.
 
-Select the node(s) you want to change, arm **Modify**, and describe the change (e.g. "add a 5 second delay before this", "change this function to also log errors"). FlowPilot proposes property changes, rewiring, additions, and removals as a diff. You review and apply each change — every applied change is a single native Node-RED undo step (`Ctrl+Z`).
+- **Run: proven — …** means FlowPilot observed output from its own test node
+  and quotes the observed value.
+- **Run: not provable here — …** means it could not obtain qualifying runtime
+  evidence; the card gives the reason. It is not a claim that the flow is
+  broken.
 
-![Modify's proposed diff before applying](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/modify-diff.png)
+![Result card showing Run: proven and Test it](docs/images/runtime-proof.png)
 
-![The same change applied to the flow](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/modify-diff-applied.png)
+The temporary test messages also appear in Node-RED's Debug sidebar while the
+proof runs. This is a known limitation. If a tab closes or a run crashes and
+leaves test nodes behind, FlowPilot removes its own leftover test nodes when
+the editor loads and shows a notice. Restricted mode adds no test nodes and
+never deploys.
 
-### Group handling
+## Messages while it is working
 
-FlowPilot can see which visual group a selected node belongs to, and Generate/Build/Modify can create, extend, rename, and ungroup visual groups (the same bordered containers as the editor's own "Group selection") — not just individual nodes. Select grouped nodes and describe the grouping you want, or mention an existing group by name in a Modify instruction; review and apply like any other change.
+While FlowPilot is working, a new message is queued rather than starting a
+second request. At the next safe step it asks what to do:
 
-### Build (the agentic loop)
+- **Stop and do this instead** stops the current run at that boundary. Changes
+  already made stay on the canvas, and the new message becomes the next work.
+- **Do it after** keeps the current run going and offers the new message after
+  it finishes.
 
-Describe a goal (e.g. "fetch the weather every hour and log it to a file") and arm **Build**, or type `/build <goal>` directly. If you have nodes selected, FlowPilot uses them as the starting context (like Modify) — useful for targeting an existing sub-flow to extend or fix.
+Only one message can be queued at a time. The prompt box indicates when one is
+waiting.
 
-FlowPilot plans the work, proposes a first flow, and once you apply and deploy it, walks an interactive loop: attach the resulting Debug output, FlowPilot reviews it against the goal, and either confirms it's working (with a Done confirmation showing the debug output that proved success) or proposes a fix — repeating until it works or a configurable attempt limit is reached (**Settings → Behavior → Build loop iteration cap**). At any waypoint FlowPilot may ask a focused clarifying question with quick-reply buttons before continuing. Every proposal and fix still goes through the same review-then-apply flow as Modify — FlowPilot never deploys for you.
+## Saved prompts and slash commands
 
-> **Hold at next step** (**Settings → Behavior**): when enabled, the loop pauses at each waypoint for you to review before auto-advancing — useful for careful, step-by-step inspection of each iteration.
+Type `/` in the prompt box to see the built-in commands and your saved prompts.
+Selecting a saved prompt fills the box without sending it. Add, edit, and
+delete saved prompts in **Settings → Behavior → Saved prompts**.
 
-### Document
+![Slash menu showing a saved prompt](docs/images/slash-menu.png)
 
-Select node(s), arm **Document**, and (optionally) add notes about what you want highlighted, then **Send**. FlowPilot generates a "Read Me" comment node summarizing the selection, which you review and place like any other change.
-
-![A generated Read Me comment node, reviewed before placing](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/document-readme-node.png)
-
-![The Read Me comment node placed on the canvas](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/document-readme-node-placed.png)
-
-### Recall & Flight log
-
-- **Recall** (magnifying glass icon) — type a search term in the prompt box and click Recall to search across your past conversations. Each result has a **Use this** button to load that conversation back into Chat.
-- **Flight log** (clock icon) — browse and reload past conversations directly, or delete saved transcripts.
-
-![The Flight log panel listing past conversations](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/flight-log.png)
-
-### Pop-out window
-
-Click the pop-out icon in the sidebar header to open FlowPilot's full cockpit — chat, action bar, status strip, slash commands — in its own browser window. Handy for multi-monitor setups: keep the conversation and diffs visible on one screen while the canvas fills another. Sending, Clear Chat, mode switching, and Apply for Generate/Document/Modify/Build review panels all work from the pop-out; it closes automatically if the main editor window does.
-
-### Debug context attachment
-
-Click the **bug icon** to view recent messages from Node-RED's Debug sidebar. Click **Attach** on any entry to include it as context for your next request — useful for troubleshooting ("here's the error my flow just printed, what's wrong?"). The status strip shows how many debug messages are attached; clear them from there or by clicking **Clear chat**.
-
-![The Debug log panel with recent entries](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/debug-log.png)
-
-![A debug message attached, shown in the status strip](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/debug-log-attached.png)
-
-### Action chips and mode suggestions
-
-When FlowPilot's reply describes a change you could make, it may offer an action chip — a one-click button that switches to the suggested mode (Generate/Modify/Document/Chat) with the request pre-filled. Nothing is sent until you review and hit Send yourself.
-
-FlowPilot also watches what you type: if your prompt reads like a Generate, Modify, or Build task but a different mode is armed, it surfaces a suggestion chip below the reply so you can switch with one click instead of typing the slash command manually.
-
-![A reply with an action chip below it](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/action-chip.png)
-
-![The full chat thread leading up to an action chip](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/action-chip-full.png)
-
-### Clarifying questions
-
-If your instruction is too vague to act on safely, FlowPilot asks **one** clarifying question instead of guessing — often with quick-reply buttons (plus an "Other" option for free text). Picking an answer sends it immediately.
-
-![A clarifying question with quick-reply buttons](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/clarifying-question.png)
-
-### Agentic exploration
-
-If your provider supports tool/function calling, FlowPilot can autonomously inspect your flow before answering or proposing a change — looking at a node's config, listing flows, searching for nodes, checking connections, or reading the Debug sidebar. This is read-only, bounded by a step count and token budget, shown to you as it happens, and can be interrupted with the **Stop** button.
-
-![An agentic exploration run in progress](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/agentic-exploration.png)
-
-### Streaming replies
-
-Chat (and Generate/Modify/Document) responses can stream in as they're generated rather than appearing all at once. Toggle this under **Settings → Behavior → Stream chat replies**.
-
-![Settings → Behavior, including streaming and custom intents](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/settings-behavior.png)
-
-### Slash commands
-
-Type `/` in the prompt box to see a floating panel listing all available commands with descriptions. Arrow keys or Tab to highlight, Enter or Tab to complete, Escape to dismiss.
+The current built-in commands are:
 
 | Command | What it does |
 | --- | --- |
-| `/help` | Show the full command/feature briefing |
-| `/generate`, `/document`, `/modify`, `/build` | Arm that Execute mode |
-| `/query` (or `/chat`) | Back to Query mode |
-| `/clear` | Start a fresh conversation (clears chat and memory) |
-| `/history` | Open the Flight log |
-| `/settings` | Open Settings |
-| `/demo` | Load a sample Generate request into the prompt box |
-| `/feedback` | Links to the repo and issue tracker |
-| `/compact` / `/expand` | Hide/restore labels on the selected node(s) — instant and deterministic, no AI round-trip |
-| `/disable` / `/enable` | Disable/re-enable the selected node(s) (skipped on Deploy without removing them) — instant and deterministic, no AI round-trip |
+| `/help` | Shows the built-in briefing. |
+| `/generate` | Arms Generate for the next send. Extra text stays in the prompt box. |
+| `/modify` | Arms Modify for the next send. |
+| `/document` | Arms Document for the next send. |
+| `/build` | Arms the deploy-verify build loop for the next send. |
+| `/plan` | Sets the next send to **Plan first**. |
+| `/query` or `/chat` | Returns to an ordinary chat question. |
+| `/clear` | Starts a fresh conversation and clears its memory. |
+| `/history` | Opens the Flight log. |
+| `/settings` | Opens Settings. |
+| `/compact` | Hides labels on the selected nodes. |
+| `/expand` | Restores labels on the selected nodes. |
+| `/disable` | Disables the selected nodes. |
+| `/enable` | Re-enables the selected nodes. |
+| `/refresh` | Re-renders the conversation from FlowPilot's in-memory record store. |
+| `/debug` | Turns debug logging on or off. |
+| `/summarize` | Summarizes older chat history while keeping the latest two exchanges. |
+| `/demo` | Fills the prompt box with a sample dad-joke flow request. |
+| `/bug` | Shows the bug-report link and reporting details. |
+| `/feedback` | Shows the feature-request and feedback links. |
+| `/beta` | Shows beta install and revert instructions. |
 
-![`/help`'s full command/feature briefing](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/slash-help.png)
+Commands are handled locally where possible. For example, `/compact`,
+`/expand`, `/disable`, and `/enable` use Node-RED's own editor actions and can
+be undone with Node-RED undo. A command with extra text leaves that text in the
+box for you to review before sending.
 
-![`/demo` pre-filling a Generate request](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/demo-command.png)
+Custom intents from earlier FlowPilot versions are converted automatically to
+saved prompts the first time this version loads. FlowPilot shows a one-time
+notice; the prompt text is retained.
 
-![The flow generated by `/demo`, reviewed and imported](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/slash-demo-complete.png)
+## Pop-out window
 
-### Privacy and safety
+Click the pop-out icon in the sidebar header to open FlowPilot in its own
+window. It has the same prompt box, **Auto**, **▾**, **Send**, slash menu,
+questions, consent controls, plans, result cards, and settings behavior as the
+sidebar. This is useful when the Node-RED canvas needs the main window. The
+conversation remains shared with the sidebar.
 
-- FlowPilot only sends data when **you** trigger a request — nothing happens in the background.
-- Selected nodes are sanitized before sending: editor-internal fields are stripped, and config-node credential fields are dropped entirely.
-- A warning icon (⚠) appears in the status strip if your selection might still contain sensitive configuration or code — review before sending, especially with cloud providers. A local/private AI provider (LocalAI, Ollama, etc.) is recommended for sensitive flows.
-- Every Generate/Modify/Document result is shown as a review or diff — nothing is applied until you click Apply/import, and every applied change is a normal Node-RED undo step.
+![FlowPilot in its pop-out window](docs/images/popout.png)
 
-![Settings → Context & Safety](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/settings-context-safety.png)
+## Slow models and errors
 
----
+Local models can take a minute or more per step. FlowPilot keeps the proxy
+connection open for long turns, and the status line adds a reminder when a
+local run has been waiting for a while. If a local model regularly times out,
+raise **Settings → Behavior → Request timeout** or use a faster model.
+
+Errors are shown as plain sentences. Common messages mean:
+
+- **The model took too long and the connection was closed by a proxy (504).**
+  The proxy timed out; try again, use a faster model, or raise the relevant
+  proxy limit.
+- **Couldn't reach the server behind the proxy (502).** The proxy could not
+  reach the server behind it.
+- **Authentication failed (401).** Sign in again or check the provider
+  credentials.
+- **You don't have permission to use FlowPilot (403).** The current account or
+  Node-RED permissions do not allow the request.
+- **Request timed out.** The request-specific timeout expired; try again or
+  use a faster model.
+- **Couldn't reach FlowPilot.** Check the Node-RED connection and try again.
+
+Other provider errors appear as a short status and message. Raw proxy or error
+page HTML is not shown in the chat.
+
+## Models without tool calling
+
+Models that cannot reliably call tools keep the older review-and-apply flow.
+FlowPilot still classifies the request and shows the proposed result for you to
+review before applying it. The Simple Flow cards, consent rules, and runtime
+proof apply to models that support the current tool-calling path.
+
+## Settings reference
+
+Open Settings with the gear icon. These are the current controls, grouped as
+they appear in the panel:
+
+| Panel group | Controls |
+| --- | --- |
+| **Providers** | Active provider, provider name and preset, API key, model, assistant capability, **Pre-flight check**, **Refresh models**, and the **Diagnostics** options for base URL, provider-specific options, context window, temperature, and capability override. |
+| **Behavior** | **Restricted mode**, System Prompt, Personality, conversation memory, streamed replies, request timeout, update checks, per-step and per-turn token limits, build-loop attempt limit, and saved prompts. |
+| **Context & Safety** | Context-size warning thresholds, **Diff-gate pause above (changed nodes)**, recurring-warning display, secret-shaped-value redaction, and Debug mode. |
+
+![FlowPilot Settings panel](docs/images/settings.png)
+
+## Provider setup
+
+Open Settings, add a provider, and choose **Anthropic** or
+**OpenAI-compatible**. FlowPilot supports Anthropic models and compatible APIs
+such as OpenAI, LocalAI, and Ollama.
+
+### Anthropic (Claude models)
+
+| Field | Value |
+| --- | --- |
+| Provider | **Anthropic** |
+| Provider name | `Claude`, or any label |
+| Base URL | Leave blank to use `api.anthropic.com` |
+| API key | Your Anthropic API key |
+| Model | A model name, or use **Refresh models** |
+
+### OpenAI-compatible providers
+
+| Field | Example |
+| --- | --- |
+| Provider | **OpenAI-compatible** |
+| Provider name | `LocalAI`, or any label |
+| Base URL | `http://localhost:8080` for a local service |
+| API key | Blank unless the service requires one |
+| Model | The model name used by the service |
+| Temperature | `0.2` is a focused default |
+
+Click **Pre-flight check** to save the provider and test it. The capability
+readout tells you whether the model can reliably call tools.
+
+### Docker and container notes
+
+Install FlowPilot into the mounted Node-RED user directory. If that directory
+is `/data`, the package should be under:
+
+```text
+/data/node_modules/@manny-est/node-red-flowpilot
+```
+
+Restart the Node-RED container after installing or updating the package.
+Inside Docker, `localhost` means the Node-RED container. For a provider on the
+host or another container, use its container name, network alias, or host IP,
+for example `http://localai:8080` or `http://172.17.0.1:8080`.
+
+## Privacy and safety
+
+FlowPilot sends data only when you trigger a request. It does not work in the
+background. A request can include the selected nodes and wiring, attached
+Debug messages, and recent conversation history.
+
+Before sending, FlowPilot strips editor-internal fields and redacts values that
+look like passwords, tokens, API keys, or authorization headers. Node-RED's
+separate credential store is never included. A warning icon appears when the
+context may still contain sensitive configuration or code. Review it before
+sending, especially to a cloud provider. A local or private provider such as
+LocalAI or Ollama is recommended for sensitive flows.
+
+You can inspect the sanitized context with **Preview JSON**. The redaction
+opt-out is in **Settings → Context & Safety** and requires typing `disable
+redaction`; use it only when you understand the risk.
+
+## Recall and Flight log
+
+**Recall** searches the text in the prompt box across earlier conversations and
+shows matching exchanges. It does not send a new request automatically. Use
+**Use this** on a result when you want that exchange added to the current
+conversation's context.
+
+The **Flight log** lists saved conversations. Click one to load it and continue
+its memory, or delete a transcript when you no longer need it.
 
 ## Examples
 
-The `examples/` folder (visible via the editor's **Import → Examples → FlowPilot** menu) includes:
+The `examples/` folder is available from **Import → Examples → FlowPilot** in
+the editor:
 
-- **Getting Started** — a tiny inject → function → debug flow to practice Explain/Modify on.
-- **Dad Joke Demo** — a working version of the flow that `/demo` generates, so you can see the end result before trying Generate yourself.
+- **Getting Started** is a small inject → function → debug flow for trying
+  questions and targeted changes.
+- **Dad Joke Demo** is a working example of the request inserted by `/demo`.
 
----
+## Bug reports and feature requests
 
-## Bug Reports & Feature Requests
-
-Found a bug, or have an idea for a feature? Please open an issue on GitHub:
-
-**https://github.com/manny-est/flowpilot/issues**
-
-When reporting a bug, it helps to include:
-
-- Your Node-RED version and FlowPilot version (`package.json` → `version`).
-- The AI provider/model you're using (not your API key).
-- Steps to reproduce, and what you expected vs. what happened.
-- Anything relevant from the browser console or Node-RED's log.
+Open an issue at <https://github.com/manny-est/flowpilot/issues>. Include your
+Node-RED and FlowPilot versions, provider and model (not the API key), steps to
+reproduce, expected versus actual behavior, and useful Node-RED or browser log
+details.
