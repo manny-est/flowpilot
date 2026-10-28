@@ -2,6 +2,65 @@
 
 All notable changes to FlowPilot are documented here.
 
+## [0.7.0-beta.2] - 2026-10-27
+
+**Beta.** Simple Flow: FlowPilot now does clear, targeted changes straight
+away and saves the plan step for the requests that need one. This replaces
+beta.1's Plan/Act bar, which beta testers found confusing and hard to fit
+in a narrow sidebar. Install with
+`npm install @manny-est/node-red-flowpilot@beta`; the stable line stays on
+0.6.x.
+
+### Changed
+- **No more Plan/Act bar or mode row.** Type what you want and press Send.
+  - A clear change to a node you selected or named (rename it, fix this
+    function, make this inject fire every 5 seconds) just runs.
+  - Open-ended or bigger requests ("build me a flow that…") show a
+    **plan card** first: the summary, the steps, and the risky operations
+    (deploy, deletes, nodes that reach outside Node-RED) listed up front.
+    **Approve** runs it. Anything risky the plan didn't list still asks
+    during the run.
+  - If FlowPilot can't tell which node you mean, it asks **"Which one?"**
+    and lists the candidates with their tab names.
+- **Auto** (next to Send, on by default). Turn it off to get a plan card
+  for every change. The **▾** menu next to Send picks **Plan first** or
+  **Just do it** for your next message only; the button shows the choice
+  until it's used.
+- **One engine for every model with tool calling.** Modify, Generate,
+  Document and Build all use the same step-by-step loop. Models without tool
+  calling keep the previous review-and-apply flow.
+- **Every model classifies your request first**, then reads your flows to
+  answer questions. Answers now quote your actual nodes instead of
+  guessing.
+- **Messages typed while FlowPilot is working:** choose **Stop and do this
+  instead** (the run stops at the next step) or **Do it after**.
+
+### Added
+- **Result card after every change.** It shows what changed on each node
+  (function code as a line diff), every validation check, whether the
+  change was run, and the tokens used. **Undo** reverses the whole run in
+  one step.
+- **Checks after every write.** FlowPilot checks that node types are
+  installed, wires point at real nodes, required settings are filled in, and
+  function code parses (it is never run). Problems go back to the model to
+  fix, up to three tries.
+- **"This turned out bigger than expected."** If a run starts changing
+  nodes you didn't point it at, or more nodes than expected, it pauses so you
+  can keep going or undo the run.
+- **Restricted mode** (Settings). FlowPilot never deploys: every change gets
+  a plan card, and you deploy yourself.
+- **Example prompts** in an empty conversation.
+- **The pop-out window** now has the same controls and cards as the
+  sidebar.
+
+### Fixed
+- **Narrow sidebars.** FlowPilot is usable at Node-RED's minimum sidebar
+  width (180 px) and looks right at the default 300 px, in the sidebar and
+  the pop-out.
+- Answering FlowPilot's "What would you like me to do?" question now
+  carries on with that choice instead of showing a single letter.
+- Deleting a node no longer counts as changing the node wired into it.
+
 ## [0.7.0-beta.1] - 2026-10-27
 
 **Beta.** Plan/Act: FlowPilot now works out which action you want instead
