@@ -106,6 +106,8 @@ assert.deepStrictEqual(debugs.slice(0, 2).sort(), ["a", "b"], "open-tab debug no
 assert.ok(debugs.indexOf("k") === -1 && debugs.indexOf("s") === -1, "non-matching nodes aren't offered when something matches");
 assert.deepStrictEqual(intake.nodeCandidates({ id: "t1" }, "Rename Shaper").map(function (c) { return c.id; }), ["s"], "a name match wins");
 assert.strictEqual(intake.nodeCandidates({ id: "t1" }, "fix it").length, 4, "no match falls back to the open tab's nodes");
+const named = intake.nodeCandidates({ id: "t1" }, "Add a debug node after the Elsewhere node").map(function (c) { return c.id; });
+assert.strictEqual(named[0], "x", "a node the user names on another tab outranks open-tab type matches");
 delete global.RED;
 console.log("SF-2 picker candidate tests passed");
 

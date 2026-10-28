@@ -223,7 +223,7 @@ function makePreRouterResult(action, verb, prompt, context, needsSelection) {
     return typeof id === "string" && id;
   });
   const summary = needsSelection
-    ? "Select the node(s) you want FlowPilot to work on, then press Act - I'll " + verb + " them as described."
+    ? "Pick the node below (or select it on the canvas), then Approve - I'll " + verb + " it as described."
     : "I will " + verb + " as requested: " + String(prompt || "").trim();
   return {
     toolCalls: [{
