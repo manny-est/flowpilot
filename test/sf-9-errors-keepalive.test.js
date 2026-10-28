@@ -102,7 +102,9 @@ async function routeTests() {
     });
     const body = parseKeepaliveBody(result);
     assert.strictEqual(result.status, 200, "late failure is returned as HTTP 200");
-    assert.strictEqual(body.code, 500, "late failure carries the status it would have had");
+    // Since 0.6.5 the adapter keeps the provider's own status on the error,
+    // so the non-keepalive path would also have answered 503.
+    assert.strictEqual(body.code, 503, "late failure carries the status it would have had");
     assert.ok(body.error, "late failure carries an error");
   } finally {
     failingProvider.close();
