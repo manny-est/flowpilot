@@ -160,7 +160,7 @@ Open the FlowPilot sidebar, click the gear icon, add a provider, and click
 | Base URL | `http://localhost:8080` |
 | API key | Blank unless required by the service |
 | Model | Your model name |
-| Temperature | `0.2` |
+| Temperature | Leave empty to use the model's default |
 
 When Node-RED runs in Docker, `localhost` refers to the Node-RED container.
 Use the provider's container name, Docker network alias, or host IP instead,

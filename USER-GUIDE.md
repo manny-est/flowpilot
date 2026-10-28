@@ -364,7 +364,7 @@ such as OpenAI, LocalAI, and Ollama.
 | Base URL | `http://localhost:8080` for a local service |
 | API key | Blank unless the service requires one |
 | Model | The model name used by the service |
-| Temperature | `0.2` is a focused default |
+| Temperature | Leave empty to use the model's default; some newer models only accept it |
 
 Click **Pre-flight check** to save the provider and test it. The capability
 readout tells you whether the model can reliably call tools.
