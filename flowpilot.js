@@ -2915,11 +2915,20 @@ function flowPilotRuntime(RED) {
         responseBody.error = responseBody.error || responseBody.message || "Request failed.";
         responseBody.code = responseStatus >= 400 ? responseStatus : Number(responseBody.code) || responseStatus;
       }
-      if (originalSetHeader) { originalSetHeader("Content-Type", "application/json; charset=utf-8"); }
-      if (originalEnd) {
-        originalEnd(JSON.stringify(responseBody));
-      } else {
-        originalJson(responseBody);
+      // Headers went out with the first keepalive byte (begin()); setting
+      // one now throws "Cannot set headers after they are sent", and from a
+      // route's catch block that escaped and restarted Node-RED (live, SF-9
+      // gate: a late provider failure behind the proxy). Only write the body.
+      try {
+        if (!res.writableEnded && !res.destroyed) {
+          if (originalEnd) {
+            originalEnd(JSON.stringify(responseBody));
+          } else if (originalWrite) {
+            originalWrite(JSON.stringify(responseBody));
+          }
+        }
+      } catch (err) {
+        console.warn("[FlowPilot] keepalive response could not be completed: " + err.message);
       }
       finish();
       return res;

@@ -151,7 +151,11 @@ function call(runtime, method, route, body, options) {
       send: function (b) { resolve({ status: status, body: b }); return res; },
       type: function () { return res; },
       set: function () { return res; },
-      setHeader: function () {},
+      // Like Node: headers can't change once the body has started (SF-9's
+      // late-failure path crashed Node-RED on exactly this).
+      setHeader: function () {
+        if (res.headersSent) { throw new Error("Cannot set headers after they are sent to the client"); }
+      },
       writeHead: function (s) { status = s; res.headersSent = true; },
       flushHeaders: function () { res.headersSent = true; },
       write: function (chunk) { res.headersSent = true; sse += chunk; return true; },
