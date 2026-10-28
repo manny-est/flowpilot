@@ -1,12 +1,9 @@
 "use strict";
 
 // R11-6 converged Build, server side, through the REAL /flowpilot/build and
-// /flowpilot/agent-step routes:
-// - flag off (buildEngine "classic", the default): a classic Build request is
-//   unchanged (classic prompt, no tools), and an agent-strategy Build 409s;
-// - flag on: agent-strategy Build runs the converged prompt with the WRITE
-//   tools plus deploy_flows/verify_runtime, tool_choice required, on both the
-//   first turn and continuation steps; deploy_flows is consent-gated.
+// /flowpilot/agent-step routes. Tool capability selects the converged engine;
+// the retired buildEngine/enableAgentWrite settings do not. No-tools
+// providers retain the classic Build envelope and cannot use agent strategy.
 
 const assert = require("assert");
 const { startFakeProvider, loadRuntime, call, provider } = require("./helpers/route-harness");
@@ -16,22 +13,22 @@ function names(req) { return (req.body.tools || []).map(function (t) { return t.
 function chatReqs(fake) { return fake.requests.filter(function (r) { return r.method === "POST" && !/\/models$/.test(r.url); }); }
 
 (async function () {
-  // ---- flag off ----
+  // ---- no-tools provider stays classic ----
   let fake = await startFakeProvider({ reply: JSON.stringify({ explanation: "Plan:\n1. x", flow: [] }) });
   try {
-    const p = provider(fake.port, { supportsTools: true });
-    const rt = loadRuntime({ activeProviderId: p.id, providers: [p], enableAgentWrite: true });
+    const p = provider(fake.port, { supportsTools: false });
+    const rt = loadRuntime({ activeProviderId: p.id, providers: [p], enableAgentWrite: false, buildEngine: "converged" });
     const classic = await call(rt, "POST", "/flowpilot/build", { prompt: "inject to debug", strategy: "classic", entry: "build", context: { nodes: [] } });
     assert.strictEqual(classic.status, 200, "classic build 200");
     const req = chatReqs(fake)[0];
     assert.ok(req.body.messages[0].content.indexOf(classicPrompt) === 0, "classic build: classic prompt, unchanged");
     assert.ok(!req.body.tools, "classic build: no tools offered");
     const agentOff = await call(rt, "POST", "/flowpilot/build", { prompt: "inject to debug", strategy: "agent", entry: "build", context: { nodes: [] } });
-    assert.strictEqual(agentOff.status, 409, "agent build with the flag off → 409");
-    assert.strictEqual(agentOff.body.error, "converged_build_unavailable");
+    assert.strictEqual(agentOff.status, 409, "agent build with no tools → 409");
+    assert.strictEqual(agentOff.body.error, "agent_strategy_unavailable");
   } finally { fake.close(); }
 
-  // ---- flag on ----
+  // ---- tool provider always uses converged Build, regardless of stored flags ----
   const isFinal = function (body) { return (body.messages || []).some(function (m) { return m.role === "tool"; }); };
   fake = await startFakeProvider({
     // First turn deploys; the continuation (after a tool result) finishes
@@ -44,7 +41,7 @@ function chatReqs(fake) { return fake.requests.filter(function (r) { return r.me
   });
   try {
     const p = provider(fake.port, { supportsTools: true });
-    const rt = loadRuntime({ activeProviderId: p.id, providers: [p], enableAgentWrite: true, buildEngine: "converged" });
+    const rt = loadRuntime({ activeProviderId: p.id, providers: [p], enableAgentWrite: false, buildEngine: "classic" });
     const first = await call(rt, "POST", "/flowpilot/build", { prompt: "inject to debug", strategy: "agent", entry: "build", context: { nodes: [] }, tools: true });
     assert.strictEqual(first.status, 200, "converged build 200 (" + JSON.stringify(first.body).slice(0, 160) + ")");
     assert.strictEqual(first.body.toolCalls[0].function.name, "deploy_flows");
