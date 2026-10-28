@@ -1,0 +1,656 @@
+[
+  {
+    "id": "gen-basic",
+    "endpoint": "generate",
+    "description": "Simple inject→function→debug chain — baseline success",
+    "prompt": "Create a flow with an inject node that triggers a function which doubles msg.payload, then a debug node to show the result.",
+    "expect": "success"
+  },
+  {
+    "id": "gen-chain",
+    "endpoint": "generate",
+    "description": "Multi-node chain with HTTP request — moderate complexity",
+    "prompt": "Build a flow that polls http://example.com/api/data every 30 seconds with an inject node, makes a GET request with an http-request node, and logs the status code to a debug node.",
+    "expect": "success"
+  },
+  {
+    "id": "gen-mqtt",
+    "endpoint": "generate",
+    "description": "MQTT subscriber with JSON parsing — tests core node variety",
+    "prompt": "Create a flow that subscribes to the MQTT topic 'sensors/temperature' on broker 'localhost', parses the JSON payload with a JSON node, and logs the result to debug.",
+    "expect": "success"
+  },
+  {
+    "id": "gen-switch",
+    "endpoint": "generate",
+    "description": "Switch node with multiple outputs — tests wires[] correctness",
+    "prompt": "Build a flow with an inject node triggering a switch that routes messages: if msg.payload is greater than 100 go to one debug node labeled 'High', otherwise to another debug node labeled 'Normal'.",
+    "expect": "success"
+  },
+  {
+    "id": "gen-ambiguous",
+    "endpoint": "generate",
+    "description": "Vague request — may ask clarifying question or make assumption",
+    "prompt": "Build a monitoring workflow.",
+    "expect": null
+  },
+  {
+    "id": "sf-modify-no-selection",
+    "endpoint": "agent",
+    "route": "/flowpilot/modify",
+    "entry": "modify",
+    "description": "Simple Flow modify with no selection asks which inject node to change",
+    "prompt": "Change the inject node to fire every 10 seconds.",
+    "selected": [],
+    "flow": [{"id":"corpus-tab","type":"tab","label":"Corpus tab"},{"id":"n1","type":"inject","z":"corpus-tab","name":"Trigger","repeat":"","wires":[["n2"]]},{"id":"n2","type":"function","z":"corpus-tab","name":"Process","func":"return msg;","outputs":1,"wires":[["n3"]]},{"id":"n3","type":"debug","z":"corpus-tab","name":"Output","active":true,"wires":[]},{"id":"n4","type":"inject","z":"corpus-tab","name":"Heartbeat","repeat":"","wires":[["n3"]]}],
+    "expect": "ask_target"
+  },
+  {
+    "id": "sf-generate-existing-node",
+    "endpoint": "agent",
+    "route": "/flowpilot/generate",
+    "entry": "generate",
+    "description": "Simple Flow generate slash command explicitly renames an existing selected node",
+    "prompt": "Rename the inject node Trigger to Timer.",
+    "selected": ["n1"],
+    "flow": [{"id":"corpus-tab","type":"tab","label":"Corpus tab"},{"id":"n1","type":"inject","z":"corpus-tab","name":"Trigger","repeat":"","wires":[["n2"]]},{"id":"n2","type":"function","z":"corpus-tab","name":"Process","func":"return msg;","outputs":1,"wires":[["n3"]]},{"id":"n3","type":"debug","z":"corpus-tab","name":"Output","active":true,"wires":[]},{"id":"n4","type":"inject","z":"corpus-tab","name":"Heartbeat","repeat":"","wires":[["n3"]]}],
+    "expectTouched": ["n1"],
+    "expect": "write_allowed"
+  },
+  {
+    "id": "gen-permission-bait",
+    "endpoint": "generate",
+    "description": "Phrased as a request for permission — should generate, not ask",
+    "prompt": "Can you create a simple flow that takes an inject node and sends its output to a debug node? I just want to test that things are working.",
+    "expect": "success"
+  },
+  {
+    "id": "gen-exec-risky",
+    "endpoint": "generate",
+    "description": "Exec node with destructive command — should generate with warning",
+    "prompt": "Create a flow with an inject node and an exec node that runs 'echo hello world' and logs the output to debug.",
+    "expect": "success"
+  },
+  {
+    "id": "gen-wires-edge",
+    "endpoint": "generate",
+    "description": "Comment node and junction — tests that comment wires stay empty",
+    "prompt": "Build a flow with an inject node, a function node, and a comment node labeled 'This doubles the value'. Wire inject to function and add a debug at the end.",
+    "expect": "success"
+  },
+  {
+    "id": "mod-rename",
+    "endpoint": "modify",
+    "description": "Rename a node — basic property change, expect success",
+    "prompt": "Rename the function node to 'Double Value'.",
+    "context": {
+      "nodes": [
+        {
+          "id": "n1",
+          "type": "inject",
+          "name": "Trigger",
+          "topic": "",
+          "payload": "",
+          "payloadType": "date",
+          "repeat": "",
+          "crontab": "",
+          "once": false,
+          "onceDelay": 0.1,
+          "wires": [
+            [
+              "n2"
+            ]
+          ]
+        },
+        {
+          "id": "n2",
+          "type": "function",
+          "name": "Process",
+          "func": "return msg;",
+          "outputs": 1,
+          "wires": [
+            [
+              "n3"
+            ]
+          ]
+        },
+        {
+          "id": "n3",
+          "type": "debug",
+          "name": "Output",
+          "active": true,
+          "tosidebar": true,
+          "complete": "false",
+          "wires": []
+        }
+      ]
+    },
+    "expect": "success"
+  },
+  {
+    "id": "mod-code-change",
+    "endpoint": "modify",
+    "description": "Change function node code — property patch",
+    "prompt": "Update the function node to multiply msg.payload by 2 and return it.",
+    "context": {
+      "nodes": [
+        {
+          "id": "n1",
+          "type": "inject",
+          "name": "Trigger",
+          "payload": "5",
+          "payloadType": "num",
+          "repeat": "",
+          "once": false,
+          "wires": [
+            [
+              "n2"
+            ]
+          ]
+        },
+        {
+          "id": "n2",
+          "type": "function",
+          "name": "Process",
+          "func": "return msg;",
+          "outputs": 1,
+          "wires": [
+            [
+              "n3"
+            ]
+          ]
+        },
+        {
+          "id": "n3",
+          "type": "debug",
+          "name": "Output",
+          "active": true,
+          "tosidebar": true,
+          "wires": []
+        }
+      ]
+    },
+    "expect": "success"
+  },
+  {
+    "id": "mod-add-node",
+    "endpoint": "modify",
+    "description": "Add a new node to the flow — newNodes + newWires",
+    "prompt": "Add a delay node between the function node and the debug node that delays messages by 1 second.",
+    "context": {
+      "nodes": [
+        {
+          "id": "n1",
+          "type": "inject",
+          "name": "Trigger",
+          "payload": "",
+          "payloadType": "date",
+          "repeat": "",
+          "once": false,
+          "wires": [
+            [
+              "n2"
+            ]
+          ]
+        },
+        {
+          "id": "n2",
+          "type": "function",
+          "name": "Process",
+          "func": "msg.payload = msg.payload * 2;\nreturn msg;",
+          "outputs": 1,
+          "wires": [
+            [
+              "n3"
+            ]
+          ]
+        },
+        {
+          "id": "n3",
+          "type": "debug",
+          "name": "Output",
+          "active": true,
+          "tosidebar": true,
+          "wires": []
+        }
+      ]
+    },
+    "expect": "success"
+  },
+  {
+    "id": "mod-remove-node",
+    "endpoint": "modify",
+    "description": "Remove a node from the flow — removeNodes",
+    "prompt": "Remove the debug node from this flow.",
+    "context": {
+      "nodes": [
+        {
+          "id": "n1",
+          "type": "inject",
+          "name": "Trigger",
+          "payload": "",
+          "payloadType": "date",
+          "repeat": "",
+          "once": false,
+          "wires": [
+            [
+              "n2"
+            ]
+          ]
+        },
+        {
+          "id": "n2",
+          "type": "function",
+          "name": "Process",
+          "func": "return msg;",
+          "outputs": 1,
+          "wires": [
+            [
+              "n3"
+            ]
+          ]
+        },
+        {
+          "id": "n3",
+          "type": "debug",
+          "name": "Output",
+          "active": true,
+          "tosidebar": true,
+          "wires": []
+        }
+      ]
+    },
+    "expect": "success"
+  },
+  {
+    "id": "mod-multi-change",
+    "endpoint": "modify",
+    "description": "Multiple simultaneous changes — rename + code update",
+    "prompt": "Rename the inject node to 'Start' and change the function node to set msg.topic to 'sensor/data' before returning.",
+    "context": {
+      "nodes": [
+        {
+          "id": "n1",
+          "type": "inject",
+          "name": "Trigger",
+          "payload": "",
+          "payloadType": "date",
+          "repeat": "",
+          "once": false,
+          "wires": [
+            [
+              "n2"
+            ]
+          ]
+        },
+        {
+          "id": "n2",
+          "type": "function",
+          "name": "Process",
+          "func": "return msg;",
+          "outputs": 1,
+          "wires": [
+            [
+              "n3"
+            ]
+          ]
+        },
+        {
+          "id": "n3",
+          "type": "debug",
+          "name": "Output",
+          "active": true,
+          "tosidebar": true,
+          "wires": []
+        }
+      ]
+    },
+    "expect": "success"
+  },
+  {
+    "id": "sf-direct-named-targets",
+    "endpoint": "agent",
+    "route": "/flowpilot/modify",
+    "entry": "modify",
+    "description": "Simple Flow modify resolves the named Process and Output targets",
+    "prompt": "Make the Process function upper-case msg.payload, and rename the Output debug node to Result.",
+    "selected": ["n2"],
+    "flow": [{"id":"corpus-tab","type":"tab","label":"Corpus tab"},{"id":"n1","type":"inject","z":"corpus-tab","name":"Trigger","repeat":"","wires":[["n2"]]},{"id":"n2","type":"function","z":"corpus-tab","name":"Process","func":"return msg;","outputs":1,"wires":[["n3"]]},{"id":"n3","type":"debug","z":"corpus-tab","name":"Output","active":true,"wires":[]},{"id":"n4","type":"inject","z":"corpus-tab","name":"Heartbeat","repeat":"","wires":[["n3"]]}],
+    "expectTouched": ["n2", "n3"],
+    "expect": "write_allowed"
+  },
+  {
+    "id": "sf-direct-delete-consent",
+    "endpoint": "agent",
+    "route": "/flowpilot/modify",
+    "entry": "modify",
+    "description": "Simple Flow delete of an existing debug node stops at consent",
+    "prompt": "Delete the Output debug node.",
+    "selected": ["n3"],
+    "flow": [{"id":"corpus-tab","type":"tab","label":"Corpus tab"},{"id":"n1","type":"inject","z":"corpus-tab","name":"Trigger","repeat":"","wires":[["n2"]]},{"id":"n2","type":"function","z":"corpus-tab","name":"Process","func":"return msg;","outputs":1,"wires":[["n3"]]},{"id":"n3","type":"debug","z":"corpus-tab","name":"Output","active":true,"wires":[]},{"id":"n4","type":"inject","z":"corpus-tab","name":"Heartbeat","repeat":"","wires":[["n3"]]}],
+    "expect": "consent_ask"
+  },
+  {
+    "id": "mod-permission-bait",
+    "endpoint": "modify",
+    "description": "Phrased as asking permission — should modify, not seek approval",
+    "prompt": "Would you be able to rename the function node to 'Transform' and also update the debug node to show the complete message object?",
+    "context": {
+      "nodes": [
+        {
+          "id": "n1",
+          "type": "inject",
+          "name": "Trigger",
+          "payload": "",
+          "payloadType": "date",
+          "repeat": "",
+          "once": false,
+          "wires": [
+            [
+              "n2"
+            ]
+          ]
+        },
+        {
+          "id": "n2",
+          "type": "function",
+          "name": "Process",
+          "func": "return msg;",
+          "outputs": 1,
+          "wires": [
+            [
+              "n3"
+            ]
+          ]
+        },
+        {
+          "id": "n3",
+          "type": "debug",
+          "name": "Output",
+          "active": true,
+          "tosidebar": true,
+          "wires": []
+        }
+      ]
+    },
+    "expect": "success"
+  },
+  {
+    "id": "mod-vague",
+    "endpoint": "modify",
+    "description": "Vague improvement request — model may ask, prose, or make changes",
+    "prompt": "Can you improve this flow?",
+    "context": {
+      "nodes": [
+        {
+          "id": "n1",
+          "type": "inject",
+          "name": "Trigger",
+          "payload": "",
+          "payloadType": "date",
+          "repeat": "",
+          "once": false,
+          "wires": [
+            [
+              "n2"
+            ]
+          ]
+        },
+        {
+          "id": "n2",
+          "type": "function",
+          "name": "Process",
+          "func": "return msg;",
+          "outputs": 1,
+          "wires": [
+            [
+              "n3"
+            ]
+          ]
+        },
+        {
+          "id": "n3",
+          "type": "debug",
+          "name": "Output",
+          "active": true,
+          "tosidebar": true,
+          "wires": []
+        }
+      ]
+    },
+    "expect": null
+  },
+  {
+    "id": "mod-http-headers",
+    "endpoint": "modify",
+    "description": "Add static headers to http-request node — tests A5 header repair",
+    "prompt": "Add a static Accept: application/json header to the http-request node.",
+    "context": {
+      "nodes": [
+        {
+          "id": "n1",
+          "type": "inject",
+          "name": "Trigger",
+          "payload": "",
+          "payloadType": "date",
+          "repeat": "",
+          "once": false,
+          "wires": [
+            [
+              "n2"
+            ]
+          ]
+        },
+        {
+          "id": "n2",
+          "type": "http request",
+          "name": "Fetch Data",
+          "method": "GET",
+          "ret": "obj",
+          "url": "http://example.com/api",
+          "headers": [],
+          "wires": [
+            [
+              "n3"
+            ]
+          ]
+        },
+        {
+          "id": "n3",
+          "type": "debug",
+          "name": "Output",
+          "active": true,
+          "tosidebar": true,
+          "wires": []
+        }
+      ]
+    },
+    "expect": "success"
+  },
+  {
+    "id": "strat-missing",
+    "endpoint": "modify",
+    "description": "Modify without strategy fails loudly instead of inferring a contract",
+    "prompt": "Rename the node.",
+    "context": {
+      "nodes": [
+        {
+          "id": "n1",
+          "type": "inject",
+          "name": "Trigger",
+          "wires": []
+        }
+      ]
+    },
+    "omitFields": [
+      "strategy"
+    ],
+    "expect": "strategy_required"
+  },
+  {
+    "id": "strat-agent-unavailable",
+    "endpoint": "modify",
+    "description": "SF-5: a tool-capable provider always accepts the agent strategy (the old enableAgentWrite gate is retired). Rejection for a no-tools provider is covered by test/sf-5-one-engine.test.js.",
+    "prompt": "Rename the node.",
+    "context": {
+      "nodes": [
+        {
+          "id": "n1",
+          "type": "inject",
+          "name": "Trigger",
+          "wires": []
+        }
+      ]
+    },
+    "request": {
+      "strategy": "agent",
+      "entry": "modify",
+      "tools": true
+    },
+    "expect": null
+  },
+  {
+    "id": "fixed-write-apply-pass",
+    "endpoint": "fixed-script",
+    "description": "Scripted apply_step result preserves property/exists/wire checks",
+    "fixedScript": {
+      "call": {
+        "id": "write-apply-1",
+        "name": "apply_step",
+        "arguments": {
+          "summary": "Add and connect a debug node",
+          "newNodes": [
+            {
+              "id": "fp-new-0",
+              "type": "debug",
+              "name": "Output"
+            }
+          ],
+          "newWires": [
+            {
+              "from": "n1",
+              "fromPort": 0,
+              "to": "fp-new-0"
+            }
+          ]
+        }
+      },
+      "result": {
+        "summary": "Add and connect a debug node",
+        "checks": [
+          {
+            "nodeId": "fp-new-0",
+            "check": "exists",
+            "expected": true,
+            "actual": true,
+            "pass": true
+          },
+          {
+            "nodeId": "fp-new-0",
+            "check": "property",
+            "prop": "name",
+            "expected": "Output",
+            "actual": "Output",
+            "pass": true
+          },
+          {
+            "fromId": "n1",
+            "fromPort": 0,
+            "toId": "fp-new-0",
+            "check": "wire",
+            "expected": true,
+            "actual": true,
+            "pass": true
+          }
+        ]
+      }
+    },
+    "expect": "fixed_script_success"
+  },
+  {
+    "id": "fixed-write-remove-pass",
+    "endpoint": "fixed-script",
+    "description": "Scripted remove_step result preserves an absence check",
+    "fixedScript": {
+      "call": {
+        "id": "write-remove-1",
+        "name": "remove_step",
+        "arguments": {
+          "summary": "Remove obsolete debug",
+          "nodeId": "n3"
+        }
+      },
+      "result": {
+        "summary": "Remove obsolete debug",
+        "checks": [
+          {
+            "nodeId": "n3",
+            "check": "absent",
+            "expected": false,
+            "actual": false,
+            "pass": true
+          }
+        ]
+      }
+    },
+    "expect": "fixed_script_success"
+  },
+  {
+    "id": "fixed-write-partial-failure",
+    "endpoint": "fixed-script",
+    "description": "Scripted failed wire check remains visible to the next model turn",
+    "fixedScript": {
+      "call": {
+        "id": "write-apply-2",
+        "name": "apply_step",
+        "arguments": {
+          "summary": "Connect function to response",
+          "newWires": [
+            {
+              "from": "n2",
+              "fromPort": 0,
+              "to": "n4"
+            }
+          ]
+        }
+      },
+      "result": {
+        "summary": "Connect function to response",
+        "checks": [
+          {
+            "fromId": "n2",
+            "fromPort": 0,
+            "toId": "n4",
+            "check": "wire",
+            "expected": true,
+            "actual": false,
+            "pass": false
+          }
+        ]
+      }
+    },
+    "expect": "fixed_script_success"
+  },
+  {
+    "id": "fixed-ask-user-resume",
+    "endpoint": "fixed-script",
+    "description": "Scripted ask_user answer round-trips as a tool result",
+    "fixedScript": {
+      "call": {
+        "id": "ask-1",
+        "name": "ask_user",
+        "arguments": {
+          "question": "Which output should be connected?",
+          "options": [
+            "Success",
+            "Error"
+          ]
+        }
+      },
+      "result": {
+        "answer": "Success"
+      }
+    },
+    "expect": "fixed_script_success"
+  }
+]

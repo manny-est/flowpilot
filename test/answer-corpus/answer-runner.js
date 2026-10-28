@@ -8,7 +8,7 @@ const path = require("path");
 
 const NR_URL = process.env.NR_URL || "http://127.0.0.1:1880";
 const NR_USER = process.env.NR_USER || "fp-test";
-const NR_PASS = process.env.NR_PASS || "Flowpilot!";
+const NR_PASS = process.env.NR_PASS;
 const OUTPUT_DIR = process.env.OUTPUT_DIR || __dirname;
 const LABEL = process.env.RUN_LABEL || "answer";
 const MAX_STEPS = parseInt(process.env.AGENT_LOOP_MAX_STEPS || "8", 10);
