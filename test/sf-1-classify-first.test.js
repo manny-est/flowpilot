@@ -147,6 +147,101 @@ async function testActionFallback() {
   });
 }
 
+// The reply to Tier C's own "What would you like FlowPilot to do?" question
+// arrives on agent-step. It must route, not go back to the classifier model
+// (which would just print "C" as the chat answer).
+function tierCAskMessages(answer) {
+  const askId = "tier-c-123";
+  return [
+    { role: "system", content: "You classify one Node-RED user request for FlowPilot." },
+    { role: "user", content: "Fix the bug in this function" },
+    { role: "assistant", content: null, tool_calls: toolCall("ask_user", {
+      question: "What would you like FlowPilot to do with this flow?",
+      options: ["Answer a question", "Create nodes", "Change nodes", "Document nodes", "Build and verify"]
+    }, askId) },
+    { role: "tool", tool_call_id: askId, content: JSON.stringify({ answer: answer }) }
+  ];
+}
+
+async function testTierCAskOptionRoutes() {
+  await withRuntime({
+    reply: function () {
+      return JSON.stringify({ summary: "Fix the uppercase call.", plan_items: ["Use toUpperCase"] });
+    }
+  }, {}, async function (runtime, fake) {
+    const out = await call(runtime, "POST", "/flowpilot/agent-step", {
+      strategy: "agent", entry: "chat", mode: "chat",
+      intake: { message: "Fix the bug in this function" },
+      context: { nodes: [{ id: "n1", type: "function", name: "Shaper" }] },
+      messages: tierCAskMessages("Change nodes")
+    });
+    assert.strictEqual(out.status, 200);
+    assert.strictEqual(out.body.message, undefined, "no bare letter reply");
+    assert.strictEqual(out.body.toolCalls[0].function.name, "propose_action");
+    const args = JSON.parse(out.body.toolCalls[0].function.arguments);
+    assert.strictEqual(args.action, "modify");
+    assert.strictEqual(args.summary, "Fix the uppercase call.");
+    const calls = fake.requests.filter(function (request) { return /\/chat\/completions$/.test(request.url); });
+    assert.strictEqual(calls.length, 1, "the option maps to its letter; only the summary follow-up calls the model");
+    assert.strictEqual(calls[0].body.tools, undefined, "summary follow-up runs without tools");
+    const last = calls[0].body.messages[calls[0].body.messages.length - 1];
+    assert.ok(/already decided as modify/.test(last.content));
+    assert.strictEqual(calls[0].body.messages.filter(function (m) { return m.role === "system"; }).length, 1);
+  });
+}
+
+async function testTierCAskAnswerHandsOff() {
+  await withRuntime({
+    reply: "",
+    toolCalls: function (body) {
+      return body && Array.isArray(body.tools) ? toolCall("read_node", { name: "Shaper" }) : null;
+    }
+  }, {}, async function (runtime, fake) {
+    const out = await call(runtime, "POST", "/flowpilot/agent-step", {
+      strategy: "agent", entry: "chat", mode: "chat",
+      intake: { message: "Fix the bug in this function" },
+      messages: tierCAskMessages("Answer a question")
+    });
+    assert.strictEqual(out.body.answerPhase, true);
+    assert.strictEqual(out.body.toolCalls[0].function.name, "read_node");
+    const sent = fake.requests.filter(function (request) { return /\/chat\/completions$/.test(request.url); })[0].body;
+    assert.ok(!/You classify one Node-RED user request/.test(sent.messages[0].content),
+      "the answer turn uses the chat system prompt, not the classifier's");
+    assert.strictEqual(sent.messages[sent.messages.length - 1].role, "user");
+    assert.strictEqual(sent.tools.map(function (t) { return t.function.name; }).indexOf("propose_action"), -1);
+  });
+}
+
+async function testTierCAskOtherTextIsClassified() {
+  let callIndex = 0;
+  await withRuntime({
+    reply: function () { callIndex++; return callIndex === 1 ? "D" : "not json"; }
+  }, {}, async function (runtime, fake) {
+    const out = await call(runtime, "POST", "/flowpilot/agent-step", {
+      strategy: "agent", entry: "chat", mode: "chat",
+      intake: { message: "Fix the bug in this function" },
+      context: { nodes: [{ id: "n1", type: "function", name: "Shaper" }] },
+      messages: tierCAskMessages("just add comments explaining it")
+    });
+    assert.strictEqual(out.body.toolCalls[0].function.name, "propose_action");
+    assert.strictEqual(JSON.parse(out.body.toolCalls[0].function.arguments).action, "document");
+    const first = fake.requests.filter(function (request) { return /\/chat\/completions$/.test(request.url); })[0].body;
+    assert.strictEqual(first.tools, undefined, "typed answers are classified with tools off");
+  });
+}
+
+async function testOrdinaryAskUserUntouched() {
+  await withRuntime({ reply: "Thanks, done." }, {}, async function (runtime) {
+    const messages = tierCAskMessages("Change nodes");
+    messages[2].tool_calls[0].id = "call-9";
+    messages[3].tool_call_id = "call-9";
+    const out = await call(runtime, "POST", "/flowpilot/agent-step", {
+      strategy: "agent", entry: "chat", mode: "chat", messages: messages
+    });
+    assert.strictEqual(out.body.message, "Thanks, done.", "a model's own ask_user still continues normally");
+  });
+}
+
 (async function () {
   await testAnswerHandoff();
   await testAnswerNoTools();
@@ -154,6 +249,10 @@ async function testActionFallback() {
   await testAnswerPhaseKeepsReadCalls();
   await testActionSummary();
   await testActionFallback();
+  await testTierCAskOptionRoutes();
+  await testTierCAskAnswerHandsOff();
+  await testTierCAskOtherTextIsClassified();
+  await testOrdinaryAskUserUntouched();
   console.log("SF-1 classify-first tests passed");
 })().catch(function (err) {
   console.error(err.stack || err.message || String(err));

@@ -112,6 +112,19 @@ const outside = api.diffGateDecision([
 assert.strictEqual(outside.pause, true, "editing an existing node outside the target pauses");
 assert.strictEqual(outside.reason, "out-of-target");
 
+// Deleting the target drops its incoming wire; the upstream node isn't
+// edited, so this must not pause (Q5 live check, SF-5: "Delete this node").
+const deleteTarget = api.diffGateDecision([
+  { t: "delete", nodes: [{ id: "target", name: "Out", type: "debug" }],
+    links: [{ source: { id: "upstream", name: "Set Topic", type: "change" }, target: { id: "target" } }] }
+], ["target"], null, {});
+assert.strictEqual(deleteTarget.pause, false, "deleting the target doesn't count the upstream node as touched");
+assert.ok(!deleteTarget.touchedNodes.some(function (n) { return n.id === "upstream"; }));
+const rewireOther = api.diffGateDecision([
+  { t: "delete", links: [{ source: { id: "upstream" }, target: { id: "elsewhere" } }] }
+], ["target"], null, {});
+assert.strictEqual(rewireOther.pause, true, "removing a wire between two other nodes still counts");
+
 // Node-RED 5.x: undo is RED.history.pop() ("core:undo"); there's no undo().
 const stack = [];
 let popped = null;
