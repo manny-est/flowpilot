@@ -2,6 +2,55 @@
 
 All notable changes to FlowPilot are documented here.
 
+## [0.7.0-beta.3] - 2026-10-28
+
+**Beta.** Finishes Simple Flow: FlowPilot can now prove a flow works,
+long turns survive reverse proxies, errors are readable, and custom
+intents become saved prompts. Install with
+`npm install @manny-est/node-red-flowpilot@beta`; the stable line stays on
+0.6.x.
+
+### Added
+- **Runtime proof with FlowPilot's own test nodes.** To check a flow,
+  FlowPilot adds small debug nodes named "FlowPilot test" next to the
+  flow's output, deploys, triggers the flow, reads what they receive, then
+  removes them and deploys again so nothing is left running. **Test it** on
+  the result card does the same on demand. The run line says "Run: proven"
+  with the flow's actual output, or "Run: not provable here" and why.
+  - Only FlowPilot's own test nodes count, matched by id. A node of yours
+    with the same name can't fake a pass.
+  - Deploying asks first only when it would also deploy changes you made
+    yourself.
+  - Test nodes left behind by a crash or a closed tab are removed when the
+    editor loads, with a notice.
+  - Restricted mode adds no test nodes and never deploys.
+  - Known limit: while a proof runs, its test messages also show in your
+    Debug sidebar.
+- **Saved prompts.** Type `/` to see them next to the built-in commands;
+  choosing one fills the prompt box without sending. Add, edit and delete
+  them in Settings.
+- **Speed hint.** On a local model, after 45 seconds the status line adds
+  "Local models can take a minute or more per step", once per run.
+
+### Changed
+- **Custom intents are now saved prompts.** They're converted the first
+  time this version loads, and FlowPilot tells you once where they went.
+  Nothing you wrote is lost.
+- **Settings is shorter.** Controls that no longer did anything are gone
+  ("Hold at each loop checkpoint", "Show the built-in helper buttons"). The
+  pause threshold ("Diff-gate pause above", default 5 changed nodes) is
+  now a visible setting, and the routing override is under
+  **Diagnostics**.
+
+### Fixed
+- **Long turns no longer fail at a reverse proxy** (for example a 504 after
+  90 seconds). While a slow model works, FlowPilot keeps the connection
+  open.
+- **Errors are readable.** Proxy and error-page HTML never reaches the
+  chat; a 504, 502, auth, timeout or network failure gets a plain
+  sentence.
+- Settings is usable at the 180 px minimum sidebar width.
+
 ## [0.7.0-beta.2] - 2026-10-27
 
 **Beta.** Simple Flow: FlowPilot now does clear, targeted changes straight
