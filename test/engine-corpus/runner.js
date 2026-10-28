@@ -323,13 +323,17 @@ function classify(endpoint, status, body) {
 
 function finalAgentKind(body, wrote) {
   if (wrote) { return "write_allowed"; }
-  // ask_target is the browser's ASK picker: lane ASK, needs_selection or
-  // ask_user. A prose reply that asks in words is not a picker.
-  if (body && String(body.lane || "").toUpperCase() === "ASK") { return "ask_target"; }
+  // A text reply is never the ASK picker. The browser shows the picker only
+  // for propose_action (needs_selection, or the server's ASK lane) and ask_user.
   return "refused";
 }
 
-function proposalKind(call, wrote) { return wrote ? "write_allowed" : (toolArgs(call).needs_selection === true ? "ask_target" : "refused"); }
+// The server lane applies only to propose_action, as in the browser
+// (processToolCallsFrom → dispatchForLane in lib/core/modes.js).
+function proposalKind(call, wrote, lane) {
+  if (wrote) { return "write_allowed"; }
+  return toolArgs(call).needs_selection === true || String(lane || "").toUpperCase() === "ASK" ? "ask_target" : "refused";
+}
 
 function makeResult(testCase, kind, started, extras) {
   const pass = testCase.expect === null || testCase.expect === undefined ? null : expectMatches(testCase.expect, kind);
@@ -369,12 +373,11 @@ async function runAgentCase(testCase, token) {
     if (response.status !== 200) { kind = classify(testCase.entry, response.status, response.body); break; }
     const calls = Array.isArray(body.toolCalls) ? body.toolCalls : [];
     if (!calls.length) { kind = finalAgentKind(body, writes.length > 0); break; }
-    if (String(body.lane || "").toUpperCase() === "ASK" && writes.length === 0) { kind = "ask_target"; break; }
     messages = appendAssistant(messages, body);
     let stopped = false;
     for (let i = 0; i < calls.length; i++) {
       const call = calls[i], name = toolName(call);
-      if (name === "propose_action") { kind = proposalKind(call, writes.length > 0); stopped = true; break; }
+      if (name === "propose_action") { kind = proposalKind(call, writes.length > 0, body.lane); stopped = true; break; }
       if (name === "ask_user") { kind = writes.length > 0 ? "write_allowed" : "ask_target"; stopped = true; break; }
       if (!WRITE_TOOLS.has(name)) { messages = appendTool(messages, call, readTool(call, parts, parts.context)); continue; }
       const gate = evaluateWriteTool(call, parts.targetLock.ids, parts, state, ledger);
@@ -467,6 +470,6 @@ async function main() {
 
 if (require.main === module) { main().catch(function (err) { console.error("\nFatal:", err.stack || err.message); process.exitCode = 1; }); }
 
-module.exports = { cases: cases, corpusSha256: CORPUS_SHA256, expectMatches: expectMatches, fixtureParts: fixtureParts,
+module.exports = { proposalKind: proposalKind, cases: cases, corpusSha256: CORPUS_SHA256, expectMatches: expectMatches, fixtureParts: fixtureParts,
   loadGateModules: loadGateModules, evaluateWriteTool: evaluateWriteTool, classifyCannedToolCall: classifyCannedToolCall,
   classify: classify, runAgentCase: runAgentCase };

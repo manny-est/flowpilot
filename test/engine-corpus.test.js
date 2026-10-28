@@ -27,4 +27,12 @@ assert.strictEqual(runner.classifyCannedToolCall(call("rename_node", { nodeId: "
 assert.strictEqual(runner.classifyCannedToolCall(call("rename_node", { nodeId: "n1", name: "Timer" }), parts, ["n1"]),
   "write_allowed", "locked safe edit is write_allowed");
 
+// The server stamps lane ASK on any response without propose_action; the
+// browser applies the lane only to propose_action, so a write still goes
+// through consent and the diff gate (found on the first live baseline).
+assert.strictEqual(runner.proposalKind(call("propose_action", { action: "modify" }), false, "ASK"),
+  "ask_target", "propose_action in the ASK lane is the picker");
+assert.strictEqual(runner.proposalKind(call("propose_action", { action: "modify" }), false, "DIRECT"),
+  "refused", "propose_action outside ASK without needs_selection is not a picker");
+
 console.log("engine-corpus gate-loading tests passed");
