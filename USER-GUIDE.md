@@ -129,7 +129,7 @@ OpenAI-compatible endpoint), LM Studio, etc.
      new key, and choose a specific workspace at creation time.
    - **Model** — type a model name, or click **Refresh models** to fetch
      the provider's available models and pick from the list.
-   - **Temperature** — a starting value of `0.2` works well for most uses.
+   - **Temperature** — leave it empty to use the model's own default. Some newer models only accept their default.
 
 ![Provider settings: Base URL, API key, model, and temperature fields](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/sidebar-settings-providers.png)
 

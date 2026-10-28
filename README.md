@@ -1,23 +1,47 @@
-# FlowPilot for Node-RED
+```
+ ███████████ ████                           ███████████   ███  ████            █████
+░░███░░░░░░█░░███                          ░░███░░░░░███ ░░░  ░░███           ░░███
+ ░███   █ ░  ░███   ██████  █████ ███ █████ ░███    ░███ ████  ░███   ██████  ███████
+ ░███████    ░███  ███░░███░░███ ░███░░███  ░██████████ ░░███  ░███  ███░░███░░░███░
+ ░███░░░█    ░███ ░███ ░███ ░███ ░███ ░███  ░███░░░░░░   ░███  ░███ ░███ ░███  ░███
+ ░███  ░     ░███ ░███ ░███ ░░███████████   ░███         ░███  ░███ ░███ ░███  ░███ ███
+ █████       █████░░██████   ░░████░████    █████        █████ █████░░██████   ░░█████
+░░░░░       ░░░░░  ░░░░░░     ░░░░ ░░░░    ░░░░░        ░░░░░ ░░░░░  ░░░░░░     ░░░░
+```
 
-Package: `@manny-est/node-red-flowpilot`
+<div align="center">
 
-FlowPilot: AI assistance for Node-RED, designed for builders who want help
-without giving up control.
+### AI assistance for Node-RED — for builders who want help without giving up control.
 
-FlowPilot is an AI-powered development assistant that lives in the Node-RED
-editor sidebar. It talks natively to Anthropic (Claude models) or to any
-OpenAI-compatible API (OpenAI, LocalAI, Ollama, etc.) and helps you
-generate, modify, document, and discuss your flows — without ever acting
-behind your back.
+[![npm](https://img.shields.io/npm/v/@manny-est/node-red-flowpilot?color=blue)](https://www.npmjs.com/package/@manny-est/node-red-flowpilot)
+[![Node-RED](https://img.shields.io/badge/Node--RED-4.x%20%7C%205.x-red)](https://nodered.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-16%2B-green)](https://nodejs.org/)
+[![License](https://img.shields.io/badge/license-MIT-lightgrey)](#)
+
+**[Watch the walkthrough](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/full-intro-demo.mp4)** · **[User Guide](USER-GUIDE.md)** · **[Project Overview](PROJECT-OVERVIEW.md)** · **[Report a Bug](https://github.com/manny-est/flowpilot/issues)**
+
+</div>
+
+---
+
+FlowPilot is an AI assistant in the Node-RED editor sidebar. It works with
+**Anthropic** models and **OpenAI-compatible** APIs, including OpenAI, LocalAI,
+and Ollama. It helps you generate, modify, document, and discuss your flows,
+without ever acting behind your back.
 
 ![FlowPilot sidebar](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/sidebar-chat-overview.png)
 
-▶ [Watch a full walkthrough](https://github.com/manny-est/flowpilot/releases/download/v0.2.1/full-intro-demo.mp4) (MP4, ~30MB) — first launch, setting a provider, `/help`, and `/demo`.
+## Table of contents
 
-See [PROJECT-OVERVIEW.md](PROJECT-OVERVIEW.md) for how FlowPilot was built
-and a full rundown of its features, or [USER-GUIDE.md](USER-GUIDE.md) for
-installation, the sidebar UI, and a chapter on every feature.
+- [Design principles](#design-principles)
+- [Privacy & data](#privacy--data)
+- [Features](#features)
+- [Requirements](#requirements)
+- [Install](#install)
+- [Provider setup](#provider-setup)
+- [Examples](#examples)
+- [Development status](#development-status)
+- [Feedback](#feedback)
 
 ## Design principles
 
@@ -39,24 +63,18 @@ installation, the sidebar UI, and a chapter on every feature.
 
 ## Privacy & data
 
-FlowPilot sends data to an AI provider only when **you** trigger a request —
-nothing happens in the background. When you do, it sends the context you've
-given it: your selected nodes and their wiring, any debug messages you've
-attached, and your conversation history.
+FlowPilot sends data to an AI provider **only when you trigger a request**. A
+request may include selected nodes and wiring, attached Debug messages, and
+recent conversation history.
 
-Before anything is sent, that context is sanitized: editor-internal fields are
-stripped, and values that look like secrets (credentials, tokens, API keys,
-auth headers) are redacted. Node-RED's separate credential store is never
-included. A warning (⚠) appears in the status strip when a selection might
-still contain sensitive configuration or code, so you can review before
-sending.
+Before sending, FlowPilot strips editor-internal fields and redacts values that
+look like secrets such as credentials, tokens, API keys, and authorization
+headers. Node-RED's separate credential store is never included. A warning
+appears when context may still contain sensitive configuration or code.
 
-Because your flow contents leave your Node-RED instance when you send a
-request, a **local or private AI provider (LocalAI, Ollama, etc.) is
-recommended for sensitive or proprietary flows**. You choose the provider, and
-nothing is sent anywhere you didn't configure.
-
-See the [User Guide](USER-GUIDE.md#privacy-and-safety) for the full details.
+Because flow contents leave Node-RED when you send a request, use a local or
+private provider for sensitive or proprietary flows. See the [User
+Guide](USER-GUIDE.md#privacy-and-safety) for details.
 
 ## Features
 
@@ -101,11 +119,12 @@ See the [User Guide](USER-GUIDE.md#privacy-and-safety) for the full details.
 
 ## Requirements
 
-Node-RED 4.x and 5.x, tested. Node.js 16+.
+- Node-RED **4.x** and **5.x**, tested
+- Node.js **16+**
 
 ## Install
 
-In the Node-RED editor: **Menu → Manage palette → Install**, search for
+In the Node-RED editor, open **Menu → Manage palette → Install**, search for
 `@manny-est/node-red-flowpilot`, and click **Install**.
 
 Or, from your Node-RED user directory:
@@ -116,77 +135,83 @@ npm install @manny-est/node-red-flowpilot
 node-red
 ```
 
-Restart Node-RED (or the container) after installing or updating — FlowPilot's
-editor UI is cached server-side, so a browser refresh alone is not enough.
+> **Restart required.** Restart Node-RED, or the container, after installing or updating. A browser refresh alone does not reload the cached editor UI.
 
-For a Docker/container setup, install into the mounted Node-RED user directory.
-If your user directory is `/data` (or `/workspaces/nodered`, etc.), this folder
-should exist:
+### Docker / container setup
+
+Install into the mounted Node-RED user directory. If it is `/data`, the
+package should be at:
 
 ```text
-<node-red-userDir>/node_modules/@manny-est/node-red-flowpilot
+/data/node_modules/@manny-est/node-red-flowpilot
 ```
 
-Restart the Node-RED container/process after updating the package files
-directly — the plugin server caches assembled scripts in memory.
+Restart the Node-RED container or process after updating package files.
 
-FlowPilot stores its own settings and logs separately from the plugin code,
-under `<node-red-userDir>/flowpilot/`:
+### Where FlowPilot stores its data
 
-- `settings.json` — provider configs (including API keys), custom intents,
-  conversation/streaming preferences
-- `audit.log` — a log of every generate/modify/document action
-- `chats/` — lightweight per-session chat logs
-- `backups/` — pre-change backups
+FlowPilot stores its settings and logs under
+`<node-red-userDir>/flowpilot/`:
+
+| Path | Contents |
+| --- | --- |
+| `settings.json` | Provider configuration, custom intents, and conversation preferences |
+| `audit.log` | A log of generate, modify, document, and related actions |
+| `chats/` | Lightweight per-session conversation logs |
+| `backups/` | Pre-change backups |
 
 ## Provider setup
 
-Open the FlowPilot sidebar, click the settings (gear) icon, and add a
-provider.
+Open the FlowPilot sidebar, click the gear icon, add a provider, and click
+**Pre-flight check** to save and verify it.
 
-**Anthropic (Claude models):**
+### Anthropic (Claude models)
 
-- Provider type: `Anthropic`
-- Provider name: `Claude` (or any label)
-- Base URL: leave blank (uses `api.anthropic.com`)
-- API key: your Anthropic API key. If it returns an
-  `anthropic-workspace-id is required` error, create a new key in the
-  Anthropic Console scoped to a single workspace.
-- Model: e.g. `claude-opus-5`, or click **Refresh models**
+| Field | Value |
+| --- | --- |
+| Provider | `Anthropic` |
+| Provider name | `Claude`, or any label |
+| Base URL | Leave blank for `api.anthropic.com` |
+| API key | Your Anthropic API key |
+| Model | A model name, or **Refresh models** |
 
-**Example: LocalAI (OpenAI-compatible):**
+If you get an `anthropic-workspace-id is required` error, create a new key in
+the Anthropic Console scoped to a single workspace.
 
-- Provider type: `OpenAI-compatible`
-- Provider name: `LocalAI` (or any label)
-- Base URL: `http://localhost:8080`
-- API key: blank unless your instance requires one
-- Model: your model name
-- Temperature: `0.2`
+### OpenAI-compatible APIs
 
-If Node-RED is running in Docker, `localhost` refers to the Node-RED
-container, not the Docker host. Use the provider's container name, Docker
-network alias, or host IP instead, e.g.:
+| Field | Example |
+| --- | --- |
+| Provider | `OpenAI-compatible` |
+| Provider name | `LocalAI`, or any label |
+| Base URL | `http://localhost:8080` |
+| API key | Blank unless required by the service |
+| Model | Your model name |
+| Temperature | Leave empty to use the model's default |
 
-```text
-http://localai:8080
-http://172.17.0.1:8080
-```
-
-Click **Pre-flight check** to save and verify connectivity.
+When Node-RED runs in Docker, `localhost` refers to the Node-RED container.
+Use the provider's container name, Docker network alias, or host IP instead,
+for example `http://localai:8080` or `http://172.17.0.1:8080`.
 
 ## Examples
 
-The `examples/` folder includes a couple of small starter flows, available
-from the editor's **Import → Examples → FlowPilot** menu — see
-[USER-GUIDE.md](USER-GUIDE.md#examples) for what they're for.
+The `examples/` folder is available from **Import → Examples → FlowPilot** in
+the editor. It includes a Getting Started flow and a Dad Joke Demo. See the
+[User Guide](USER-GUIDE.md#examples) for details.
 
 ## Development status
 
-FlowPilot is under active development. Every change is reviewable and
-undoable, but as with any AI-assisted tool, review proposed changes before
-applying them — especially on flows you care about.
+0.6.x is the stable release line. Every change is reviewable and undoable, but
+as with any AI-assisted tool, review proposed changes before applying them,
+especially on flows you care about. The next version, 0.7.0, is in development
+on the `develop` branch. See the [changelog](CHANGELOG.md) for release details.
 
 ## Feedback
 
-Found a bug or have a feature request? Please open an issue:
-https://github.com/manny-est/flowpilot/issues
+Found a bug or have a feature request? Please [open an issue](https://github.com/manny-est/flowpilot/issues).
+
+---
+
+<div align="center">
+<sub>Built for Node-RED. Provider-agnostic by design.</sub>
+</div>
