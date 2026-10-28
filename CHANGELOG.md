@@ -15,8 +15,8 @@ intents become saved prompts. Install with
   FlowPilot adds small debug nodes named "FlowPilot test" next to the
   flow's output, deploys, triggers the flow, reads what they receive, then
   removes them and deploys again so nothing is left running. **Test it** on
-  the result card does the same on demand. The run line says "Run: proven"
-  with the flow's actual output, or "Run: not provable here" and why.
+  the result card does the same on demand. The run line says "Run: observed"
+  with the flow's actual output, or "Run: not observable here" and why.
   - Only FlowPilot's own test nodes count, matched by id. A node of yours
     with the same name can't fake a pass.
   - Deploying asks first only when it would also deploy changes you made
