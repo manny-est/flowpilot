@@ -31,7 +31,9 @@ const expectedPreRouter = {
   "modify-rewire": { action: "modify", needs_selection: true },
   "modify-remove-unused": { action: "modify", needs_selection: true },
   "modify-function-code": { action: "modify", needs_selection: true },
-  "modify-insert-delay": { action: "modify", needs_selection: true }
+  "modify-insert-delay": { action: "modify", needs_selection: true },
+  "modify-make-existing-node": { action: "modify", needs_selection: false },
+  "generate-new-flow-unconnected": { action: "generate", needs_selection: false }
 };
 
 const namedTrapResults = {};
