@@ -80,6 +80,9 @@ function loadCore(red) {
   assert.strictEqual(proof.goal.triggerHasPath, true);
   assert.deepStrictEqual(Array.from(proof.goal.goalNames), ["Out"], "the goal is the end of the path");
   assert.deepStrictEqual(Array.from(proof.goal.unreachedNames), [], "nothing in scope is unreached");
+  const tapNames = Object.keys(proof.goal.evidenceNodeNames).filter(function (id) { return proof.tapIds.indexOf(id) !== -1; })
+    .map(function (id) { return proof.goal.evidenceNodeNames[id]; });
+  assert.deepStrictEqual(tapNames, ["Store"], "the tap's evidence is named after the node it watches, not 'FlowPilot test'");
 
   // Without a scope (older callers), following the live wires from the
   // trigger still finds the path.
