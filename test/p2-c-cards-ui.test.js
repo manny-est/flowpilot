@@ -86,3 +86,14 @@ console.log("P2-C cards/UI tests passed");
       pair[0] + ": a real summary is not an echo");
   });
 }
+
+// #20, Stage 2 live check: a dispatched proposal no longer posts its summary
+// as a user message ("YOU: I will create as requested: …").
+{
+  const src = require("fs").readFileSync(require("path").join(__dirname, "..", "lib", "core", "modes.js"), "utf8");
+  assert.strictEqual((src.match(/addMessage\("user", label\);/g) || []).length, 1,
+    "only addRequestEcho itself posts the label; every entry point calls it");
+  const body = src.slice(src.indexOf("function dispatchProposedAction("), src.indexOf("setWorkingStatusPlan(pa.plan_items);"));
+  assert.ok(/suppressDispatchEcho = true;/.test(body) && /suppressDispatchEcho = false;/.test(body),
+    "dispatch suppresses one echo and resets the flag even if the entry point refused");
+}
