@@ -118,7 +118,7 @@ delete global.RED;
 const shaperCands = [{ id: "s", name: "Shaper", type: "function", inActiveTab: true },
   { id: "k", name: "Kick", type: "inject", inActiveTab: true }];
 assert.deepStrictEqual(intake.resolveIntakeTarget("Rename the Shaper node to Stamper", ["leftover"], shaperCands, null),
-  { kind: "named", ids: ["s"] }, "an explicit name beats a selection that doesn't contain it");
+  { kind: "named", ids: ["leftover", "s"] }, "an explicit name joins the current selection");
 assert.deepStrictEqual(intake.resolveIntakeTarget("Rename Shaper to Stamper", ["s"], shaperCands, null),
   { kind: "selection", ids: ["s"] }, "a selection that contains the named node stays the selection");
 assert.deepStrictEqual(intake.resolveIntakeTarget("Copy Shaper's code into this node", ["k"], shaperCands, null),

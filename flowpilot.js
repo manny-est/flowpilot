@@ -864,8 +864,9 @@ function flowPilotRuntime(RED) {
       type: "function",
       function: {
         name: "remove_step",
-        description: "Remove one node as ONE plan item. Its connected wires " +
-          "are removed with it by the existing editor apply path.",
+        description: "Delete a selection in one call as ONE plan item. Keep " +
+          "nodeId for a single node, or pass nodeIds for the whole selection. " +
+          "Its connected wires are removed with it by the existing editor apply path.",
         parameters: {
           type: "object",
           properties: {
@@ -873,9 +874,11 @@ function flowPilotRuntime(RED) {
               type: "string",
               description: "Short todo-item description of this removal."
             },
-            nodeId: { type: "string", description: "Existing node id to remove." }
+            nodeId: { type: "string", description: "Existing node id to remove (single-node compatibility form)." },
+            nodeIds: { type: "array", minItems: 1, items: { type: "string" },
+              description: "Existing node ids in the selection to remove in one call." }
           },
-          required: ["summary", "nodeId"],
+          required: ["summary"],
           additionalProperties: false
         }
       }
@@ -1154,7 +1157,7 @@ function flowPilotRuntime(RED) {
     return tools.map(function (t) { return (t && t.function && t.function.name) || (t && t.name) || "?"; });
   }
 
-  function agentToolsFor(settings, activeProvider, mode, writesAllowed, answerPhase) {
+  function agentToolsFor(settings, activeProvider, mode, writesAllowed, answerPhase, dispatched) {
     const routingTier = normalizedRoutingTier(activeProvider);
     if (mode === "chat" && activeProvider && activeProvider.supportsTools === true) {
       if (answerPhase === true) {
@@ -1165,7 +1168,7 @@ function flowPilotRuntime(RED) {
       if (routingTier === "B") {
         return providerToolDefinitions(TIER_B_PLAN_CHAT_TOOLS);
       }
-      return providerToolDefinitions(AGENT_READ_TOOLS.concat(PLAN_CHAT_TOOLS));
+      return providerToolDefinitions(AGENT_READ_TOOLS.concat(dispatched === true ? [ASK_USER_TOOL].filter(Boolean) : PLAN_CHAT_TOOLS));
     }
     if (mode === "build" && writesAllowed === true && convergedBuildActive(settings, activeProvider)) {
       // The selection is already in the prompt, so Build only needs the read
@@ -1997,6 +2000,22 @@ function flowPilotRuntime(RED) {
   const AGENT_INLINE_WRITE_RETRY = "Your reply put the changes in JSON, but FlowPilot only applies " +
     "changes made with the apply_step tool. Make the same changes now with apply_step (one call per " +
     "plan item), then reply with a short summary and no flow, changes or newNodes fields.";
+  const AGENT_MALFORMED_FINAL_RETRY = "Your reply wasn't valid JSON; continue with apply_step, or reply with a short plain summary.";
+
+  async function retryMalformedFinal(provider, activeProvider, messages, result, error, chatOptions) {
+    if (!result || result.toolCalls || result.fallbackToClassic || !error || error.status !== 422 ||
+        !/Could not parse a flow from the response/i.test(String(error.message || ""))) { return null; }
+    const alreadyRetried = messages.some(function (message) {
+      return message && message.role === "user" && message.content === AGENT_MALFORMED_FINAL_RETRY;
+    });
+    if (alreadyRetried) { return null; }
+    const retryMessages = messages.concat([
+      { role: "assistant", content: result.content || "" },
+      { role: "user", content: AGENT_MALFORMED_FINAL_RETRY }
+    ]);
+    const retried = await chatWithAgentCap(provider, activeProvider, retryMessages, chatOptions);
+    return { result: retried, messages: retryMessages };
+  }
 
   // True once this agent run has already changed the canvas through a WRITE
   // tool. A final reply that then carries flow/changes is restating work
@@ -3062,7 +3081,7 @@ function flowPilotRuntime(RED) {
       let finalMessages = messages;
       const toolsEnabled = activeProvider.supportsTools === true;
       const offeredTools = toolsEnabled
-        ? agentToolsFor(settings, activeProvider, mode, execution.strategy === "agent", answerPhase)
+        ? agentToolsFor(settings, activeProvider, mode, execution.strategy === "agent", answerPhase, req.body.dispatched === true)
         : [];
       let chatOptions = toolsEnabled
         ? { tools: offeredTools, toolChoice: "auto" }
@@ -3180,10 +3199,26 @@ function flowPilotRuntime(RED) {
 
       if (mode !== "chat") {
         const described = describeSelectionContext(context, settings);
-        const generated = processGenerationContent(
-          result.content || "", result, finalMessages, mode, described, activeProvider,
-          req.body.prompt, execution
-        );
+        let generated;
+        try {
+          generated = processGenerationContent(
+            result.content || "", result, finalMessages, mode, described, activeProvider,
+            req.body.prompt, execution
+          );
+        } catch (parseErr) {
+          const malformedRetry = await retryMalformedFinal(provider, activeProvider, finalMessages, result, parseErr, chatOptions);
+          if (!malformedRetry) { throw parseErr; }
+          result = malformedRetry.result;
+          finalMessages = malformedRetry.messages;
+          if (result.toolCalls) {
+            return res.json({ toolCalls: result.toolCalls, toolTiers: toolTierMap(result.toolCalls),
+              content: result.content || null, usage: result.usage || null });
+          }
+          generated = processGenerationContent(
+            result.content || "", result, finalMessages, mode, described, activeProvider,
+            req.body.prompt, execution
+          );
+        }
         recordTranscriptTurn(req.body.conversationId, mode, req.body.prompt || null, transcriptTextFromGenerationResult(generated));
         const finalize = (mode === "modify")
           ? function (r) {
@@ -4010,23 +4045,39 @@ function flowPilotRuntime(RED) {
         usage: result.usage || null
       };
     }
-    const content = result.content || "";
+    let content = result.content || "";
+    let finalMessages = messages;
     let parseOutcome = "unknown";
     try {
       const generated = processGenerationContent(
-        content, result, messages, auditAction, described, activeProvider, userPrompt, execution
+        content, result, finalMessages, auditAction, described, activeProvider, userPrompt, execution
       );
       parseOutcome = generated.prose ? "prose" : generated.question ? "question" : "success";
       return generated;
     } catch (err) {
-      parseOutcome = "parse_error:" + (err.message || "");
-      throw err;
+      const malformedRetry = await retryMalformedFinal(provider, activeProvider, finalMessages, result, err, chatOptions);
+      if (!malformedRetry) {
+        parseOutcome = "parse_error:" + (err.message || "");
+        throw err;
+      }
+      result = malformedRetry.result;
+      finalMessages = malformedRetry.messages;
+      content = result.content || "";
+      if (result.toolCalls) {
+        return { toolCalls: result.toolCalls, toolTiers: toolTierMap(result.toolCalls),
+          messages: finalMessages, content: content, usage: result.usage || null };
+      }
+      const retriedGenerated = processGenerationContent(
+        content, result, finalMessages, auditAction, described, activeProvider, userPrompt, execution
+      );
+      parseOutcome = retriedGenerated.prose ? "prose" : retriedGenerated.question ? "question" : "success";
+      return retriedGenerated;
     } finally {
       maybeLogDebugEvent("assistant_reply", {
         mode: auditAction,
         providerBaseUrl: activeProvider && activeProvider.baseUrl,
         model: activeProvider && activeProvider.model,
-        messages: messages,
+        messages: finalMessages,
         responseChars: typeof content === "string" ? content.length : 0,
         responseContent: content,
         parseOutcome: parseOutcome,
