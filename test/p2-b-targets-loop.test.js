@@ -55,9 +55,15 @@ test('P2-B malformed final responses have a corrective turn', () => {
   assert.match(source, /your reply wasn't valid JSON; continue with apply_step, or reply with a short plain summary/i);
 });
 
-test('P2-B locks out-of-target writes with a create-new-node explanation', () => {
+test('P2-B out-of-target writes go to the diff gate, not a hard refusal (ADR-015)', () => {
   const source = fs.readFileSync(require.resolve('../lib/core/modes.js'), 'utf8');
-  assert.match(source, /outside the locked target/);
-  assert.match(source, /Create a new node instead, unless the user explicitly asked/);
+  assert.doesNotMatch(source, /outside the locked target/, 'no silent refusal; the diff gate pauses and asks');
   assert.match(source, /stepPayload\.dispatched = true/);
+});
+
+test('P2-B /modify with nothing selected: Generate only on an empty tab, otherwise the picker', () => {
+  const source = fs.readFileSync(require.resolve('../lib/core/modes.js'), 'utf8');
+  assert.match(source, /if \(!hasCandidates && isCreationRequest\(unresolvedInstruction\)\)/,
+    '"/modify make it faster" on a tab with nodes must not become Generate');
+  assert.match(source, /kind === "unresolved" && hasCandidates\) \{[\s\S]{0,200}offerModifyTargetPicker/);
 });
