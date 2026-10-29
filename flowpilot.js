@@ -2011,6 +2011,40 @@ function flowPilotRuntime(RED) {
     });
   }
 
+  // Ids this run's WRITE tools already created: placeholders and real ids
+  // from each tool result's idMap.
+  function agentCreatedIds(messages) {
+    const ids = new Set();
+    (Array.isArray(messages) ? messages : []).forEach(function (m) {
+      if (!m || m.role !== "tool" || typeof m.content !== "string") { return; }
+      let parsed = null;
+      try { parsed = JSON.parse(m.content); } catch (err) { return; }
+      const idMap = parsed && parsed.idMap && typeof parsed.idMap === "object" ? parsed.idMap : null;
+      if (!idMap) { return; }
+      Object.keys(idMap).forEach(function (key) { ids.add(key); ids.add(String(idMap[key])); });
+    });
+    return ids;
+  }
+
+  // A final reply restates finished work when the run has written and every
+  // node its flow/newNodes names was created by this run. Nodes it hasn't
+  // built yet mean the model is still describing work, which the retry
+  // turns into apply_step calls.
+  function isRestatedAgentWork(messages, content) {
+    if (!messagesHaveAgentWrites(messages)) { return false; }
+    let parsed = null;
+    try { parsed = extractJsonObject(String(content || "")); } catch (err) { return false; }
+    if (!parsed || typeof parsed !== "object") { return false; }
+    const created = agentCreatedIds(messages);
+    const named = [];
+    ["flow", "newNodes"].forEach(function (field) {
+      (Array.isArray(parsed[field]) ? parsed[field] : []).forEach(function (node) {
+        if (node && node.id) { named.push(String(node.id)); }
+      });
+    });
+    return named.length > 0 && named.every(function (id) { return created.has(id); });
+  }
+
   function hasInlineMutation(content) {
     let parsed = null;
     try { parsed = extractJsonObject(String(content || "")); } catch (err) { return false; }
@@ -2025,7 +2059,7 @@ function flowPilotRuntime(RED) {
       return m && m.role === "user" && m.content === AGENT_INLINE_WRITE_RETRY;
     });
     if (alreadyRetried || !result || result.toolCalls || result.fallbackToClassic ||
-      messagesHaveAgentWrites(messages) || !hasInlineMutation(result.content)) { return null; }
+      isRestatedAgentWork(messages, result.content) || !hasInlineMutation(result.content)) { return null; }
     const retryMessages = messages.concat([
       { role: "assistant", content: result.content || "" },
       { role: "user", content: AGENT_INLINE_WRITE_RETRY }

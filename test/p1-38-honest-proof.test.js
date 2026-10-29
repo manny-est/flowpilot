@@ -90,4 +90,12 @@ assert.strictEqual(cards.buildResultCardModel({ verifyResults: [Object.assign({ 
   evidence: [{ kind: "debug", node: "Format", value: "22" }] }, partlyOutcome)] }).run.label,
   "Run: observed — 22 (at Format) · not reached: Store to global");
 
+
+// A trigger alone proves nothing: a one-node run (just the inject) whose
+// trigger tap fires is not "observed" (live: gpt-4.1 stopped after the inject
+// and Test it quoted the inject's own timestamp).
+const lone = proof.runtimeGoalObserve([node("inject", "inject", "Get Weather & Joke", 1)], [], "inject");
+assert.deepStrictEqual(Array.from(lone.tapNodeIds), []);
+assert.strictEqual(proof.runtimeProofOutcome([], lone).label, "Ran, but Get Weather & Joke isn't wired to anything");
+
 console.log("P1-38 honest-proof tests passed");

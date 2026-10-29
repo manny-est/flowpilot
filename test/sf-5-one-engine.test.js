@@ -210,7 +210,7 @@ async function assertRestatedFlowAfterWritesAccepted() {
         { role: "system", content: "x" }, { role: "user", content: "build it" },
         { role: "assistant", content: null, tool_calls: [{ id: "call-1", type: "function",
           function: { name: "apply_step", arguments: "{\"summary\":\"Add the trigger\"}" } }] },
-        { role: "tool", tool_call_id: "call-1", content: "{\"allPass\":true}" }
+        { role: "tool", tool_call_id: "call-1", content: "{\"allPass\":true,\"idMap\":{\"inj1\":\"abc123\"}}" }
       ]
     });
     assert.strictEqual(fake.requests.filter(function (r) { return /\/chat\/completions$/.test(r.url); }).length, 1,
@@ -223,6 +223,40 @@ async function assertRestatedFlowAfterWritesAccepted() {
   }
 }
 
+// The opposite case (same live check): after writing one node, gpt-4.1 put
+// the REST of the flow (nodes it hadn't built) into JSON. That's work still to
+// do, so the corrective apply_step turn still happens.
+async function assertUnbuiltFlowAfterWritesRetried() {
+  const fake = await startFakeProvider({
+    reply: function (body) { return isRetryTurn(body) ? "" : JSON.stringify({
+      explanation: "Plan: fetch weather and a joke.",
+      flow: [{ id: "abc123", type: "inject", wires: [["w2"]] }, { id: "w2", type: "http request", wires: [[]] }]
+    }); },
+    toolCalls: function (body) {
+      return isRetryTurn(body)
+        ? [{ id: "call-2", type: "function", function: { name: "apply_step", arguments: "{\"summary\":\"Add w2\"}" } }]
+        : null;
+    }
+  });
+  try {
+    const p = provider(fake.port, { supportsTools: true });
+    const runtime = loadRuntime({ activeProviderId: p.id, providers: [p] });
+    const out = await call(runtime, "POST", "/flowpilot/agent-step", {
+      strategy: "agent", entry: "generate", mode: "generate", prompt: "Build a weather and joke flow",
+      context: CONTEXT, messages: [
+        { role: "system", content: "x" }, { role: "user", content: "build it" },
+        { role: "assistant", content: null, tool_calls: [{ id: "call-1", type: "function",
+          function: { name: "apply_step", arguments: "{\"summary\":\"Add the trigger\"}" } }] },
+        { role: "tool", tool_call_id: "call-1", content: "{\"allPass\":true,\"idMap\":{\"w1\":\"abc123\"}}" }
+      ]
+    });
+    assert.strictEqual(out.status, 200);
+    assert.strictEqual(out.body.toolCalls[0].function.name, "apply_step", "the unbuilt nodes get built through the tools");
+  } finally {
+    fake.close();
+  }
+}
+
 (async function () {
   await assertToolProviderMatrix();
   await assertNoToolsProviderMatrix();
@@ -230,6 +264,7 @@ async function assertRestatedFlowAfterWritesAccepted() {
   await assertInlineWriteRetriedOnlyOnce();
   await assertSummaryFinalNotRetried();
   await assertRestatedFlowAfterWritesAccepted();
+  await assertUnbuiltFlowAfterWritesRetried();
   console.log("sf-5 one-engine tests passed");
 })().catch(function (err) {
   console.error(err);
