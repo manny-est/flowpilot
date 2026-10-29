@@ -68,8 +68,9 @@ assert.deepStrictEqual(intake.askUserOptions(
   { target: { kind: "unresolved" }, candidates: candidates },
   fArgs
 ), fArgs.options);
-assert.match(tierPrompt, /Explain what this flow does in plain English/);
-assert.match(tierPrompt, /User: "hi"/);
+// Stage 2 review: the "Explain …" and "hi" A examples cost Spark several
+// generate cases in the routing corpus, so they were removed again.
+assert.doesNotMatch(tierPrompt, /User: "hi"/);
 assert.match(tierPrompt, /Do something cool and unique/);
 
 // The one-shot Build correction is deliberately exact and only appears once

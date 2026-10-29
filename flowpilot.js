@@ -2273,13 +2273,35 @@ function flowPilotRuntime(RED) {
       };
     }
 
-    const invalidError = invalidProposeActionError(parseToolArguments(invalidCall)) ||
+    const hardError = invalidProposeActionError(parseToolArguments(invalidCall));
+    const invalidError = hardError ||
       "plan_items must contain concrete steps instead of repeating the request.";
+    // Only asking for steps: the original proposal is valid, so a retry
+    // that fails (Spark degenerated into repeating plan_items until the
+    // reply broke, and the case fell to an empty answer) keeps the original.
+    const keepOriginal = function () {
+      return {
+        result: Object.assign({}, result, { toolCalls: normalizeProposeActionToolCalls(result.toolCalls, context) }),
+        messages: messages
+      };
+    };
     const retryMessages = messages.concat([
       assistantToolCallMessage(result),
       { role: "tool", tool_call_id: invalidCall.id, content: JSON.stringify({ error: invalidError }) }
     ]);
-    const retried = await resend(retryMessages);
+    let retried;
+    try {
+      retried = await resend(retryMessages);
+    } catch (err) {
+      if (!hardError) { return keepOriginal(); }
+      throw err;
+    }
+    const retriedProposal = retried && Array.isArray(retried.toolCalls) && retried.toolCalls.find(function (call) {
+      return call && call.function && call.function.name === PROPOSE_ACTION_NAME;
+    });
+    if (!hardError && (!retriedProposal || invalidProposeActionError(parseToolArguments(retriedProposal)))) {
+      return keepOriginal();
+    }
     if (!Array.isArray(retried.toolCalls) || retried.toolCalls.length === 0) {
       return { result: retried, messages: retryMessages };
     }
