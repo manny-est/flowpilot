@@ -59,3 +59,30 @@ assert.ok(/\.fp-send-menu-panel \{[^}]*left: 0;/.test(css), "send menu opens tow
 assert.ok(/fp-send-menu-open-left/.test(css) && /positionSendMenuPanel/.test(init), "send menu chooses side at runtime");
 
 console.log("P2-C cards/UI tests passed");
+
+// #18, review fix: real echoed summaries carry a prefix ("I will create as
+// requested: <request>"), so an exact-equality check never fired live. Both
+// copies (server and browser) strip it.
+{
+  const fsx = require("fs");
+  const pathx = require("path");
+  const P = "Create a nodered flow that gets data from an open weather api, an online joke db, and stores them to a global variable.";
+  function load(file, name) {
+    const src = fsx.readFileSync(pathx.join(__dirname, "..", file), "utf8");
+    const start = src.indexOf("function " + name + "(");
+    let depth = 0, end = start;
+    for (let i = src.indexOf("{", start); i < src.length; i++) {
+      if (src[i] === "{") { depth++; }
+      if (src[i] === "}") { depth--; if (depth === 0) { end = i + 1; break; } }
+    }
+    return new Function("return " + src.slice(start, end))();
+  }
+  [["flowpilot.js", "proposalSummaryEchoesPrompt"], ["lib/core/modes.js", "proposalSummaryEchoesRequest"]].forEach(function (pair) {
+    const echoes = load(pair[0], pair[1]);
+    assert.strictEqual(echoes("I will create as requested: " + P, P), true, pair[0] + ": prefixed echo is an echo");
+    assert.strictEqual(echoes("I will build as requested: " + P, P), true, pair[0] + ": any verb");
+    assert.strictEqual(echoes(P, P), true, pair[0] + ": bare echo");
+    assert.strictEqual(echoes("Fetch the weather every 5 minutes and store it in global", P), false,
+      pair[0] + ": a real summary is not an echo");
+  });
+}

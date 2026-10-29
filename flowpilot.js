@@ -2182,7 +2182,8 @@ function flowPilotRuntime(RED) {
     function clean(value) {
       return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     }
-    const s = clean(summary);
+    // Real echoes carry a prefix: "I will create as requested: <request>".
+    const s = clean(summary).replace(/^i will(?: \w+){1,3} as requested /, "");
     const p = clean(prompt);
     if (!s || !p) { return false; }
     return s === p;
