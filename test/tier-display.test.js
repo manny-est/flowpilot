@@ -51,6 +51,6 @@ CASES.forEach(function (c, i) {
   const choice = api.routingTierChoice(p);
   assert.strictEqual(choice.tier, server.normalizedRoutingTier(p), "case " + i + ": display tier = server tier (" + JSON.stringify(p) + ")");
   assert.strictEqual(choice.reason, reason, "case " + i + ": deciding reason");
-  assert.ok(/^Routing: .+\(Tier [ABC]\)\. Why: .+/.test(api.routingTierWhyText(p)), "case " + i + ": readable line: " + api.routingTierWhyText(p));
+  assert.ok(/^Routing: (Full tool planning|Limited tools|Classify first, then act)\. Why: .+/.test(api.routingTierWhyText(p)), "case " + i + ": readable line: " + api.routingTierWhyText(p));
 });
 console.log("tier-display tests passed (" + CASES.length + " cases)");
