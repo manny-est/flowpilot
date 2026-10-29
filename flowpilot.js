@@ -2237,14 +2237,32 @@ function flowPilotRuntime(RED) {
     });
   }
 
-  async function validateProposeActionToolCalls(activeProvider, messages, result, mode, context, resend) {
+  function proposalSummaryEchoesPrompt(summary, prompt) {
+    function clean(value) {
+      return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    }
+    // Real echoes carry a prefix: "I will create as requested: <request>".
+    const s = clean(summary).replace(/^i will(?: \w+){1,3} as requested /, "");
+    const p = clean(prompt);
+    if (!s || !p) { return false; }
+    return s === p;
+  }
+
+  function proposalNeedsSteps(call, prompt) {
+    const args = parseToolArguments(call);
+    return !!(args && args.action && typeof args.summary === "string" &&
+      (!Array.isArray(args.plan_items) || args.plan_items.length === 0) &&
+      proposalSummaryEchoesPrompt(args.summary, prompt));
+  }
+
+  async function validateProposeActionToolCalls(activeProvider, messages, result, mode, context, resend, requestPrompt) {
     if (!result || !Array.isArray(result.toolCalls) || result.toolCalls.length === 0) {
       return { result: result, messages: messages };
     }
 
     const invalidCall = result.toolCalls.find(function (call) {
       if (!call || !call.function || call.function.name !== PROPOSE_ACTION_NAME) { return false; }
-      return !!invalidProposeActionError(parseToolArguments(call));
+      return !!invalidProposeActionError(parseToolArguments(call)) || proposalNeedsSteps(call, requestPrompt);
     });
     if (!invalidCall) {
       return {
@@ -2255,7 +2273,8 @@ function flowPilotRuntime(RED) {
       };
     }
 
-    const invalidError = invalidProposeActionError(parseToolArguments(invalidCall));
+    const invalidError = invalidProposeActionError(parseToolArguments(invalidCall)) ||
+      "plan_items must contain concrete steps instead of repeating the request.";
     const retryMessages = messages.concat([
       assistantToolCallMessage(result),
       { role: "tool", tool_call_id: invalidCall.id, content: JSON.stringify({ error: invalidError }) }
@@ -2384,7 +2403,7 @@ function flowPilotRuntime(RED) {
         activeProvider, finalMessages, result, "chat", context,
         function (retryMessages) {
           return chatWithAgentCap(provider, activeProvider, retryMessages, chatOptions);
-        }
+        }, prompt
       );
       result = validated.result;
       finalMessages = validated.messages;
@@ -3177,7 +3196,7 @@ function flowPilotRuntime(RED) {
           activeProvider, finalMessages, result, mode, context,
           function (retryMessages) {
             return chatWithAgentCap(provider, activeProvider, retryMessages, chatOptions);
-          }
+          }, askPrompt
         );
         result = validated.result;
         finalMessages = validated.messages;

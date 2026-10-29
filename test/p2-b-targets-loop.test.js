@@ -39,7 +39,7 @@ test('P2-B remove_step accepts a selection in one call', () => {
   const modes = fs.readFileSync(require.resolve('../lib/core/modes.js'), 'utf8');
   assert.match(source, /name: "remove_step"[\s\S]{0,900}nodeIds/);
   assert.match(source, /Delete a selection in one call/);
-  assert.match(main, /Delete these " \+ removeIds\.length \+ " nodes\?/);
+  assert.match(main, /wants to delete these " \+ removeNodes\.length \+ " nodes: "/);
   assert.match(modes, /isCompletedPlanRestatement/);
 });
 

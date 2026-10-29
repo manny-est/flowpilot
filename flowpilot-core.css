@@ -852,7 +852,8 @@
 .fp-empty-example { border: 1px solid var(--red-ui-secondary-border-color, #ccc); border-radius: 5px; padding: 6px 8px; background: transparent; color: inherit; cursor: pointer; }
 .fp-empty-example:hover { border-color: #1f88e5; color: #1f88e5; }
 .fp-send-menu-wrap { position: relative; display: inline-flex; }
-.fp-send-menu-panel { position: absolute; right: 0; bottom: 100%; z-index: 5; display: flex; flex-direction: column; min-width: 110px; padding: 4px; border: 1px solid var(--red-ui-secondary-border-color, #bbb); border-radius: 5px; background: var(--red-ui-primary-background, #fff); box-shadow: 0 2px 8px rgba(0,0,0,.2); }
+.fp-send-menu-panel { position: absolute; left: 0; bottom: 100%; z-index: 5; display: flex; flex-direction: column; min-width: 110px; padding: 4px; border: 1px solid var(--red-ui-secondary-border-color, #bbb); border-radius: 5px; background: var(--red-ui-primary-background, #fff); box-shadow: 0 2px 8px rgba(0,0,0,.2); }
+.fp-send-menu-panel.fp-send-menu-open-left { left: auto; right: 0; }
 .fp-send-menu-panel button { border: 0; padding: 6px 8px; text-align: left; background: transparent; color: inherit; cursor: pointer; white-space: nowrap; }
 .fp-send-menu-panel button:hover { background: rgba(31, 136, 229, .12); }
 .fp-send-menu-armed { color: #1f88e5; border-color: #1f88e5; font-weight: 600; white-space: nowrap; }
@@ -1610,39 +1611,6 @@
     padding-bottom: 2px;
 }
 
-.fp-propose-mode-row {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 12px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid rgba(70, 211, 154, 0.2);
-}
-
-.fp-propose-mode-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    font-size: 11px;
-    font-weight: 600;
-    border: 1px solid;
-    text-transform: uppercase;
-}
-
-.fp-propose-mode-active {
-    background: rgba(70, 211, 154, 0.25);
-    border-color: #46d39a;
-    color: #46d39a;
-}
-
-.fp-propose-mode-inactive {
-    background: rgba(100, 120, 140, 0.1);
-    border-color: #4a5662;
-    color: #8a96a3;
-}
-
 .fp-propose-summary-section {
     margin-bottom: 12px;
 }
@@ -1863,8 +1831,6 @@
         white-space: normal;
         overflow-wrap: anywhere;
     }
-    .fp-propose-mode-row { gap: 3px; }
-    .fp-propose-mode-badge { width: 22px; height: 22px; font-size: 9px; }
     .fp-propose-plan-list > li { align-items: flex-start; flex-wrap: wrap; gap: 3px; }
     .fp-propose-plan-text { flex: 1 1 100%; }
     .fp-propose-add-plan { flex-wrap: wrap; }
