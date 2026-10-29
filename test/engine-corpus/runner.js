@@ -216,7 +216,11 @@ function consentItems(call, parts) {
     (args.changes || []).forEach(function (change) { if (change) { items.push(item("modify-config", change.id)); } });
     return items;
   }
-  if (name === "remove_step") { return [item("delete", args.nodeId)]; }
+  if (name === "remove_step") {
+    return (Array.isArray(args.nodeIds) ? args.nodeIds : [args.nodeId]).filter(Boolean).map(function (id) {
+      return item("delete", id);
+    });
+  }
   if (name === "rename_node") { return [item("modify-config", args.nodeId)]; }
   if (name === "deploy_flows") { return [item("deploy", null, null)]; }
   // group_nodes is write-safe in the browser, so it intentionally has no
@@ -238,7 +242,8 @@ function ledgerForWrite(call, parts) {
     (args.changes || []).forEach(function (change) { if (change) { add(change.id, false); } });
     // diff-gate's link ledger counts the source node, not the target node.
     (args.newWires || []).forEach(function (wire) { if (wire) { add(wire.from, false); } });
-  } else if (name === "remove_step") { add(args.nodeId, false);
+  } else if (name === "remove_step") {
+    (Array.isArray(args.nodeIds) ? args.nodeIds : [args.nodeId]).forEach(function (id) { add(id, false); });
   } else if (name === "rename_node") { add(args.nodeId, false);
   } else if (name === "group_nodes") { (args.nodeIds || []).forEach(function (id) { add(id, false); }); }
   return out;
@@ -248,11 +253,35 @@ function ledgerForWrite(call, parts) {
 // result the browser would send back: buildWriteToolResult's shape plus the
 // same changeDetails as executeApplyStepTool / executeRemoveStepTool /
 // executeRenameNodeTool in lib/core/main.js. Like the browser, an unchanged
-// value is still reported as a property change (old === new); later read
-// tools see the updated fixture.
+// write is reported as a no-op and never changes the fixture.
 function applyWriteToFixture(call, parts) {
   const name = toolName(call), args = toolArgs(call), checks = [], changeDetails = [], extra = {};
   function find(id) { return parts.nodes.find(function (node) { return node.id === id; }); }
+  function same(left, right) { return JSON.stringify(left) === JSON.stringify(right); }
+  function wireAlreadyExists(wire) {
+    const from = find(wire && wire.from), port = wire && (wire.fromPort || 0);
+    return !!(from && Array.isArray(from.wires) && Array.isArray(from.wires[port]) && from.wires[port].indexOf(wire.to) !== -1);
+  }
+  if (name === "apply_step" && !(args.newNodes || []).length) {
+    const noOp = (args.changes || []).every(function (change) {
+      const live = change && find(change.id);
+      return !!live && change.set && Object.keys(change.set).every(function (key) {
+        return key === "wires" ? same(live.wires || [], change.set.wires || []) : same(live[key], change.set[key]);
+      });
+    }) && (args.newWires || []).every(wireAlreadyExists);
+    if (noOp && ((args.changes || []).length || (args.newWires || []).length)) {
+      return { requested: clone(args), checks: [{ check: "exists", nodeId: "(no-op)", expected: true, actual: true, pass: true }], allPass: true,
+        noChange: true, error: "No change: already applied" };
+    }
+  }
+  if (name === "rename_node") {
+    const live = find(args.nodeId);
+    if (live && live.name === args.name) {
+      return { requested: clone(args), checks: [{ check: "property", nodeId: args.nodeId, prop: "name",
+        expected: args.name, actual: args.name, pass: true }], allPass: true,
+        noChange: true, error: "No change: already applied" };
+    }
+  }
   if (name === "apply_step") {
     (args.newNodes || []).forEach(function (node) {
       if (!node) { return; }
@@ -295,13 +324,17 @@ function applyWriteToFixture(call, parts) {
       checks.push({ check: "wire", fromId: wire.from, fromPort: port, toId: wire.to, expected: wire.to, actual: from ? wire.to : null, pass: !!from });
     });
   } else if (name === "remove_step") {
-    const live = find(args.nodeId);
-    parts.nodes = parts.nodes.filter(function (node) { return node.id !== args.nodeId; });
+    const ids = Array.isArray(args.nodeIds) ? args.nodeIds.slice() : (args.nodeId ? [args.nodeId] : []);
+    const liveById = {};
+    ids.forEach(function (id) { liveById[id] = find(id); });
+    parts.nodes = parts.nodes.filter(function (node) { return ids.indexOf(node.id) === -1; });
     parts.nodes.forEach(function (node) {
-      node.wires = (node.wires || []).map(function (targets) { return (targets || []).filter(function (id) { return id !== args.nodeId; }); });
+      node.wires = (node.wires || []).map(function (targets) { return (targets || []).filter(function (id) { return ids.indexOf(id) === -1; }); });
     });
-    checks.push({ check: "absent", nodeId: args.nodeId, expected: true, actual: true, pass: true });
-    changeDetails.push({ id: args.nodeId, changeType: "removed", before: live ? clone(live) : { id: args.nodeId } });
+    ids.forEach(function (id) {
+      checks.push({ check: "absent", nodeId: id, expected: true, actual: true, pass: true });
+      changeDetails.push({ id: id, changeType: "removed", before: liveById[id] ? clone(liveById[id]) : { id: id } });
+    });
   } else if (name === "rename_node") {
     const live = find(args.nodeId), oldName = live ? live.name : undefined;
     if (live) { live.name = args.name; }
@@ -418,6 +451,7 @@ async function runAgentCase(testCase, token) {
   let body = response.body || {}, messages = Array.isArray(body.messages) ? body.messages.slice() : [], steps = 0;
   let ledger = [], kind = null, terminalStatus = response.status, terminalBody = body;
   const writes = [], state = GATES.diffGate.createDiffGateState(parts.targetLock.ids, {});
+  let noOpWriteStreak = 0;
   while (true) {
     terminalStatus = response.status; terminalBody = response.body || {};
     if (response.status !== 200) { kind = classify(testCase.entry, response.status, response.body); break; }
@@ -438,6 +472,8 @@ async function runAgentCase(testCase, token) {
       if (gate.consent === "ask") { kind = "consent_ask"; stopped = true; break; }
       if (gate.diff.pause) { kind = "diff_gate_pause"; stopped = true; break; }
       record.result = applyWriteToFixture(call, parts); ledger = gate.ledger; messages = appendTool(messages, call, record.result);
+      if (record.result.noChange) { noOpWriteStreak++; } else { noOpWriteStreak = 0; }
+      if (noOpWriteStreak >= 2) { kind = "write_allowed"; stopped = true; break; }
     }
     if (stopped) { break; }
     // Reaching the step limit is a failure even after clean writes: a run

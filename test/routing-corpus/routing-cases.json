@@ -346,5 +346,42 @@
     "expected": "answer",
     "expectedLane": "ANSWER",
     "note": "Adversarial near-miss: design advice, not a generation request."
+  },
+  {
+    "id": "modify-make-existing-node",
+    "prompt": "Make the Timer node fire every 5 seconds.",
+    "expected": "modify",
+    "expectedLane": "DIRECT",
+    "context": {
+      "nodes": [
+        {
+          "id": "timer-1",
+          "type": "inject",
+          "name": "Timer"
+        }
+      ]
+    },
+    "note": "Making a named existing node is a modification, not new-node generation."
+  },
+  {
+    "id": "build-deploy-and-check",
+    "prompt": "Deploy this flow and check that it works.",
+    "expected": "build",
+    "expectedLane": "PLAN",
+    "note": "Deployment and verification intent belongs to Build."
+  },
+  {
+    "id": "generate-creative-constrained",
+    "prompt": "Do something cool and unique with this flow, but no http or exec nodes and not dad jokes.",
+    "expected": "generate",
+    "expectedLane": "PLAN",
+    "note": "Open-ended creative creation keeps all user constraints."
+  },
+  {
+    "id": "generate-new-flow-unconnected",
+    "prompt": "Create a new flow with an inject named Ping that sends hello and a function named Shout that uppercases msg.payload. Leave them unconnected: do not add any wire between them.",
+    "expected": "generate",
+    "expectedLane": "PLAN",
+    "note": "Creative generation with explicit names and a no-wire constraint."
   }
 ]

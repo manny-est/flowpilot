@@ -199,6 +199,39 @@ function firstMatchingPreRouterCreationVerb(prompt) {
   return null;
 }
 
+function preRouterExistingNodeTargets(prompt, context) {
+  const text = String(prompt || "");
+  if (!/\bmake\s+(?:the|this)\b/i.test(text)) { return null; }
+  const selected = context && Array.isArray(context.nodes) ? context.nodes : [];
+  const openTab = context && Array.isArray(context.openTabNodes) ? context.openTabNodes
+    : context && Array.isArray(context.candidates) ? context.candidates : [];
+  const seen = new Set();
+  const nodes = selected.concat(openTab).filter(function (node) {
+    const id = node && node.id;
+    if (!id || seen.has(id)) { return false; }
+    seen.add(id);
+    return true;
+  });
+  if (!nodes.length) { return null; }
+
+  const named = nodes.filter(function (node) {
+    const name = node && typeof node.name === "string" ? node.name.trim() : "";
+    if (!name || name === node.id) { return false; }
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp("(^|[^a-z0-9_])" + escaped + "([^a-z0-9_]|$)", "i").test(text);
+  });
+  if (named.length === 1) { return named; }
+  // "this" points at the current selection. Without a selection it is only
+  // deterministic when the open-tab context contains one candidate.
+  if (/\bmake\s+this\b/i.test(text)) {
+    return selected.length ? selected : openTab.length === 1 ? openTab : null;
+  }
+  if (/\bmake\s+the\s+(?:existing\s+)?node\b/i.test(text)) {
+    return selected.length ? selected : openTab.length === 1 ? openTab : null;
+  }
+  return null;
+}
+
 function isPreRouterInterrogative(prompt) {
   const text = String(prompt || "");
   const trimmed = text.trim();
@@ -275,14 +308,17 @@ function runDeterministicPreRouter(prompt, context) {
   }
 
   const hasSelection = !!(context && Array.isArray(context.nodes) && context.nodes.length > 0);
-  const changeVerb = firstMatchingPreRouterChangeVerb(prompt);
-  if (changeVerb && !hasPreRouterDocumentationTerm(prompt)) {
-    return makePreRouterResult("modify", changeVerb, prompt, context, !hasSelection);
+  const existingTargets = preRouterExistingNodeTargets(prompt, context);
+  if (existingTargets) {
+    return makePreRouterResult("modify", "make", prompt, { nodes: existingTargets }, false);
   }
-
   const creationVerb = firstMatchingPreRouterCreationVerb(prompt);
   if (!hasSelection && creationVerb && !hasPreRouterDocumentationTerm(prompt)) {
     return makePreRouterResult("generate", creationVerb, prompt, context, false);
+  }
+  const changeVerb = firstMatchingPreRouterChangeVerb(prompt);
+  if (changeVerb && !hasPreRouterDocumentationTerm(prompt)) {
+    return makePreRouterResult("modify", changeVerb, prompt, context, !hasSelection);
   }
 
   return null;
@@ -411,7 +447,8 @@ function makeTierCAskUserToolCall(prompt, reason) {
       name: "ask_user",
       arguments: JSON.stringify({
         question: question,
-        options: ["Answer a question", "Create nodes", "Change nodes", "Document nodes", "Build and verify"]
+        question_kind: "intent",
+        options: ["Answer", "Create", "Change", "Document", "Build"]
       })
     }
   };
@@ -864,8 +901,9 @@ function flowPilotRuntime(RED) {
       type: "function",
       function: {
         name: "remove_step",
-        description: "Remove one node as ONE plan item. Its connected wires " +
-          "are removed with it by the existing editor apply path.",
+        description: "Delete a selection in one call as ONE plan item. Keep " +
+          "nodeId for a single node, or pass nodeIds for the whole selection. " +
+          "Its connected wires are removed with it by the existing editor apply path.",
         parameters: {
           type: "object",
           properties: {
@@ -873,9 +911,11 @@ function flowPilotRuntime(RED) {
               type: "string",
               description: "Short todo-item description of this removal."
             },
-            nodeId: { type: "string", description: "Existing node id to remove." }
+            nodeId: { type: "string", description: "Existing node id to remove (single-node compatibility form)." },
+            nodeIds: { type: "array", minItems: 1, items: { type: "string" },
+              description: "Existing node ids in the selection to remove in one call." }
           },
-          required: ["summary", "nodeId"],
+          required: ["summary"],
           additionalProperties: false
         }
       }
@@ -1154,7 +1194,7 @@ function flowPilotRuntime(RED) {
     return tools.map(function (t) { return (t && t.function && t.function.name) || (t && t.name) || "?"; });
   }
 
-  function agentToolsFor(settings, activeProvider, mode, writesAllowed, answerPhase) {
+  function agentToolsFor(settings, activeProvider, mode, writesAllowed, answerPhase, dispatched) {
     const routingTier = normalizedRoutingTier(activeProvider);
     if (mode === "chat" && activeProvider && activeProvider.supportsTools === true) {
       if (answerPhase === true) {
@@ -1165,7 +1205,7 @@ function flowPilotRuntime(RED) {
       if (routingTier === "B") {
         return providerToolDefinitions(TIER_B_PLAN_CHAT_TOOLS);
       }
-      return providerToolDefinitions(AGENT_READ_TOOLS.concat(PLAN_CHAT_TOOLS));
+      return providerToolDefinitions(AGENT_READ_TOOLS.concat(dispatched === true ? [ASK_USER_TOOL].filter(Boolean) : PLAN_CHAT_TOOLS));
     }
     if (mode === "build" && writesAllowed === true && convergedBuildActive(settings, activeProvider)) {
       // The selection is already in the prompt, so Build only needs the read
@@ -1997,6 +2037,22 @@ function flowPilotRuntime(RED) {
   const AGENT_INLINE_WRITE_RETRY = "Your reply put the changes in JSON, but FlowPilot only applies " +
     "changes made with the apply_step tool. Make the same changes now with apply_step (one call per " +
     "plan item), then reply with a short summary and no flow, changes or newNodes fields.";
+  const AGENT_MALFORMED_FINAL_RETRY = "Your reply wasn't valid JSON; continue with apply_step, or reply with a short plain summary.";
+
+  async function retryMalformedFinal(provider, activeProvider, messages, result, error, chatOptions) {
+    if (!result || result.toolCalls || result.fallbackToClassic || !error || error.status !== 422 ||
+        !/Could not parse a flow from the response/i.test(String(error.message || ""))) { return null; }
+    const alreadyRetried = messages.some(function (message) {
+      return message && message.role === "user" && message.content === AGENT_MALFORMED_FINAL_RETRY;
+    });
+    if (alreadyRetried) { return null; }
+    const retryMessages = messages.concat([
+      { role: "assistant", content: result.content || "" },
+      { role: "user", content: AGENT_MALFORMED_FINAL_RETRY }
+    ]);
+    const retried = await chatWithAgentCap(provider, activeProvider, retryMessages, chatOptions);
+    return { result: retried, messages: retryMessages };
+  }
 
   // True once this agent run has already changed the canvas through a WRITE
   // tool. A final reply that then carries flow/changes is restating work
@@ -2099,8 +2155,11 @@ function flowPilotRuntime(RED) {
       // Plain-text tool result; use it as is.
     }
     const optionLetters = {
-      "answer a question": "A", "create nodes": "B", "change nodes": "C",
-      "document nodes": "D", "build and verify": "E"
+      "answer": "A", "answer a question": "A",
+      "create": "B", "create nodes": "B",
+      "change": "C", "change nodes": "C",
+      "document": "D", "document nodes": "D",
+      "build": "E", "build and verify": "E"
     };
     const classificationMessages = messages.slice(0, askIndex);
     const letter = optionLetters[String(answer || "").trim().toLowerCase()];
@@ -2178,14 +2237,32 @@ function flowPilotRuntime(RED) {
     });
   }
 
-  async function validateProposeActionToolCalls(activeProvider, messages, result, mode, context, resend) {
+  function proposalSummaryEchoesPrompt(summary, prompt) {
+    function clean(value) {
+      return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    }
+    // Real echoes carry a prefix: "I will create as requested: <request>".
+    const s = clean(summary).replace(/^i will(?: \w+){1,3} as requested /, "");
+    const p = clean(prompt);
+    if (!s || !p) { return false; }
+    return s === p;
+  }
+
+  function proposalNeedsSteps(call, prompt) {
+    const args = parseToolArguments(call);
+    return !!(args && args.action && typeof args.summary === "string" &&
+      (!Array.isArray(args.plan_items) || args.plan_items.length === 0) &&
+      proposalSummaryEchoesPrompt(args.summary, prompt));
+  }
+
+  async function validateProposeActionToolCalls(activeProvider, messages, result, mode, context, resend, requestPrompt) {
     if (!result || !Array.isArray(result.toolCalls) || result.toolCalls.length === 0) {
       return { result: result, messages: messages };
     }
 
     const invalidCall = result.toolCalls.find(function (call) {
       if (!call || !call.function || call.function.name !== PROPOSE_ACTION_NAME) { return false; }
-      return !!invalidProposeActionError(parseToolArguments(call));
+      return !!invalidProposeActionError(parseToolArguments(call)) || proposalNeedsSteps(call, requestPrompt);
     });
     if (!invalidCall) {
       return {
@@ -2196,12 +2273,35 @@ function flowPilotRuntime(RED) {
       };
     }
 
-    const invalidError = invalidProposeActionError(parseToolArguments(invalidCall));
+    const hardError = invalidProposeActionError(parseToolArguments(invalidCall));
+    const invalidError = hardError ||
+      "plan_items must contain concrete steps instead of repeating the request.";
+    // Only asking for steps: the original proposal is valid, so a retry
+    // that fails (Spark degenerated into repeating plan_items until the
+    // reply broke, and the case fell to an empty answer) keeps the original.
+    const keepOriginal = function () {
+      return {
+        result: Object.assign({}, result, { toolCalls: normalizeProposeActionToolCalls(result.toolCalls, context) }),
+        messages: messages
+      };
+    };
     const retryMessages = messages.concat([
       assistantToolCallMessage(result),
       { role: "tool", tool_call_id: invalidCall.id, content: JSON.stringify({ error: invalidError }) }
     ]);
-    const retried = await resend(retryMessages);
+    let retried;
+    try {
+      retried = await resend(retryMessages);
+    } catch (err) {
+      if (!hardError) { return keepOriginal(); }
+      throw err;
+    }
+    const retriedProposal = retried && Array.isArray(retried.toolCalls) && retried.toolCalls.find(function (call) {
+      return call && call.function && call.function.name === PROPOSE_ACTION_NAME;
+    });
+    if (!hardError && (!retriedProposal || invalidProposeActionError(parseToolArguments(retriedProposal)))) {
+      return keepOriginal();
+    }
     if (!Array.isArray(retried.toolCalls) || retried.toolCalls.length === 0) {
       return { result: retried, messages: retryMessages };
     }
@@ -2242,7 +2342,7 @@ function flowPilotRuntime(RED) {
   // array built so far (so the caller/frontend can append the tool results
   // and continue via /flowpilot/agent-step) — nothing is recorded to the
   // transcript yet, since this isn't the final answer for the turn.
-  async function runChat(prompt, contextMode, context, history, historyTruncated, conversationId, useTools, strategy, compatOptions) {
+  async function runChat(prompt, contextMode, context, history, historyTruncated, conversationId, useTools, strategy, compatOptions, intake) {
     const settings = storage.getSettings();
     const activeProvider = storage.getActiveProvider(settings);
 
@@ -2280,7 +2380,12 @@ function flowPilotRuntime(RED) {
     let result;
     if (strategy === "agent") {
       chatOptions = agentTurnOptions(settings, chatOptions);
-      result = runDeterministicPreRouter(prompt, context);
+      const preRouterContext = Object.assign({}, context || {});
+      if ((!Array.isArray(preRouterContext.nodes) || !preRouterContext.nodes.length) &&
+          intake && Array.isArray(intake.candidates)) {
+        preRouterContext.openTabNodes = intake.candidates;
+      }
+      result = runDeterministicPreRouter(prompt, preRouterContext);
       if (!result) {
         const routingTier = normalizedRoutingTier(activeProvider);
         if (routingTier === "C") {
@@ -2320,7 +2425,7 @@ function flowPilotRuntime(RED) {
         activeProvider, finalMessages, result, "chat", context,
         function (retryMessages) {
           return chatWithAgentCap(provider, activeProvider, retryMessages, chatOptions);
-        }
+        }, prompt
       );
       result = validated.result;
       finalMessages = validated.messages;
@@ -2812,7 +2917,7 @@ function flowPilotRuntime(RED) {
       const useTools = !!req.body.tools;
       const { activeProvider, result, perf, chatMessage, chatData, messages, toolCalls, answerPhase } =
         await runChat(prompt, "selected-nodes", req.body.context, history, historyTruncated,
-          req.body.conversationId, useTools, req.body.strategy);
+          req.body.conversationId, useTools, req.body.strategy, undefined, req.body.intake);
       const lane = laneForRequest(req.body, result);
       if (lane) {
         maybeLogDebugEvent("lane", {
@@ -3062,7 +3167,7 @@ function flowPilotRuntime(RED) {
       let finalMessages = messages;
       const toolsEnabled = activeProvider.supportsTools === true;
       const offeredTools = toolsEnabled
-        ? agentToolsFor(settings, activeProvider, mode, execution.strategy === "agent", answerPhase)
+        ? agentToolsFor(settings, activeProvider, mode, execution.strategy === "agent", answerPhase, req.body.dispatched === true)
         : [];
       let chatOptions = toolsEnabled
         ? { tools: offeredTools, toolChoice: "auto" }
@@ -3113,7 +3218,7 @@ function flowPilotRuntime(RED) {
           activeProvider, finalMessages, result, mode, context,
           function (retryMessages) {
             return chatWithAgentCap(provider, activeProvider, retryMessages, chatOptions);
-          }
+          }, askPrompt
         );
         result = validated.result;
         finalMessages = validated.messages;
@@ -3180,10 +3285,26 @@ function flowPilotRuntime(RED) {
 
       if (mode !== "chat") {
         const described = describeSelectionContext(context, settings);
-        const generated = processGenerationContent(
-          result.content || "", result, finalMessages, mode, described, activeProvider,
-          req.body.prompt, execution
-        );
+        let generated;
+        try {
+          generated = processGenerationContent(
+            result.content || "", result, finalMessages, mode, described, activeProvider,
+            req.body.prompt, execution
+          );
+        } catch (parseErr) {
+          const malformedRetry = await retryMalformedFinal(provider, activeProvider, finalMessages, result, parseErr, chatOptions);
+          if (!malformedRetry) { throw parseErr; }
+          result = malformedRetry.result;
+          finalMessages = malformedRetry.messages;
+          if (result.toolCalls) {
+            return res.json({ toolCalls: result.toolCalls, toolTiers: toolTierMap(result.toolCalls),
+              content: result.content || null, usage: result.usage || null });
+          }
+          generated = processGenerationContent(
+            result.content || "", result, finalMessages, mode, described, activeProvider,
+            req.body.prompt, execution
+          );
+        }
         recordTranscriptTurn(req.body.conversationId, mode, req.body.prompt || null, transcriptTextFromGenerationResult(generated));
         const finalize = (mode === "modify")
           ? function (r) {
@@ -4010,23 +4131,39 @@ function flowPilotRuntime(RED) {
         usage: result.usage || null
       };
     }
-    const content = result.content || "";
+    let content = result.content || "";
+    let finalMessages = messages;
     let parseOutcome = "unknown";
     try {
       const generated = processGenerationContent(
-        content, result, messages, auditAction, described, activeProvider, userPrompt, execution
+        content, result, finalMessages, auditAction, described, activeProvider, userPrompt, execution
       );
       parseOutcome = generated.prose ? "prose" : generated.question ? "question" : "success";
       return generated;
     } catch (err) {
-      parseOutcome = "parse_error:" + (err.message || "");
-      throw err;
+      const malformedRetry = await retryMalformedFinal(provider, activeProvider, finalMessages, result, err, chatOptions);
+      if (!malformedRetry) {
+        parseOutcome = "parse_error:" + (err.message || "");
+        throw err;
+      }
+      result = malformedRetry.result;
+      finalMessages = malformedRetry.messages;
+      content = result.content || "";
+      if (result.toolCalls) {
+        return { toolCalls: result.toolCalls, toolTiers: toolTierMap(result.toolCalls),
+          messages: finalMessages, content: content, usage: result.usage || null };
+      }
+      const retriedGenerated = processGenerationContent(
+        content, result, finalMessages, auditAction, described, activeProvider, userPrompt, execution
+      );
+      parseOutcome = retriedGenerated.prose ? "prose" : retriedGenerated.question ? "question" : "success";
+      return retriedGenerated;
     } finally {
       maybeLogDebugEvent("assistant_reply", {
         mode: auditAction,
         providerBaseUrl: activeProvider && activeProvider.baseUrl,
         model: activeProvider && activeProvider.model,
-        messages: messages,
+        messages: finalMessages,
         responseChars: typeof content === "string" ? content.length : 0,
         responseContent: content,
         parseOutcome: parseOutcome,
