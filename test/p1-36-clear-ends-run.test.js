@@ -134,7 +134,7 @@ function load() {
   source = source.replace(/\n\}\)\(\);\s*$/, "\n" +
     "window.__p136 = {" +
     "setRoot:function(v){$root=v;} , end:endActiveRun, clear:clearChat, send:dispatchSend, sendRoute:send, " +
-    "busy:setBusy, " +
+    "busy:setBusy, approve:approveProposeActionRecord, " +
     "consent:renderAgentToolConsentGate, ask:renderAskUserQuestion, " +
     "setState:function(v){activeRunState=v; activeRunCancelled=false;}, " +
     "setQueued:function(v){queuedMessage=v; updateQueuedIndicator();}, " +
@@ -250,6 +250,23 @@ function buttons(dom) { return dom.created.filter(node => node.selector === "<bu
   const src = fs.readFileSync(path.join(__dirname, "..", "lib", "core", "main.js"), "utf8");
   assert.ok(/function collect\(deployResult\) \{\s*buildVerifyWaitTimer = null;\s*if \(verifyCancelled\(\)\)/.test(src),
     "the proof's collect step checks its own generation, not isRunCancelled()");
+}
+
+
+// One run at a time: Approve on a plan card while another run is busy does
+// not start a second run (found live: the re-plan card a Stop leaves was
+// approved during the next run and two agent runs wrote to the same tab).
+{
+  const h = load();
+  h.api.busy(true);
+  const rec = { id: "plan-1", kind: "chip", chipType: "proposeAction",
+    proposeAction: { action: "generate", summary: "Build it", targets: [], plan_items: [] } };
+  const before = h.context.ajaxCalls.length;
+  h.api.approve(rec);
+  assert.strictEqual(rec.decision, undefined, "the card stays open");
+  assert.strictEqual(h.context.ajaxCalls.length, before, "no second run was started");
+  assert.ok(h.api.get().records.some(function (r) { return /still working on another request/.test(r.text || r.content || ""); }),
+    "the user is told why");
 }
 
 console.log("P1-36 clear-ends-run tests passed");
