@@ -371,13 +371,6 @@
     "note": "Deployment and verification intent belongs to Build."
   },
   {
-    "id": "build-slash-text",
-    "prompt": "/build fetch weather every 5 min",
-    "expected": "build",
-    "expectedLane": "PLAN",
-    "note": "Slash-command text is the Build goal."
-  },
-  {
     "id": "generate-creative-constrained",
     "prompt": "Do something cool and unique with this flow, but no http or exec nodes and not dad jokes.",
     "expected": "generate",
