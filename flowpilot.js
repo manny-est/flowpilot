@@ -199,6 +199,39 @@ function firstMatchingPreRouterCreationVerb(prompt) {
   return null;
 }
 
+function preRouterExistingNodeTargets(prompt, context) {
+  const text = String(prompt || "");
+  if (!/\bmake\s+(?:the|this)\b/i.test(text)) { return null; }
+  const selected = context && Array.isArray(context.nodes) ? context.nodes : [];
+  const openTab = context && Array.isArray(context.openTabNodes) ? context.openTabNodes
+    : context && Array.isArray(context.candidates) ? context.candidates : [];
+  const seen = new Set();
+  const nodes = selected.concat(openTab).filter(function (node) {
+    const id = node && node.id;
+    if (!id || seen.has(id)) { return false; }
+    seen.add(id);
+    return true;
+  });
+  if (!nodes.length) { return null; }
+
+  const named = nodes.filter(function (node) {
+    const name = node && typeof node.name === "string" ? node.name.trim() : "";
+    if (!name || name === node.id) { return false; }
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp("(^|[^a-z0-9_])" + escaped + "([^a-z0-9_]|$)", "i").test(text);
+  });
+  if (named.length === 1) { return named; }
+  // "this" points at the current selection. Without a selection it is only
+  // deterministic when the open-tab context contains one candidate.
+  if (/\bmake\s+this\b/i.test(text)) {
+    return selected.length ? selected : openTab.length === 1 ? openTab : null;
+  }
+  if (/\bmake\s+the\s+(?:existing\s+)?node\b/i.test(text)) {
+    return selected.length ? selected : openTab.length === 1 ? openTab : null;
+  }
+  return null;
+}
+
 function isPreRouterInterrogative(prompt) {
   const text = String(prompt || "");
   const trimmed = text.trim();
@@ -275,14 +308,17 @@ function runDeterministicPreRouter(prompt, context) {
   }
 
   const hasSelection = !!(context && Array.isArray(context.nodes) && context.nodes.length > 0);
-  const changeVerb = firstMatchingPreRouterChangeVerb(prompt);
-  if (changeVerb && !hasPreRouterDocumentationTerm(prompt)) {
-    return makePreRouterResult("modify", changeVerb, prompt, context, !hasSelection);
+  const existingTargets = preRouterExistingNodeTargets(prompt, context);
+  if (existingTargets) {
+    return makePreRouterResult("modify", "make", prompt, { nodes: existingTargets }, false);
   }
-
   const creationVerb = firstMatchingPreRouterCreationVerb(prompt);
   if (!hasSelection && creationVerb && !hasPreRouterDocumentationTerm(prompt)) {
     return makePreRouterResult("generate", creationVerb, prompt, context, false);
+  }
+  const changeVerb = firstMatchingPreRouterChangeVerb(prompt);
+  if (changeVerb && !hasPreRouterDocumentationTerm(prompt)) {
+    return makePreRouterResult("modify", changeVerb, prompt, context, !hasSelection);
   }
 
   return null;
@@ -411,7 +447,8 @@ function makeTierCAskUserToolCall(prompt, reason) {
       name: "ask_user",
       arguments: JSON.stringify({
         question: question,
-        options: ["Answer a question", "Create nodes", "Change nodes", "Document nodes", "Build and verify"]
+        question_kind: "intent",
+        options: ["Answer", "Create", "Change", "Document", "Build"]
       })
     }
   };
@@ -2099,8 +2136,11 @@ function flowPilotRuntime(RED) {
       // Plain-text tool result; use it as is.
     }
     const optionLetters = {
-      "answer a question": "A", "create nodes": "B", "change nodes": "C",
-      "document nodes": "D", "build and verify": "E"
+      "answer": "A", "answer a question": "A",
+      "create": "B", "create nodes": "B",
+      "change": "C", "change nodes": "C",
+      "document": "D", "document nodes": "D",
+      "build": "E", "build and verify": "E"
     };
     const classificationMessages = messages.slice(0, askIndex);
     const letter = optionLetters[String(answer || "").trim().toLowerCase()];
@@ -2242,7 +2282,7 @@ function flowPilotRuntime(RED) {
   // array built so far (so the caller/frontend can append the tool results
   // and continue via /flowpilot/agent-step) — nothing is recorded to the
   // transcript yet, since this isn't the final answer for the turn.
-  async function runChat(prompt, contextMode, context, history, historyTruncated, conversationId, useTools, strategy, compatOptions) {
+  async function runChat(prompt, contextMode, context, history, historyTruncated, conversationId, useTools, strategy, compatOptions, intake) {
     const settings = storage.getSettings();
     const activeProvider = storage.getActiveProvider(settings);
 
@@ -2280,7 +2320,12 @@ function flowPilotRuntime(RED) {
     let result;
     if (strategy === "agent") {
       chatOptions = agentTurnOptions(settings, chatOptions);
-      result = runDeterministicPreRouter(prompt, context);
+      const preRouterContext = Object.assign({}, context || {});
+      if ((!Array.isArray(preRouterContext.nodes) || !preRouterContext.nodes.length) &&
+          intake && Array.isArray(intake.candidates)) {
+        preRouterContext.openTabNodes = intake.candidates;
+      }
+      result = runDeterministicPreRouter(prompt, preRouterContext);
       if (!result) {
         const routingTier = normalizedRoutingTier(activeProvider);
         if (routingTier === "C") {
@@ -2812,7 +2857,7 @@ function flowPilotRuntime(RED) {
       const useTools = !!req.body.tools;
       const { activeProvider, result, perf, chatMessage, chatData, messages, toolCalls, answerPhase } =
         await runChat(prompt, "selected-nodes", req.body.context, history, historyTruncated,
-          req.body.conversationId, useTools, req.body.strategy);
+          req.body.conversationId, useTools, req.body.strategy, undefined, req.body.intake);
       const lane = laneForRequest(req.body, result);
       if (lane) {
         maybeLogDebugEvent("lane", {
