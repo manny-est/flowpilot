@@ -2004,6 +2004,19 @@ function flowPilotRuntime(RED) {
     "changes made with the apply_step tool. Make the same changes now with apply_step (one call per " +
     "plan item), then reply with a short summary and no flow, changes or newNodes fields.";
 
+  // True once this agent run has already changed the canvas through a WRITE
+  // tool. A final reply that then carries flow/changes is restating work
+  // that's done, not asking for it: retrying it as "make the same changes"
+  // made gpt-4.1 build a duplicate trigger (polish pass, Stage 1 live check).
+  const AGENT_WRITE_TOOL_NAMES = new Set(["apply_step", "remove_step", "rename_node", "group_nodes"]);
+  function messagesHaveAgentWrites(messages) {
+    return Array.isArray(messages) && messages.some(function (m) {
+      return m && m.role === "assistant" && Array.isArray(m.tool_calls) && m.tool_calls.some(function (call) {
+        return call && call.function && AGENT_WRITE_TOOL_NAMES.has(call.function.name);
+      });
+    });
+  }
+
   function hasInlineMutation(content) {
     let parsed = null;
     try { parsed = extractJsonObject(String(content || "")); } catch (err) { return false; }
@@ -2018,7 +2031,7 @@ function flowPilotRuntime(RED) {
       return m && m.role === "user" && m.content === AGENT_INLINE_WRITE_RETRY;
     });
     if (alreadyRetried || !result || result.toolCalls || result.fallbackToClassic ||
-      !hasInlineMutation(result.content)) { return null; }
+      messagesHaveAgentWrites(messages) || !hasInlineMutation(result.content)) { return null; }
     const retryMessages = messages.concat([
       { role: "assistant", content: result.content || "" },
       { role: "user", content: AGENT_INLINE_WRITE_RETRY }
@@ -3847,7 +3860,11 @@ function flowPilotRuntime(RED) {
     const flow = Array.isArray(parsed.flow) ? parsed.flow : null;
     // Converged Build (R11-6): the work is already on the canvas through the
     // WRITE tools, so the final reply is an explanation with no "flow".
-    if (!flow && auditContext && auditContext.strategy === "agent" && auditAction === "build") {
+    // #33: an agent Generate that already did its work with WRITE tools ends
+    // the same way (the contract strips any restated flow, so without this it
+    // was a 422 after a build that worked).
+    if (!flow && auditContext && auditContext.strategy === "agent" &&
+      (auditAction === "build" || messagesHaveAgentWrites(messages))) {
       storage.appendAudit(Object.assign({ action: "build_agent_final", goalMet: parsed.goalMet }, auditFields, perf));
       const buildFinal = { explanation: parsed.explanation || "" };
       if (typeof parsed.goalMet === "boolean") { buildFinal.goalMet = parsed.goalMet; }
