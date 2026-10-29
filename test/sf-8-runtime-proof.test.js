@@ -20,15 +20,15 @@ const evidence = proof.runtimeEvidenceForRun([
 assert.deepStrictEqual(evidence.map((entry) => entry.nodeId), ["tap-this-run", "changed-node"],
   "proof accepts this run's tap and touched-node status only");
 
-const defaultObserve = proof.runtimeDefaultObserve([
-  { id: "source", type: "function", outputs: 1 },
-  { id: "multi", type: "switch", outputs: 2 },
-  { id: "sink", type: "debug", outputs: 0 }
-], {
-  source: [{ target: "sink" }],
-  multi: []
-});
-assert.deepStrictEqual(defaultObserve, ["multi"], "default observe uses output-capable terminal nodes");
+const defaultObserve = proof.runtimeGoalObserve([
+  { id: "source", type: "inject", name: "Trigger", outputs: 1 },
+  { id: "change", type: "function", name: "Shape", outputs: 1 },
+  { id: "sink", type: "debug", name: "Output", outputs: 0 }
+], [
+  { source: { id: "source" }, target: { id: "change" } },
+  { source: { id: "change" }, target: { id: "sink" } }
+], "source");
+assert.deepStrictEqual(defaultObserve.tapNodeIds, ["change"], "default observe taps the goal path end, not the trigger");
 
 // own edits 0/>0 × plan-approved/unapproved × Restricted.
 const deployTable = [
@@ -63,10 +63,10 @@ assert.ok(buildCoreScript().indexOf("runtimeEvidenceForRun") !== -1, "assembled 
 
 assert.strictEqual(cards.buildResultCardModel({
   verifyResults: [{ evidenceCount: 0, evidence: [], note: "Restricted mode is on" }]
-}).run.label, "Run: not provable here — Restricted mode is on");
+}).run.label, "Run: not observable here — Restricted mode is on");
 assert.strictEqual(cards.buildResultCardModel({
   verifyResults: [{ evidenceCount: 1, evidence: [{ node: "FlowPilot test", value: "hello" }] }]
-}).run.label, 'Run: proven — FlowPilot test: "hello"');
+}).run.label, 'Run: observed — hello (at FlowPilot test)');
 
 // Node-RED exports only declared defaults, so after a deploy or reload a tap
 // has no fpTap property. The saved statusVal tag must still identify it, or
@@ -85,6 +85,6 @@ const quoted = cards.buildResultCardModel({ verifyResults: [{ evidenceCount: 2, 
   { kind: "debug", node: "FlowPilot test", value: "hello" },
   { kind: "debug", node: "FlowPilot test", value: "HELLO" }
 ] }] }).run.label;
-assert.ok(/HELLO/.test(quoted) && !/"hello"/.test(quoted), "the run line quotes the most downstream output");
+assert.ok(/Run: observed — HELLO \(at FlowPilot test\)/.test(quoted) && !/"hello"/.test(quoted), "the run line quotes the most downstream output");
 
 console.log("SF-8 runtime-proof tests passed");

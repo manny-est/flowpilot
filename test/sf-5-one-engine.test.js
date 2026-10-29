@@ -191,12 +191,80 @@ async function assertSummaryFinalNotRetried() {
   }
 }
 
+
+// Polish pass, Stage 1 live check: once a run has written through the tools,
+// a final reply that restates the built flow is not retried as "make the same
+// changes" (gpt-4.1 then built a duplicate trigger), and an agent Generate
+// ends with its explanation instead of a 422 (#33).
+async function assertRestatedFlowAfterWritesAccepted() {
+  const fake = await startFakeProvider({ reply: JSON.stringify({
+    explanation: "Built the weather and joke flow.",
+    flow: [{ id: "abc123", type: "inject", name: "Get Weather & Joke", wires: [["def456"]] }]
+  }) });
+  try {
+    const p = provider(fake.port, { supportsTools: true });
+    const runtime = loadRuntime({ activeProviderId: p.id, providers: [p] });
+    const out = await call(runtime, "POST", "/flowpilot/agent-step", {
+      strategy: "agent", entry: "generate", mode: "generate", prompt: "Build a weather and joke flow",
+      context: CONTEXT, messages: [
+        { role: "system", content: "x" }, { role: "user", content: "build it" },
+        { role: "assistant", content: null, tool_calls: [{ id: "call-1", type: "function",
+          function: { name: "apply_step", arguments: "{\"summary\":\"Add the trigger\"}" } }] },
+        { role: "tool", tool_call_id: "call-1", content: "{\"allPass\":true,\"idMap\":{\"inj1\":\"abc123\"}}" }
+      ]
+    });
+    assert.strictEqual(fake.requests.filter(function (r) { return /\/chat\/completions$/.test(r.url); }).length, 1,
+      "no corrective 'make the same changes' turn after the run already wrote");
+    assert.strictEqual(out.status, 200, "an agent Generate that already wrote ends without a 422");
+    assert.strictEqual(out.body.explanation, "Built the weather and joke flow.");
+    assert.ok(!out.body.flow || !out.body.flow.length, "the restated flow is not handed back for import");
+  } finally {
+    fake.close();
+  }
+}
+
+// The opposite case (same live check): after writing one node, gpt-4.1 put
+// the REST of the flow (nodes it hadn't built) into JSON. That's work still to
+// do, so the corrective apply_step turn still happens.
+async function assertUnbuiltFlowAfterWritesRetried() {
+  const fake = await startFakeProvider({
+    reply: function (body) { return isRetryTurn(body) ? "" : JSON.stringify({
+      explanation: "Plan: fetch weather and a joke.",
+      flow: [{ id: "abc123", type: "inject", wires: [["w2"]] }, { id: "w2", type: "http request", wires: [[]] }]
+    }); },
+    toolCalls: function (body) {
+      return isRetryTurn(body)
+        ? [{ id: "call-2", type: "function", function: { name: "apply_step", arguments: "{\"summary\":\"Add w2\"}" } }]
+        : null;
+    }
+  });
+  try {
+    const p = provider(fake.port, { supportsTools: true });
+    const runtime = loadRuntime({ activeProviderId: p.id, providers: [p] });
+    const out = await call(runtime, "POST", "/flowpilot/agent-step", {
+      strategy: "agent", entry: "generate", mode: "generate", prompt: "Build a weather and joke flow",
+      context: CONTEXT, messages: [
+        { role: "system", content: "x" }, { role: "user", content: "build it" },
+        { role: "assistant", content: null, tool_calls: [{ id: "call-1", type: "function",
+          function: { name: "apply_step", arguments: "{\"summary\":\"Add the trigger\"}" } }] },
+        { role: "tool", tool_call_id: "call-1", content: "{\"allPass\":true,\"idMap\":{\"w1\":\"abc123\"}}" }
+      ]
+    });
+    assert.strictEqual(out.status, 200);
+    assert.strictEqual(out.body.toolCalls[0].function.name, "apply_step", "the unbuilt nodes get built through the tools");
+  } finally {
+    fake.close();
+  }
+}
+
 (async function () {
   await assertToolProviderMatrix();
   await assertNoToolsProviderMatrix();
   await assertInlineWriteRetried();
   await assertInlineWriteRetriedOnlyOnce();
   await assertSummaryFinalNotRetried();
+  await assertRestatedFlowAfterWritesAccepted();
+  await assertUnbuiltFlowAfterWritesRetried();
   console.log("sf-5 one-engine tests passed");
 })().catch(function (err) {
   console.error(err);

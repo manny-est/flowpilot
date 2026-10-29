@@ -212,13 +212,14 @@ reads the messages they receive. It then removes those nodes and deploys again
 so they are not left in the flow. **Test it** on a result card runs the same
 proof on demand.
 
-- **Run: proven — …** means FlowPilot observed output from its own test node
-  and quotes the observed value.
-- **Run: not provable here — …** means it could not obtain qualifying runtime
-  evidence; the card gives the reason. It is not a claim that the flow is
-  broken.
+- **Run: observed — … (at …)** means a goal-end tap received a message and
+  quotes the tapped value.
+- **Ran, but no output reached …** means the trigger ran but no goal-end tap
+  received a message.
+- **Run: not observable here — …** means runtime observation is unavailable
+  in this context (for example, Restricted mode).
 
-![Result card showing Run: proven and Test it](docs/images/runtime-proof.png)
+![Result card showing Run: observed and Test it](docs/images/runtime-proof.png)
 
 The temporary test messages also appear in Node-RED's Debug sidebar while the
 proof runs. This is a known limitation. If a tab closes or a run crashes and

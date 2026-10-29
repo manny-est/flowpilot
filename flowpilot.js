@@ -254,25 +254,19 @@ function laneForRequest(body, result) {
   const proposal = calls.find(function (call) {
     return call && call.function && call.function.name === PROPOSE_ACTION_NAME;
   });
-  const ask = calls.find(function (call) {
-    return call && call.function && call.function.name === "ask_user";
-  });
-  let classification;
-  if (proposal) {
-    let args = {};
-    try { args = JSON.parse(proposal.function.arguments || "{}"); } catch (err) { args = {}; }
-    classification = args;
-  } else if (ask) {
-    classification = { kind: "unclear", unclear: true };
-  } else {
-    classification = { kind: result.message ? "answer" : "unclear" };
-  }
+  if (!proposal) { return null; }
+  let classification = {};
+  try { classification = JSON.parse(proposal.function.arguments || "{}"); } catch (err) { classification = {}; }
   const context = body.context && typeof body.context === "object" ? body.context : {};
   const intake = Object.assign({
     message: body.prompt || "",
     activeSelectionIds: Array.isArray(context.nodes) ? context.nodes.map(function (n) { return n && n.id; }).filter(Boolean) : []
   }, body.intake || {});
   return chooseLane(intake, classification);
+}
+
+function laneFields(lane) {
+  return lane ? { lane: lane.lane, reason: lane.reason } : {};
 }
 
 function runDeterministicPreRouter(prompt, context) {
@@ -810,7 +804,7 @@ function flowPilotRuntime(RED) {
           "property patches, at most one new node, and its immediate wires. " +
           "Use one call for the whole item, not one call per field. Existing " +
           "wire removal/replacement is expressed as a sparse " +
-          "changes[].set.wires final value.",
+          "changes[].set.wires final value. Create connected nodes together in one apply_step, with their wires, where you can. A wire to a node you'll create in a later step is connected when that node is created.",
         parameters: {
           type: "object",
           properties: {
@@ -2004,6 +1998,53 @@ function flowPilotRuntime(RED) {
     "changes made with the apply_step tool. Make the same changes now with apply_step (one call per " +
     "plan item), then reply with a short summary and no flow, changes or newNodes fields.";
 
+  // True once this agent run has already changed the canvas through a WRITE
+  // tool. A final reply that then carries flow/changes is restating work
+  // that's done, not asking for it: retrying it as "make the same changes"
+  // made gpt-4.1 build a duplicate trigger (polish pass, Stage 1 live check).
+  const AGENT_WRITE_TOOL_NAMES = new Set(["apply_step", "remove_step", "rename_node", "group_nodes"]);
+  function messagesHaveAgentWrites(messages) {
+    return Array.isArray(messages) && messages.some(function (m) {
+      return m && m.role === "assistant" && Array.isArray(m.tool_calls) && m.tool_calls.some(function (call) {
+        return call && call.function && AGENT_WRITE_TOOL_NAMES.has(call.function.name);
+      });
+    });
+  }
+
+  // Ids this run's WRITE tools already created: placeholders and real ids
+  // from each tool result's idMap.
+  function agentCreatedIds(messages) {
+    const ids = new Set();
+    (Array.isArray(messages) ? messages : []).forEach(function (m) {
+      if (!m || m.role !== "tool" || typeof m.content !== "string") { return; }
+      let parsed = null;
+      try { parsed = JSON.parse(m.content); } catch (err) { return; }
+      const idMap = parsed && parsed.idMap && typeof parsed.idMap === "object" ? parsed.idMap : null;
+      if (!idMap) { return; }
+      Object.keys(idMap).forEach(function (key) { ids.add(key); ids.add(String(idMap[key])); });
+    });
+    return ids;
+  }
+
+  // A final reply restates finished work when the run has written and every
+  // node its flow/newNodes names was created by this run. Nodes it hasn't
+  // built yet mean the model is still describing work, which the retry
+  // turns into apply_step calls.
+  function isRestatedAgentWork(messages, content) {
+    if (!messagesHaveAgentWrites(messages)) { return false; }
+    let parsed = null;
+    try { parsed = extractJsonObject(String(content || "")); } catch (err) { return false; }
+    if (!parsed || typeof parsed !== "object") { return false; }
+    const created = agentCreatedIds(messages);
+    const named = [];
+    ["flow", "newNodes"].forEach(function (field) {
+      (Array.isArray(parsed[field]) ? parsed[field] : []).forEach(function (node) {
+        if (node && node.id) { named.push(String(node.id)); }
+      });
+    });
+    return named.length > 0 && named.every(function (id) { return created.has(id); });
+  }
+
   function hasInlineMutation(content) {
     let parsed = null;
     try { parsed = extractJsonObject(String(content || "")); } catch (err) { return false; }
@@ -2018,7 +2059,7 @@ function flowPilotRuntime(RED) {
       return m && m.role === "user" && m.content === AGENT_INLINE_WRITE_RETRY;
     });
     if (alreadyRetried || !result || result.toolCalls || result.fallbackToClassic ||
-      !hasInlineMutation(result.content)) { return null; }
+      isRestatedAgentWork(messages, result.content) || !hasInlineMutation(result.content)) { return null; }
     const retryMessages = messages.concat([
       { role: "assistant", content: result.content || "" },
       { role: "user", content: AGENT_INLINE_WRITE_RETRY }
@@ -2773,10 +2814,12 @@ function flowPilotRuntime(RED) {
         await runChat(prompt, "selected-nodes", req.body.context, history, historyTruncated,
           req.body.conversationId, useTools, req.body.strategy);
       const lane = laneForRequest(req.body, result);
-      maybeLogDebugEvent("lane", {
-        mode: "chat", runId: req.body.runId || null,
-        lane: lane.lane, reason: lane.reason, intake: req.body.intake || null
-      });
+      if (lane) {
+        maybeLogDebugEvent("lane", {
+          mode: "chat", runId: req.body.runId || null,
+          lane: lane.lane, reason: lane.reason, intake: req.body.intake || null
+        });
+      }
 
       storage.appendAudit(Object.assign({
         action: "chat",
@@ -2792,8 +2835,8 @@ function flowPilotRuntime(RED) {
         return res.json(fallbackBody);
       }
       if (toolCalls) {
-        const toolBody = { toolCalls: toolCalls, messages: messages, content: result.content || null,
-          usage: result.usage || null, lane: lane.lane, reason: lane.reason };
+        const toolBody = Object.assign({ toolCalls: toolCalls, messages: messages, content: result.content || null,
+          usage: result.usage || null }, laneFields(lane));
         if (answerPhase) { toolBody.answerPhase = true; }
         return res.json(toolBody);
       }
@@ -2804,8 +2847,6 @@ function flowPilotRuntime(RED) {
         usage: result.usage || null
       };
       if (answerPhase) { body.answerPhase = true; }
-      body.lane = lane.lane;
-      body.reason = lane.reason;
       const suggestedAction = extractSuggestedAction(chatData);
       if (suggestedAction) { body.suggestedAction = suggestedAction; }
       const questionOptions = extractQuestionOptions(chatData);
@@ -3079,10 +3120,12 @@ function flowPilotRuntime(RED) {
       }
 
       const lane = laneForRequest(req.body, result);
-      maybeLogDebugEvent("lane", {
-        mode: mode, runId: execution.runId,
-        lane: lane.lane, reason: lane.reason, intake: req.body.intake || null
-      });
+      if (lane) {
+        maybeLogDebugEvent("lane", {
+          mode: mode, runId: execution.runId,
+          lane: lane.lane, reason: lane.reason, intake: req.body.intake || null
+        });
+      }
 
       if (result.fallbackToClassic) {
         const fallbackBody = { fallbackToClassic: true, usage: result.usage || null };
@@ -3114,14 +3157,12 @@ function flowPilotRuntime(RED) {
           responseContent: result.content || null,
           debugNote: execution.debugNote || undefined
         });
-        const toolBody = {
+        const toolBody = Object.assign({
           toolCalls: result.toolCalls,
           toolTiers: toolTierMap(result.toolCalls),
           content: result.content || null,
-          usage: result.usage || null,
-          lane: lane.lane,
-          reason: lane.reason
-        };
+          usage: result.usage || null
+        }, laneFields(lane));
         if (answerPhase) { toolBody.answerPhase = true; }
         return res.json(toolBody);
       }
@@ -3152,8 +3193,6 @@ function flowPilotRuntime(RED) {
             }
           : function (r) { return finalizeSimpleGeneration(r, execution); };
         const { status, body } = finalize(generated);
-        body.lane = lane.lane;
-        body.reason = lane.reason;
         return res.status(status).json(body);
       }
 
@@ -3165,8 +3204,6 @@ function flowPilotRuntime(RED) {
         usage: result.usage || null
       };
       if (answerPhase) { body.answerPhase = true; }
-      body.lane = lane.lane;
-      body.reason = lane.reason;
       const suggestedAction = extractSuggestedAction(split.data);
       if (suggestedAction) { body.suggestedAction = suggestedAction; }
       const questionOptions = extractQuestionOptions(split.data);
@@ -3847,7 +3884,11 @@ function flowPilotRuntime(RED) {
     const flow = Array.isArray(parsed.flow) ? parsed.flow : null;
     // Converged Build (R11-6): the work is already on the canvas through the
     // WRITE tools, so the final reply is an explanation with no "flow".
-    if (!flow && auditContext && auditContext.strategy === "agent" && auditAction === "build") {
+    // #33: an agent Generate that already did its work with WRITE tools ends
+    // the same way (the contract strips any restated flow, so without this it
+    // was a 422 after a build that worked).
+    if (!flow && auditContext && auditContext.strategy === "agent" &&
+      (auditAction === "build" || messagesHaveAgentWrites(messages))) {
       storage.appendAudit(Object.assign({ action: "build_agent_final", goalMet: parsed.goalMet }, auditFields, perf));
       const buildFinal = { explanation: parsed.explanation || "" };
       if (typeof parsed.goalMet === "boolean") { buildFinal.goalMet = parsed.goalMet; }
@@ -4478,17 +4519,17 @@ function flowPilotRuntime(RED) {
       );
       if (generated.toolCalls) {
         const lane = laneForRequest(req.body, generated);
-        maybeLogDebugEvent("lane", { mode: "generate", runId: req.body.runId || null,
-          lane: lane.lane, reason: lane.reason, intake: req.body.intake || null });
-        return res.json({
+        if (lane) {
+          maybeLogDebugEvent("lane", { mode: "generate", runId: req.body.runId || null,
+            lane: lane.lane, reason: lane.reason, intake: req.body.intake || null });
+        }
+        return res.json(Object.assign({
           toolCalls: generated.toolCalls,
           toolTiers: generated.toolTiers,
           messages: generated.messages,
           content: generated.content,
-          usage: generated.usage,
-          lane: lane.lane,
-          reason: lane.reason
-        });
+          usage: generated.usage
+        }, laneFields(lane)));
       }
       recordTranscriptTurn(req.body.conversationId, "generate", prompt, transcriptTextFromGenerationResult(generated));
       const { status, body } = finalize(generated);
@@ -4547,17 +4588,17 @@ function flowPilotRuntime(RED) {
         );
         if (built.toolCalls) {
           const lane = laneForRequest(req.body, built);
-          maybeLogDebugEvent("lane", { mode: "build", runId: req.body.runId || null,
-            lane: lane.lane, reason: lane.reason, intake: req.body.intake || null });
-          return res.json({
+          if (lane) {
+            maybeLogDebugEvent("lane", { mode: "build", runId: req.body.runId || null,
+              lane: lane.lane, reason: lane.reason, intake: req.body.intake || null });
+          }
+          return res.json(Object.assign({
             toolCalls: built.toolCalls,
             toolTiers: built.toolTiers,
             messages: built.messages,
             content: built.content,
-            usage: built.usage,
-            lane: lane.lane,
-            reason: lane.reason
-          });
+            usage: built.usage
+          }, laneFields(lane)));
         }
         recordTranscriptTurn(req.body.conversationId, "build", prompt, transcriptTextFromGenerationResult(built));
         const { status, body } = finalizeSimpleGeneration(built, execution);
@@ -4588,17 +4629,17 @@ function flowPilotRuntime(RED) {
       );
       if (built.toolCalls) {
         const lane = laneForRequest(req.body, built);
-        maybeLogDebugEvent("lane", { mode: "build", runId: req.body.runId || null,
-          lane: lane.lane, reason: lane.reason, intake: req.body.intake || null });
-        return res.json({
+        if (lane) {
+          maybeLogDebugEvent("lane", { mode: "build", runId: req.body.runId || null,
+            lane: lane.lane, reason: lane.reason, intake: req.body.intake || null });
+        }
+        return res.json(Object.assign({
           toolCalls: built.toolCalls,
           toolTiers: built.toolTiers,
           messages: built.messages,
           content: built.content,
-          usage: built.usage,
-          lane: lane.lane,
-          reason: lane.reason
-        });
+          usage: built.usage
+        }, laneFields(lane)));
       }
       recordTranscriptTurn(req.body.conversationId, "build", prompt, transcriptTextFromGenerationResult(built));
       const { status, body } = finalizeSimpleGeneration(built, execution);
@@ -4660,17 +4701,17 @@ function flowPilotRuntime(RED) {
       );
       if (documented.toolCalls) {
         const lane = laneForRequest(req.body, documented);
-        maybeLogDebugEvent("lane", { mode: "document", runId: req.body.runId || null,
-          lane: lane.lane, reason: lane.reason, intake: req.body.intake || null });
-        return res.json({
+        if (lane) {
+          maybeLogDebugEvent("lane", { mode: "document", runId: req.body.runId || null,
+            lane: lane.lane, reason: lane.reason, intake: req.body.intake || null });
+        }
+        return res.json(Object.assign({
           toolCalls: documented.toolCalls,
           toolTiers: documented.toolTiers,
           messages: documented.messages,
           content: documented.content,
-          usage: documented.usage,
-          lane: lane.lane,
-          reason: lane.reason
-        });
+          usage: documented.usage
+        }, laneFields(lane)));
       }
       recordTranscriptTurn(req.body.conversationId, "document", userPrompt, transcriptTextFromGenerationResult(documented));
       const { status, body } = finalizeSimpleGeneration(documented, execution);
@@ -4732,17 +4773,17 @@ function flowPilotRuntime(RED) {
       );
       if (result.toolCalls) {
         const lane = laneForRequest(req.body, result);
-        maybeLogDebugEvent("lane", { mode: "modify", runId: req.body.runId || null,
-          lane: lane.lane, reason: lane.reason, intake: req.body.intake || null });
-        return res.json({
+        if (lane) {
+          maybeLogDebugEvent("lane", { mode: "modify", runId: req.body.runId || null,
+            lane: lane.lane, reason: lane.reason, intake: req.body.intake || null });
+        }
+        return res.json(Object.assign({
           toolCalls: result.toolCalls,
           toolTiers: result.toolTiers,
           messages: result.messages,
           content: result.content,
-          usage: result.usage,
-          lane: lane.lane,
-          reason: lane.reason
-        });
+          usage: result.usage
+        }, laneFields(lane)));
       }
       recordTranscriptTurn(req.body.conversationId, "modify", String(prompt).trim(), transcriptTextFromGenerationResult(result));
       const { status, body } = finalize(result);
