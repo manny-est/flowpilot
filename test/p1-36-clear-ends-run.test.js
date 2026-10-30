@@ -138,9 +138,11 @@ function load() {
     "consent:renderAgentToolConsentGate, ask:renderAskUserQuestion, " +
     "setState:function(v){activeRunState=v; activeRunCancelled=false;}, " +
     "setQueued:function(v){queuedMessage=v; updateQueuedIndicator();}, " +
+    "arm:function(v){setArmedExecuteAction(v);}, query:function(v){armQueryIntent(v,null);}, " +
+    "setFlags:function(v){nextSendFlags=v; renderNextSendFlags();}, setIntake:function(v){pendingIntake=v;}, setPin:function(v){pinnedSelectionIds=v;}, " +
     "setRequest:function(v){fpCurrentAgentRequest=v;}, " +
     "gen:function(){return runCancelGeneration;}, " +
-    "get:function(){return {state:activeRunState, cancelled:activeRunCancelled, queued:queuedMessage, records:messageRecords.slice()};}" +
+    "get:function(){return {state:activeRunState, cancelled:activeRunCancelled, queued:queuedMessage, records:messageRecords.slice(), armed:armedExecuteAction, query:armedQueryIntentLabel, flags:nextSendFlags, intake:pendingIntake, pin:pinnedSelectionIds, build:activeBuildLoop, act:activeActRun, debug:attachedDebugMessages.slice(), history:conversationHistory.slice()};}" +
     "};\n})();\n");
   vm.runInNewContext(source, context, { filename: "flowpilot-core.js" });
   context.window.__p136.setRoot(dom.root);
@@ -270,3 +272,5 @@ function buttons(dom) { return dom.created.filter(node => node.selector === "<bu
 }
 
 console.log("P1-36 clear-ends-run tests passed");
+
+module.exports = { load, buttons, makeDom };

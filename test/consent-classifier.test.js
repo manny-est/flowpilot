@@ -56,14 +56,18 @@ assert.strictEqual(consent.decideConsent("modify-config", SIDE, ctx("run-1", "n-
 // Real client call site, evaluated with the module in the same scope.
 const main = fs.readFileSync(path.join(__dirname, "..", "lib", "core", "main.js"), "utf8");
 const collect = main.match(/function collectWriteToolConsentItems\(name, args, idMap\) \{[\s\S]*?\n    \}\n/)[0];
+const decision = main.match(/function writeToolCallConsentDecision\(tier, name, args, consentContext\) \{[\s\S]*?\n    \}\n/)[0];
 const gate = main.match(/function writeToolCallNeedsConsent\(tier, name, args, consentContext\) \{[\s\S]*?\n    \}\n/)[0];
 const consentSrc = fs.readFileSync(path.join(__dirname, "..", "lib", "core", "consent.js"), "utf8").replace(/if \(typeof module[\s\S]*$/, "");
 const LIVE = { "fn1": { type: "function" }, "http1": { type: "http request" }, "dbg1": { type: "debug" } };
-const needs = new Function("findLiveNode", consentSrc + collect + gate + "return writeToolCallNeedsConsent;")(function (id) { return LIVE[id] || null; });
+const needs = new Function("findLiveNode", consentSrc + collect + decision + gate + "return writeToolCallNeedsConsent;")(function (id) { return LIVE[id] || null; });
 
 assert.strictEqual(needs("write-safe", "group_nodes", {}), false, "write-safe tier never gated");
 assert.strictEqual(needs("write-gated", "apply_step", { newNodes: [{ id: "x", type: "debug" }] }), false, "safe create auto");
 assert.strictEqual(needs("write-gated", "apply_step", { newNodes: [{ id: "x", type: "http request" }] }), true, "side-effecting create asks");
+assert.strictEqual(needs("write-gated", "apply_step", { newNodes: [
+  { id: "inject-1", type: "inject" }, { id: "http-1", type: "http request" }
+] }), true, "a mixed create step asks for its http request");
 assert.strictEqual(needs("write-gated", "apply_step", { newNodes: [{ id: "x", type: "mqtt out" }], newWires: [{ from: "fn1", to: "x" }] }), true, "create + wire to new side-effecting node asks");
 assert.strictEqual(needs("write-gated", "apply_step", { newWires: [{ from: "fn1", to: "dbg1" }] }), false, "safe rewire auto");
 assert.strictEqual(needs("write-gated", "apply_step", { changes: [{ id: "http1", set: { url: "x" } }] }), true, "modify side-effecting asks");
