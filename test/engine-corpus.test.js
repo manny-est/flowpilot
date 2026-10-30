@@ -27,6 +27,14 @@ assert.strictEqual(runner.classifyCannedToolCall(call("rename_node", { nodeId: "
 assert.strictEqual(runner.classifyCannedToolCall(call("rename_node", { nodeId: "n1", name: "Timer" }), parts, ["n1"]),
   "write_allowed", "locked safe edit is write_allowed");
 
+// An accepted multi-node consent feeds the same approved scope as the live
+// client gate; the corpus must not treat the next decision as a fresh edit.
+const consentParts = runner.fixtureParts(generateCase);
+const consentState = gates.diffGate.createDiffGateState([], { lane: "DIRECT" });
+const consentGate = runner.evaluateWriteTool(call("remove_step", { nodeIds: ["n1", "n2", "n3"] }),
+  [], consentParts, consentState, [], { consentAccepted: true });
+assert.strictEqual(consentGate.diff.pause, false, "accepted multi-delete consent covers every deleted node");
+
 // The server and browser apply lane routing only to propose_action, so a
 // write still goes through consent and the diff gate.
 assert.strictEqual(runner.proposalKind(call("propose_action", { action: "modify" }), false, "ASK"),
@@ -50,3 +58,11 @@ assert.strictEqual(generateCase.flow.find(function (n) { return n.id === "n1"; }
   "the case fixture itself is not modified");
 
 console.log("engine-corpus gate-loading tests passed");
+
+// The runner mirrors the browser: an apply_step with nothing in it asks no
+// consent (round 2 live check), so it can't turn a corpus case into consent_ask.
+{
+  const fsx = require("fs"), pathx = require("path");
+  const src = fsx.readFileSync(pathx.join(__dirname, "engine-corpus", "runner.js"), "utf8");
+  assert.ok(/\(!items\.length && emptyWrite\) \? \["auto"\]/.test(src), "empty write is auto in the runner too");
+}

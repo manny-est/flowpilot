@@ -56,17 +56,20 @@ assert.strictEqual(decision.pause, true, "editing an existing node outside the t
 assert.strictEqual(decision.reason, "out-of-target", "pause reason is recorded");
 assert.strictEqual(decision.touchedNodes.filter(function (n) { return n.outOfTarget; }).length, 1, "out-of-target node is marked");
 
-state = api.createDiffGateState(["target", "tap", "extra"], { diffGateThreshold: 2 });
+// Amendment 1: the size threshold is only for existing nodes outside the
+// approved scope in DIRECT. Covered targets do not count just because there
+// are more of them than the configured threshold.
+state = api.createDiffGateState(["target", "tap", "extra"], { diffGateThreshold: 2, lane: "DIRECT" });
 decision = api.diffGateDecision([
   { id: "target", name: "Input", type: "inject" },
   { id: "tap", name: "Tap", type: "debug" },
   { id: "extra", name: "Extra", type: "function" }
 ], ["target", "tap", "extra"], state, {});
-assert.strictEqual(decision.pause, true, "threshold overflow pauses");
-assert.strictEqual(decision.reason, "threshold", "threshold reason is recorded");
+assert.strictEqual(decision.pause, false, "covered existing nodes do not overflow the size threshold");
+assert.strictEqual(decision.changedNodeCount, 0, "covered existing nodes are not counted");
 api.diffGateKeepGoing(state, decision);
 const afterKeep = api.diffGateDecision(decision.touchedNodes, ["target", "tap", "extra"], state, {});
-assert.strictEqual(afterKeep.pause, false, "Keep going raises allowance for the same nodes");
+assert.strictEqual(afterKeep.pause, false, "Keep going preserves approved scope for the same nodes");
 
 // Shaped like Node-RED 5.0.9's RED.history (red.js): list()/depth()/peek()
 // are functions; replace() swaps the top entry in place.

@@ -56,21 +56,30 @@ assert.strictEqual(consent.decideConsent("modify-config", SIDE, ctx("run-1", "n-
 // Real client call site, evaluated with the module in the same scope.
 const main = fs.readFileSync(path.join(__dirname, "..", "lib", "core", "main.js"), "utf8");
 const collect = main.match(/function collectWriteToolConsentItems\(name, args, idMap\) \{[\s\S]*?\n    \}\n/)[0];
+const isEmptyWrite = main.match(/function writeToolCallIsEmpty\(name, args\) \{[\s\S]*?\n    \}\n/)[0];
+const decision = isEmptyWrite + main.match(/function writeToolCallConsentDecision\(tier, name, args, consentContext\) \{[\s\S]*?\n    \}\n/)[0];
 const gate = main.match(/function writeToolCallNeedsConsent\(tier, name, args, consentContext\) \{[\s\S]*?\n    \}\n/)[0];
 const consentSrc = fs.readFileSync(path.join(__dirname, "..", "lib", "core", "consent.js"), "utf8").replace(/if \(typeof module[\s\S]*$/, "");
 const LIVE = { "fn1": { type: "function" }, "http1": { type: "http request" }, "dbg1": { type: "debug" } };
-const needs = new Function("findLiveNode", consentSrc + collect + gate + "return writeToolCallNeedsConsent;")(function (id) { return LIVE[id] || null; });
+const needs = new Function("findLiveNode", consentSrc + collect + decision + gate + "return writeToolCallNeedsConsent;")(function (id) { return LIVE[id] || null; });
 
 assert.strictEqual(needs("write-safe", "group_nodes", {}), false, "write-safe tier never gated");
 assert.strictEqual(needs("write-gated", "apply_step", { newNodes: [{ id: "x", type: "debug" }] }), false, "safe create auto");
 assert.strictEqual(needs("write-gated", "apply_step", { newNodes: [{ id: "x", type: "http request" }] }), true, "side-effecting create asks");
+assert.strictEqual(needs("write-gated", "apply_step", { newNodes: [
+  { id: "inject-1", type: "inject" }, { id: "http-1", type: "http request" }
+] }), true, "a mixed create step asks for its http request");
 assert.strictEqual(needs("write-gated", "apply_step", { newNodes: [{ id: "x", type: "mqtt out" }], newWires: [{ from: "fn1", to: "x" }] }), true, "create + wire to new side-effecting node asks");
 assert.strictEqual(needs("write-gated", "apply_step", { newWires: [{ from: "fn1", to: "dbg1" }] }), false, "safe rewire auto");
 assert.strictEqual(needs("write-gated", "apply_step", { changes: [{ id: "http1", set: { url: "x" } }] }), true, "modify side-effecting asks");
 assert.strictEqual(needs("write-gated", "rename_node", { nodeId: "fn1", name: "y" }), false, "rename safe auto");
 assert.strictEqual(needs("write-gated", "remove_step", { nodeId: "dbg1" }), true, "delete of a safe node asks");
 assert.strictEqual(needs("write-gated", "rename_node", { nodeId: "ghost" }), true, "unresolvable id asks");
-assert.strictEqual(needs("write-gated", "apply_step", {}), true, "nothing identifiable asks");
+// Round 2 live check: an apply_step with nothing in it applies nothing (the
+// tool answers "nothing to apply"), so asking only showed the user a vague
+// "update the flow" question. An unresolvable id (above) still asks.
+assert.strictEqual(needs("write-gated", "apply_step", {}), false, "an empty write asks nothing");
+assert.strictEqual(needs("write-gated", "apply_step", { summary: "Add an inject node" }), false, "summary only asks nothing");
 assert.strictEqual(needs("write-gated", "rename_node", { nodeId: "fn1" }, { hold: true }), true, "hold asks on a safe rename");
 const m2 = consent.createConsentMemory(); m2.remember("r", "http1");
 assert.strictEqual(needs("write-gated", "apply_step", { changes: [{ id: "http1", set: {} }] }, { memory: m2, taskId: "r" }), false, "approved node not re-asked in the same run");
