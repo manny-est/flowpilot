@@ -58,3 +58,11 @@ assert.strictEqual(generateCase.flow.find(function (n) { return n.id === "n1"; }
   "the case fixture itself is not modified");
 
 console.log("engine-corpus gate-loading tests passed");
+
+// The runner mirrors the browser: an apply_step with nothing in it asks no
+// consent (round 2 live check), so it can't turn a corpus case into consent_ask.
+{
+  const fsx = require("fs"), pathx = require("path");
+  const src = fsx.readFileSync(pathx.join(__dirname, "engine-corpus", "runner.js"), "utf8");
+  assert.ok(/\(!items\.length && emptyWrite\) \? \["auto"\]/.test(src), "empty write is auto in the runner too");
+}

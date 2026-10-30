@@ -356,7 +356,12 @@ function applyWriteToFixture(call, parts) {
 function evaluateWriteTool(call, lockedTargets, parts, state, priorLedger) {
   const options = arguments.length > 5 && arguments[5] ? arguments[5] : {};
   const items = consentItems(call, parts);
-  const decisions = toolName(call) === "group_nodes" ? ["auto"] : (items.length ? items.map(function (item) {
+  // Same rule as the browser (main.js writeToolCallIsEmpty): a write with
+  // nothing in it applies nothing and asks nothing.
+  const callArgs = toolArgs(call);
+  const emptyWrite = toolName(call) === "apply_step" &&
+    !(callArgs.newNodes || []).length && !(callArgs.changes || []).length && !(callArgs.newWires || []).length;
+  const decisions = toolName(call) === "group_nodes" || (!items.length && emptyWrite) ? ["auto"] : (items.length ? items.map(function (item) {
     return GATES.consent.decideConsent(item.op, item.type, { nodeId: item.nodeId });
   }) : ["ask"]);
   const consent = decisions.indexOf("ask") !== -1 ? "ask" : "auto";
