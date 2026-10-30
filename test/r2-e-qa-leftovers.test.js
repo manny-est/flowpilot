@@ -141,3 +141,14 @@ test("layout supplies coordinates, follows wires, and avoids the canvas corner",
 });
 
 console.log("R2-E QA leftovers regression tests passed");
+
+// Review fix: Send is never disabled now, so nothing may still read
+// "Send disabled" as "a run is busy" (the act run would finish mid-run and a
+// mid-run reload would remove the proof taps).
+{
+  const fsx = require("fs"), pathx = require("path");
+  ["modes.js", "main.js", "init.js"].forEach(function (f) {
+    const src = fsx.readFileSync(pathx.join(__dirname, "..", "lib", "core", f), "utf8");
+    assert.ok(!/el\("#fp-send"\)\.prop\("disabled"\)\s*[)&|;]/.test(src), f + ": busy is isRunBusy(), not Send's disabled state");
+  });
+}
