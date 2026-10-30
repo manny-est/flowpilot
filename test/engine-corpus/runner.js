@@ -79,8 +79,10 @@ function loadGateModules() {
   vm.runInNewContext(source + "\nthis.__flowPilotDiffGate = {" +
     "getDiffGateThreshold:getDiffGateThreshold," +
     "createDiffGateState:createDiffGateState," +
-    "diffGateDecision:diffGateDecision" +
-    "};", context, { filename: "lib/core/diff-gate.js" });
+    "diffGateDecision:diffGateDecision," +
+    "diffGateApproveScope:diffGateApproveScope," +
+    "diffGateApprovePlan:diffGateApprovePlan" +
+  "};", context, { filename: "lib/core/diff-gate.js" });
   return {
     consent: consent,
     diffGate: context.__flowPilotDiffGate,
@@ -352,13 +354,29 @@ function applyWriteToFixture(call, parts) {
 }
 
 function evaluateWriteTool(call, lockedTargets, parts, state, priorLedger) {
+  const options = arguments.length > 5 && arguments[5] ? arguments[5] : {};
   const items = consentItems(call, parts);
   const decisions = toolName(call) === "group_nodes" ? ["auto"] : (items.length ? items.map(function (item) {
     return GATES.consent.decideConsent(item.op, item.type, { nodeId: item.nodeId });
   }) : ["ask"]);
   const consent = decisions.indexOf("ask") !== -1 ? "ask" : "auto";
+  // Corpus callers can model the user clicking Proceed without inventing a
+  // second gate implementation. Multi-node consent covers every item in the
+  // accepted call, including all nodes in a delete batch.
+  if (options.consentAccepted === true && consent === "ask") {
+    GATES.diffGate.diffGateApproveScope(state, items.map(function (item) { return item.nodeId; }).filter(Boolean));
+  }
+  if (Array.isArray(options.approvedScopeNodeIds)) {
+    GATES.diffGate.diffGateApproveScope(state, options.approvedScopeNodeIds);
+  }
+  if (options.planApproved === true) {
+    GATES.diffGate.diffGateApprovePlan(state, options.planNodeIds || []);
+  }
   const ledger = (priorLedger || []).concat(ledgerForWrite(call, parts));
-  const diff = GATES.diffGate.diffGateDecision(ledger, lockedTargets, state, {});
+  const diff = GATES.diffGate.diffGateDecision(ledger, lockedTargets, state, {
+    lane: options.lane || state.lane || "DIRECT",
+    planApproved: options.planApproved === true
+  });
   return { consent: consent, consentItems: items, diff: diff, ledger: ledger };
 }
 
