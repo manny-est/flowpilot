@@ -188,7 +188,7 @@ function buttons(dom) { return dom.created.filter(node => node.selector === "<bu
   h.dom.elements["#fp-prompt"].value = "typed answer";
   h.api.send();
   assert.deepStrictEqual(answers, ["typed answer"], "typed text answers ask_user");
-  assert.strictEqual(h.dom.elements["#fp-send"].props.disabled, true, "continuation remains the active run");
+  assert.strictEqual(h.dom.elements["#fp-send"].props.disabled, false, "Send stays enabled while continuation remains active");
   h.api.end("clear-chat");
   assert.strictEqual(h.dom.elements["#fp-send"].props.disabled, false);
 }

@@ -1030,6 +1030,11 @@ function flowPilotRuntime(RED) {
           type: "object",
           properties: {
             question: { type: "string" },
+            question_kind: {
+              type: "string",
+              enum: ["intent", "target"],
+              description: "Use target only when asking which existing node FlowPilot should act on; use intent for action classification questions."
+            },
             options: {
               type: "array",
               items: { type: "string" },
