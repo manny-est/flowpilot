@@ -108,3 +108,23 @@ test("mixed Build creates ask for the side-effecting node", () => {
 });
 
 console.log("R2-C clear-skip tests passed");
+
+// Round 2 live check: an apply_step with nothing to apply (only a summary)
+// asked a vague "update the flow" consent, twice in one gpt-4.1 run.
+{
+  const fsx = require("fs"), pathx = require("path");
+  const src = fsx.readFileSync(pathx.join(__dirname, "..", "lib", "core", "main.js"), "utf8");
+  const start = src.indexOf("function writeToolCallIsEmpty(");
+  let depth = 0, end = start;
+  for (let i = src.indexOf("{", start); i < src.length; i++) {
+    if (src[i] === "{") { depth++; }
+    if (src[i] === "}") { depth--; if (depth === 0) { end = i + 1; break; } }
+  }
+  const isEmpty = new Function("return " + src.slice(start, end))();
+  assert.strictEqual(isEmpty("apply_step", { summary: "Add an inject node" }), true);
+  assert.strictEqual(isEmpty("apply_step", { summary: "x", newNodes: [{ id: "n1", type: "inject" }] }), false);
+  assert.strictEqual(isEmpty("remove_step", { summary: "x" }), true);
+  assert.strictEqual(isEmpty("remove_step", { nodeIds: ["a"] }), false);
+  assert.ok(/if \(!items\.length && writeToolCallIsEmpty\(name, args\)\) \{ return "auto"; \}/.test(src),
+    "an empty write asks nothing");
+}
