@@ -2532,7 +2532,9 @@ function flowPilotRuntime(RED) {
         }
       );
     } catch (err) {
-      res.write("data: " + JSON.stringify({ error: err.message }) + "\n\n");
+      const errorBody = { error: err.message };
+      if (err && err.raw) { errorBody.raw = err.raw; }
+      res.write("data: " + JSON.stringify(errorBody) + "\n\n");
       res.end();
       storage.appendAudit({ action: "chat_stream_error", error: err.message });
       return;
@@ -2901,11 +2903,14 @@ function flowPilotRuntime(RED) {
         if (!res.headersSent && err && err.status) {
           const errBody = { error: err.code || err.message };
           if (err.code) { errBody.message = err.message; }
+          if (err.raw) { errBody.raw = err.raw; }
           return res.status(err.status).json(errBody);
         }
         storage.appendAudit({ action: "chat_stream_error", error: err.message });
         if (!res.headersSent) {
-          res.status(500).json({ error: err.message });
+          const errorBody = { error: err.message };
+          if (err && err.raw) { errorBody.raw = err.raw; }
+          res.status(500).json(errorBody);
         } else {
           try { res.end(); } catch (e) { /* already closed */ }
         }
@@ -2965,10 +2970,13 @@ function flowPilotRuntime(RED) {
       if (err && err.status) {
         const errBody = { error: err.code || err.message };
         if (err.code) { errBody.message = err.message; }
+        if (err.raw) { errBody.raw = err.raw; }
         return res.status(err.status).json(errBody);
       }
       storage.appendAudit({ action: "chat_error", error: err.message });
-      res.status(500).json({ error: err.message });
+      const errorBody = { error: err.message };
+      if (err && err.raw) { errorBody.raw = err.raw; }
+      res.status(500).json(errorBody);
     }
   });
 
@@ -3024,6 +3032,7 @@ function flowPilotRuntime(RED) {
       entry: body.entry,
       conversationId: body.conversationId || null,
       runId: body.runId || null,
+      continuation: Array.isArray(body.continuation) ? body.continuation : [],
       // CLAUDE-014: plain-language note for the client-side decision (consent
       // gate / ask_user / loop-checkpoint) that triggered this request, only
       // sent when settings.debugLogging is on — threaded into
@@ -3543,7 +3552,9 @@ function flowPilotRuntime(RED) {
       // response would be a bare, unhelpful "" right when the hint matters
       // most. Not otherwise part of this fix's scope; narrowly patched here.
       const baseMessage = err.message || (err.code ? "Connection failed (" + err.code + ")." : "Provider request failed.");
-      res.status(500).json({ error: baseMessage + hint });
+      const errorBody = { error: baseMessage + hint };
+      if (err && err.raw) { errorBody.raw = err.raw; }
+      res.status(500).json(errorBody);
     }
   });
 
@@ -3641,7 +3652,21 @@ function flowPilotRuntime(RED) {
   // user's own, possibly-edited approved summary, since that's exactly what
   // the client set the compose box to before dispatching) and auditAction
   // (the mode actually being entered).
-  function buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction, fromAct) {
+  function continuationInstruction(continuation) {
+    if (!Array.isArray(continuation) || !continuation.length) { return ""; }
+    const lines = continuation.filter(function (node) {
+      return node && node.id;
+    }).map(function (node) {
+      return "- " + (node.name || "(unnamed)") + " [" + (node.type || "unknown") + "] id=" +
+        node.id + " wires=" + JSON.stringify(Array.isArray(node.wires) ? node.wires : []);
+    });
+    if (!lines.length) { return ""; }
+    return "\n\nINTERNAL CONTINUATION STATE (do not repeat this implementation detail in the user-facing explanation):\n" +
+      "These nodes already exist on the live canvas. Do not create, replace, or duplicate them. " +
+      "Continue only with work that remains, using these live ids and wires:\n" + lines.join("\n");
+  }
+
+  function buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction, fromAct, continuation) {
     const settings = storage.getSettings();
     const activeProvider = storage.getActiveProvider(settings);
     const described = describeSelectionContext(context, settings);
@@ -3654,7 +3679,7 @@ function flowPilotRuntime(RED) {
       ? "The user approved this plan: \"" + userPrompt + "\". You are now executing in " +
         auditAction + " mode. Do not re-plan; execute the approved items."
       : null;
-    const messages = buildMessages(systemPrompt + "\n\n" + personaInstruction, history, historyTruncated, described, userPrompt, modeNotice);
+    const messages = buildMessages(systemPrompt + "\n\n" + personaInstruction + continuationInstruction(continuation), history, historyTruncated, described, userPrompt, modeNotice);
     warnNumCtxOverflow(messages, activeProvider, auditAction);
     return { activeProvider, described, messages };
   }
@@ -4009,7 +4034,8 @@ function flowPilotRuntime(RED) {
     // the same way (the contract strips any restated flow, so without this it
     // was a 422 after a build that worked).
     if (!flow && auditContext && auditContext.strategy === "agent" &&
-      (auditAction === "build" || messagesHaveAgentWrites(messages))) {
+      (auditAction === "build" || messagesHaveAgentWrites(messages) ||
+        (Array.isArray(auditContext.continuation) && auditContext.continuation.length))) {
       storage.appendAudit(Object.assign({ action: "build_agent_final", goalMet: parsed.goalMet }, auditFields, perf));
       const buildFinal = { explanation: parsed.explanation || "" };
       if (typeof parsed.goalMet === "boolean") { buildFinal.goalMet = parsed.goalMet; }
@@ -4066,7 +4092,7 @@ function flowPilotRuntime(RED) {
   // runChat's early return — so the route can hand it to the frontend
   // without running processGenerationContent yet.
   async function runFlowGeneration(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, useTools, execution, fromAct) {
-    const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction, fromAct);
+    const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction, fromAct, execution && execution.continuation);
     if (!isProviderConfirmed(activeProvider)) { throw providerUnconfirmedError(); }
     const settings = storage.getSettings();
     const toolsEnabled = activeProvider.supportsTools === true && execution &&
@@ -4181,7 +4207,7 @@ function flowPilotRuntime(RED) {
   // this resolves.
   // ---------------------------------------------------------------------
   async function runFlowGenerationStream(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, onDelta, auditContext, fromAct) {
-    const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction, fromAct);
+    const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction, fromAct, auditContext && auditContext.continuation);
     if (!isProviderConfirmed(activeProvider)) { throw providerUnconfirmedError(); }
     const responseFormat = directCompletionResponseFormat(activeProvider, auditAction, false);
     const streamOptions = responseFormat ? { responseFormat: responseFormat } : undefined;
@@ -4226,7 +4252,9 @@ function flowPilotRuntime(RED) {
       { action: auditAction + "_error", error: err.message },
       auditContext || {}
     ));
-    res.status(500).json({ error: err.message });
+    const body = { error: err.message };
+    if (err && err.raw) { body.raw = err.raw; }
+    res.status(500).json(body);
   }
 
   // ---------------------------------------------------------------------
@@ -4704,7 +4732,8 @@ function flowPilotRuntime(RED) {
         entry: "build",
         conversationId: req.body && req.body.conversationId || null,
         runId: req.body && req.body.runId || null,
-        debugNote: null
+        debugNote: null,
+        continuation: Array.isArray(req.body && req.body.continuation) ? req.body.continuation : []
       };
     if (!execution) { return; }
 
