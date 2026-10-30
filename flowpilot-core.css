@@ -1406,6 +1406,7 @@
 
 .fp-slash-row {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
     gap: 10px;
     padding: 6px 10px;
@@ -1421,14 +1422,17 @@
 .fp-slash-cmd {
     font-weight: 600;
     font-size: 13px;
-    min-width: 90px;
+    flex: 0 0 100%;
+    min-width: 0;
     color: var(--red-ui-primary-text-color, #333);
 }
 
 .fp-slash-desc {
     font-size: 12px;
     color: var(--red-ui-secondary-text-color, #777);
-    white-space: nowrap;
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
     overflow: hidden;
     text-overflow: ellipsis;
 }
