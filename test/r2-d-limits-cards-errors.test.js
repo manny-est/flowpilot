@@ -13,8 +13,16 @@ function source(file) {
 
 test("32k, 240k, unknown, and explicit ceiling rules", () => {
   const limits = require("../lib/core/limits.js");
-  assert.ok(limits.deriveAgentLoopTokenCeiling({ agentLoopTokenCeiling: 50000 }, { numCtx: 32000 }) < 32000);
-  assert.ok(limits.deriveAgentLoopTokenCeiling({ agentLoopTokenCeiling: 50000 }, { numCtx: 240000 }) > 50000);
+  // The ceiling sums every step of a turn, so it scales with steps x one step's context.
+  assert.strictEqual(limits.deriveAgentLoopTokenCeiling({ agentLoopTokenCeiling: 50000 }, { numCtx: 32000 }, 8), 256000,
+    "32k model: 8 steps x 32k");
+  assert.strictEqual(limits.deriveAgentLoopTokenCeiling({ agentLoopTokenCeiling: 50000 }, { numCtx: 240000 }, 8), 8 * 32768,
+    "a huge context is capped per step");
+  assert.strictEqual(limits.deriveAgentLoopTokenCeiling({ agentLoopTokenCeiling: 50000 }, { numCtx: 0 }, 8), 8 * 16384,
+    "unknown context (Spark reports numCtx 0) still clears the ~59k Spark builds died at");
+  assert.ok(limits.deriveAgentLoopTokenCeiling({ agentLoopTokenCeiling: 50000 }, { numCtx: 0 }, 8) > 60000);
+  assert.strictEqual(limits.deriveAgentLoopTokenCeiling({ agentLoopTokenCeiling: 50000 }, { numCtx: 4096 }, 8), 50000,
+    "never below the old default");
   assert.strictEqual(limits.deriveAgentLoopTokenCeiling({ agentLoopTokenCeiling: 43210 }, { numCtx: 0 }), 43210);
   assert.strictEqual(limits.deriveAgentLoopTokenCeiling({ agentLoopTokenCeiling: 12345, agentLoopTokenCeilingUserSet: true }, { numCtx: 240000 }), 12345);
   assert.ok(limits.deriveAgentLoopTokenCeiling({ agentLoopTokenCeiling: 50000 }, { contextWindow: 240000 }) > 50000);
