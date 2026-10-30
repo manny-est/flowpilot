@@ -120,3 +120,13 @@ const idMapDecision = api.diffGateDecision([
 assert.strictEqual(idMapDecision.pause, false, "run id-map creations are in scope even before the ledger marks them created");
 
 console.log("R2-B approved-scope table passed");
+
+// Review fix: only a real Approve click marks the run plan-approved. The
+// DIRECT handover also goes through dispatchProposedAction, and it must keep
+// the size check (Amendment 1: the threshold applies in DIRECT).
+{
+  const src = require("fs").readFileSync(require("path").join(__dirname, "..", "lib", "core", "modes.js"), "utf8");
+  assert.ok(/planApproved: userApproved === true,/.test(src), "plan approval comes from the caller, not every dispatch");
+  assert.ok(/dispatchProposedAction\(rec\.proposeAction, true\)/.test(src), "Approve passes userApproved");
+  assert.ok(/dispatchProposedAction\(data\.directProposal\);/.test(src), "the DIRECT handover does not");
+}
