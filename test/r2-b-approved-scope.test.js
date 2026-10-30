@@ -126,7 +126,8 @@ console.log("R2-B approved-scope table passed");
 // the size check (Amendment 1: the threshold applies in DIRECT).
 {
   const src = require("fs").readFileSync(require("path").join(__dirname, "..", "lib", "core", "modes.js"), "utf8");
-  assert.ok(/planApproved: userApproved === true,/.test(src), "plan approval comes from the caller, not every dispatch");
-  assert.ok(/dispatchProposedAction\(rec\.proposeAction, true\)/.test(src), "Approve passes userApproved");
-  assert.ok(/dispatchProposedAction\(data\.directProposal\);/.test(src), "the DIRECT handover does not");
+  assert.ok(/planApproved: userApproved,/.test(src) && /var userApproved = options\.userApproved === true && !direct;/.test(src),
+    "plan approval comes from the caller, never from a DIRECT handover");
+  assert.ok(/dispatchProposedAction\(rec\.proposeAction, \{ userApproved: true \}\)/.test(src), "Approve passes userApproved");
+  assert.ok(/dispatchProposedAction\(data\.directProposal, \{ direct: true \}\)/.test(src), "the DIRECT handover passes direct only");
 }
