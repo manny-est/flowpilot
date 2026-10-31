@@ -32,6 +32,12 @@ const expectedPreRouter = {
   "modify-remove-unused": { action: "modify", needs_selection: true },
   "modify-function-code": { action: "modify", needs_selection: true },
   "modify-insert-delay": { action: "modify", needs_selection: true },
+  "modify-fix-function-selected": { action: "modify", needs_selection: false },
+  "modify-fix-selected": { action: "modify", needs_selection: false },
+  "modify-debug-selected": { action: "modify", needs_selection: false },
+  "modify-repair-selected": { action: "modify", needs_selection: false },
+  "modify-why-not-working-selected": { action: "modify", needs_selection: false },
+  "modify-broken-selected": { action: "modify", needs_selection: false },
   "modify-make-existing-node": { action: "modify", needs_selection: false },
   "generate-new-flow-unconnected": { action: "generate", needs_selection: false }
 };
