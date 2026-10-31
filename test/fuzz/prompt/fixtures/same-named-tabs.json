@@ -1,0 +1,8 @@
+[
+  {"id":"tab-alpha","type":"tab","label":"Alpha"},
+  {"id":"alpha-inject","type":"inject","z":"tab-alpha","name":"Alpha trigger","x":100,"y":100,"wires":[["alpha-debug"]]},
+  {"id":"alpha-debug","type":"debug","z":"tab-alpha","name":"Output","x":280,"y":100,"wires":[]},
+  {"id":"tab-beta","type":"tab","label":"Beta"},
+  {"id":"beta-inject","type":"inject","z":"tab-beta","name":"Beta trigger","x":100,"y":100,"wires":[["beta-debug"]]},
+  {"id":"beta-debug","type":"debug","z":"tab-beta","name":"Output","x":280,"y":100,"wires":[]}
+]

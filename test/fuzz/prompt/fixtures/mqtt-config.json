@@ -1,0 +1,7 @@
+[
+  {"id":"tab-mqtt","type":"tab","label":"MQTT sensors"},
+  {"id":"broker-1","type":"mqtt-broker","name":"Local broker","broker":"localhost","port":"1883"},
+  {"id":"mqtt-in-1","type":"mqtt in","z":"tab-mqtt","name":"Temperature sensor","topic":"sensors/temperature","qos":"0","datatype":"auto","broker":"broker-1","x":160,"y":120,"wires":[["json-mqtt"]]},
+  {"id":"json-mqtt","type":"json","z":"tab-mqtt","name":"Parse payload","x":360,"y":120,"wires":[["mqtt-debug"]]},
+  {"id":"mqtt-debug","type":"debug","z":"tab-mqtt","name":"Sensor output","complete":"true","x":560,"y":120,"wires":[]}
+]
