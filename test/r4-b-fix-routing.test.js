@@ -54,7 +54,10 @@ assert.strictEqual(runtime.runDeterministicPreRouter(
 assert.match(tierPrompt, /Fix the bug in this function[\s\S]*Assistant:\s*\nC/);
 assert.match(tierPrompt, /Why doesn't this work\?[\s\S]*Assistant:\s*\nC/);
 assert.match(tierPrompt, /User: "debug this"[\s\S]*Assistant:\s*\nC/);
-assert.doesNotMatch(tierPrompt, /A selected node does not turn a vague request into an action/);
+// Round 4 review: the routing corpus showed that dropping this sentence made
+// gpt-4.1-mini answer F for selection-free "Document this flow" requests.
+// It stays, with repair+selection as the single exception.
+assert.match(tierPrompt, /A selected node does not turn a vague request into an action, with one exception: a fix, debug, repair, or correction request with a node selected is C/);
 
 const tabs = {
   active: { id: "tab-active", label: "Active" },
