@@ -114,6 +114,12 @@ function loadCore(red) {
   const withComment = api.ensureTaps({ trigger_node_id: "start", scope_ids: ["start", "fn", "store", "note"] },
     {}, [], "card-test-5", "start");
   assert.deepStrictEqual(Array.from(withComment.goal.unreachedNames), ["Store"]);
+
+  // A second inject is its own start node, not an unreached part.
+  env.add("beat", "inject", "Heartbeat", 1);
+  const twoStarts = api.ensureTaps({ trigger_node_id: "start", scope_ids: ["start", "fn", "store", "note", "beat"] },
+    {}, [], "card-test-6", "start");
+  assert.deepStrictEqual(Array.from(twoStarts.goal.unreachedNames), ["Store"]);
 }
 
 console.log("P1-38 Test it path tests passed");
