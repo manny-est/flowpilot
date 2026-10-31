@@ -88,6 +88,7 @@ const { repairEnvelope } = require("./lib/validator");
 const { enforceAgentContract, AGENT_MUTATION_FIELDS } = require("./lib/agent-contract");
 const { isProviderShapedResponse } = require("./lib/provider-shape-check");
 const { dockerLocalhostHintSuffix } = require("./lib/docker-localhost-hint");
+const { serializeVisibleRecords, transcriptUserText } = require("./lib/conversation-view");
 const providerPresets = require("./lib/provider-presets");
 const paramCompat = require("./lib/param-compat");
 const API_KEY_UNCHANGED = createStorage.API_KEY_UNCHANGED;
@@ -1294,17 +1295,27 @@ function flowPilotRuntime(RED) {
     return /^[A-Za-z0-9_-]{1,128}$/.test(trimmed) ? trimmed : null;
   }
 
-  function recordTranscriptTurn(conversationId, mode, userText, assistantText) {
+  function recordTranscriptTurn(conversationId, mode, userText, assistantText, options) {
     const id = sanitizeConversationId(conversationId);
     if (!id) { return; }
 
     const timestamp = new Date().toISOString();
-    if (userText && String(userText).trim()) {
-      storage.appendTranscript(id, { timestamp: timestamp, role: "user", mode: mode, content: String(userText) });
+    const actualUserText = transcriptUserText(
+      userText,
+      options && options.transcriptPrompt,
+      options && options.fromAct === true
+    );
+    if (actualUserText) {
+      storage.appendTranscript(id, { timestamp: timestamp, role: "user", mode: mode, visible: true, content: actualUserText });
     }
     if (assistantText && String(assistantText).trim()) {
-      storage.appendTranscript(id, { timestamp: timestamp, role: "assistant", mode: mode, content: String(assistantText) });
+      storage.appendTranscript(id, { timestamp: timestamp, role: "assistant", mode: mode, visible: true, content: String(assistantText) });
     }
+  }
+
+  function transcriptOptionsFromBody(body) {
+    body = body || {};
+    return { fromAct: body.fromAct === true, transcriptPrompt: body.transcriptPrompt || null };
   }
 
   // Pulls the natural-language part out of a generation-style result
@@ -1347,6 +1358,9 @@ function flowPilotRuntime(RED) {
   // entries into one "exchange" so recall results read as a Q&A snippet
   // rather than two disconnected lines.
   function groupExchanges(entries) {
+    entries = (Array.isArray(entries) ? entries : []).filter(function (entry) {
+      return entry && (entry.role === "user" || entry.role === "assistant");
+    });
     const exchanges = [];
     let i = 0;
     while (i < entries.length) {
@@ -3346,7 +3360,7 @@ function flowPilotRuntime(RED) {
             req.body.prompt, execution
           );
         }
-        recordTranscriptTurn(req.body.conversationId, mode, req.body.prompt || null, transcriptTextFromGenerationResult(generated));
+        recordTranscriptTurn(req.body.conversationId, mode, req.body.prompt || null, transcriptTextFromGenerationResult(generated), transcriptOptionsFromBody(req.body));
         const finalize = (mode === "modify")
           ? function (r) {
               return finalizeModifyResult(
@@ -3435,6 +3449,26 @@ function flowPilotRuntime(RED) {
     }
     try {
       res.json({ id: id, messages: storage.readTranscript(id) });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  RED.httpAdmin.post("/flowpilot/conversations/:id/view", RED.auth.needsPermission("settings.write"), function (req, res) {
+    const id = sanitizeConversationId(req.params.id);
+    if (!id) { return res.status(400).json({ error: "Invalid conversation id." }); }
+    const body = req.body || {};
+    const records = serializeVisibleRecords(body.records);
+    const view = {
+      records: records,
+      html: typeof body.html === "string" ? body.html : "",
+      referencedNodeIds: Array.isArray(body.referencedNodeIds) ? body.referencedNodeIds.filter(function (value) {
+        return typeof value === "string" && value.length <= 256;
+      }) : []
+    };
+    try {
+      storage.replaceConversationView(id, view);
+      res.json({ ok: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -4645,7 +4679,7 @@ function flowPilotRuntime(RED) {
   // `data: {"error": <body>, "status": <status>}`, since SSE responses can't
   // change their HTTP status after headers are sent.
   // ---------------------------------------------------------------------
-  async function runExecuteStream(req, res, systemPrompt, auditAction, userPrompt, context, history, historyTruncated, finalize, conversationId, auditContext) {
+  async function runExecuteStream(req, res, systemPrompt, auditAction, userPrompt, context, history, historyTruncated, finalize, conversationId, auditContext, transcriptOptions) {
     res.writeHead(200, {
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
@@ -4677,7 +4711,7 @@ function flowPilotRuntime(RED) {
       return;
     }
 
-    recordTranscriptTurn(conversationId, auditAction, userPrompt, transcriptTextFromGenerationResult(result));
+    recordTranscriptTurn(conversationId, auditAction, userPrompt, transcriptTextFromGenerationResult(result), transcriptOptions);
 
     const final = finalize(result);
     res.write("data: " + JSON.stringify({ final: final.body, status: final.status }) + "\n\n");
@@ -4705,7 +4739,7 @@ function flowPilotRuntime(RED) {
     if (req.body.stream && execution.strategy === "classic") {
       return runExecuteStream(
         req, res, generationSystemPrompt, "generate", prompt, req.body && req.body.context,
-        history, historyTruncated, finalize, req.body.conversationId, execution
+        history, historyTruncated, finalize, req.body.conversationId, execution, transcriptOptionsFromBody(req.body)
       );
     }
 
@@ -4730,7 +4764,7 @@ function flowPilotRuntime(RED) {
           usage: generated.usage
         }, laneFields(lane)));
       }
-      recordTranscriptTurn(req.body.conversationId, "generate", prompt, transcriptTextFromGenerationResult(generated));
+      recordTranscriptTurn(req.body.conversationId, "generate", prompt, transcriptTextFromGenerationResult(generated), transcriptOptionsFromBody(req.body));
       const { status, body } = finalize(generated);
       res.status(status).json(body);
     } catch (err) {
@@ -4800,7 +4834,7 @@ function flowPilotRuntime(RED) {
             usage: built.usage
           }, laneFields(lane)));
         }
-        recordTranscriptTurn(req.body.conversationId, "build", prompt, transcriptTextFromGenerationResult(built));
+        recordTranscriptTurn(req.body.conversationId, "build", prompt, transcriptTextFromGenerationResult(built), transcriptOptionsFromBody(req.body));
         const { status, body } = finalizeSimpleGeneration(built, execution);
         return res.status(status).json(body);
       } catch (err) {
@@ -4816,7 +4850,7 @@ function flowPilotRuntime(RED) {
         req, res, buildSystemPrompt, "build", prompt, req.body && req.body.context,
         history, historyTruncated, function (result) {
           return finalizeSimpleGeneration(result, execution);
-        }, req.body.conversationId, execution
+        }, req.body.conversationId, execution, transcriptOptionsFromBody(req.body)
       );
     }
 
@@ -4841,7 +4875,7 @@ function flowPilotRuntime(RED) {
           usage: built.usage
         }, laneFields(lane)));
       }
-      recordTranscriptTurn(req.body.conversationId, "build", prompt, transcriptTextFromGenerationResult(built));
+      recordTranscriptTurn(req.body.conversationId, "build", prompt, transcriptTextFromGenerationResult(built), transcriptOptionsFromBody(req.body));
       const { status, body } = finalizeSimpleGeneration(built, execution);
       res.status(status).json(body);
     } catch (err) {
@@ -4888,7 +4922,7 @@ function flowPilotRuntime(RED) {
         req, res, documentSystemPrompt, "document", userPrompt, context,
         history, historyTruncated, function (result) {
           return finalizeSimpleGeneration(result, execution);
-        }, req.body.conversationId, execution
+        }, req.body.conversationId, execution, transcriptOptionsFromBody(req.body)
       );
     }
 
@@ -4913,7 +4947,7 @@ function flowPilotRuntime(RED) {
           usage: documented.usage
         }, laneFields(lane)));
       }
-      recordTranscriptTurn(req.body.conversationId, "document", userPrompt, transcriptTextFromGenerationResult(documented));
+      recordTranscriptTurn(req.body.conversationId, "document", userPrompt, transcriptTextFromGenerationResult(documented), transcriptOptionsFromBody(req.body));
       const { status, body } = finalizeSimpleGeneration(documented, execution);
       res.status(status).json(body);
     } catch (err) {
@@ -4960,7 +4994,7 @@ function flowPilotRuntime(RED) {
     if (req.body.stream && execution.strategy === "classic") {
       return runExecuteStream(
         req, res, modifyPrompt, "modify", String(prompt).trim(), context,
-        history, historyTruncated, finalize, req.body.conversationId, execution
+        history, historyTruncated, finalize, req.body.conversationId, execution, transcriptOptionsFromBody(req.body)
       );
     }
 
@@ -4985,7 +5019,7 @@ function flowPilotRuntime(RED) {
           usage: result.usage
         }, laneFields(lane)));
       }
-      recordTranscriptTurn(req.body.conversationId, "modify", String(prompt).trim(), transcriptTextFromGenerationResult(result));
+      recordTranscriptTurn(req.body.conversationId, "modify", String(prompt).trim(), transcriptTextFromGenerationResult(result), transcriptOptionsFromBody(req.body));
       const { status, body } = finalize(result);
       res.status(status).json(body);
     } catch (err) {
