@@ -37,17 +37,34 @@ function selectedPrompts() {
   return seededOrder(filtered, process.env.SEED || "1").slice(0, LIMIT);
 }
 
+// The fuzzer runs inside the Node-RED container (staged like the corpora), so
+// FlowPilot's settings file is local. FP_SETTINGS overrides the path.
 function readSettingsFromContainer() {
-  const raw = childProcess.execFileSync("docker", ["exec", "nodered", "cat", "/data/flowpilot/settings.json"], { encoding: "utf8" });
-  return JSON.parse(raw);
+  const file = process.env.FP_SETTINGS || "/data/flowpilot/settings.json";
+  return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
+// The judge always uses OpenAI: JUDGE_PROVIDER names a provider id, otherwise
+// "openai-test" (nodered-test) or the first provider whose base URL is
+// api.openai.com (nodered's OpenAI provider has a generated id).
 function judgeKeyFromSettings(settings) {
   const providers = Array.isArray(settings && settings.providers) ? settings.providers : [];
-  const provider = providers.find(function (item) {
-    return item && (item.id === "openai-test" || item.providerName === "openai-test" || item.name === "openai-test");
-  });
+  const wanted = process.env.JUDGE_PROVIDER;
+  const provider = providers.find(function (item) { return item && wanted && item.id === wanted; }) ||
+    providers.find(function (item) {
+      return item && (item.id === "openai-test" || item.providerName === "openai-test" || item.name === "openai-test");
+    }) ||
+    providers.find(function (item) { return item && /(^|\/\/)api\.openai\.com/.test(String(item.baseUrl || "")) && item.apiKey; });
   return provider && provider.apiKey;
+}
+
+// The result line names the model under test (the active provider's model),
+// not the judge.
+function modelUnderTest(settings) {
+  if (process.env.MODEL_LABEL) { return process.env.MODEL_LABEL; }
+  const providers = Array.isArray(settings && settings.providers) ? settings.providers : [];
+  const active = providers.find(function (item) { return item && item.id === (settings && settings.activeProviderId); });
+  return (active && active.model) || "unknown-model";
 }
 
 async function main() {
@@ -58,8 +75,12 @@ async function main() {
   try { token = await executor.getToken(); }
   catch (error) { console.error("Auth FAILED: " + error.message); process.exitCode = 1; return; }
   let judgeKey;
-  try { judgeKey = judgeKeyFromSettings(readSettingsFromContainer()); }
-  catch (error) { console.error("OpenAI judge settings unavailable; no judge request was sent"); }
+  let testedModel = "unknown-model";
+  try {
+    const settings = readSettingsFromContainer();
+    judgeKey = judgeKeyFromSettings(settings);
+    testedModel = modelUnderTest(settings);
+  } catch (error) { console.error("OpenAI judge settings unavailable; no judge request was sent"); }
   const results = [];
   for (let index = 0; index < cases.length; index++) {
     const entry = cases[index];
@@ -95,7 +116,7 @@ async function main() {
   const codePassed = results.filter(function (result) { return result.code && result.code.pass; }).length;
   const judgePassed = results.filter(function (result) { return result.judge && result.judge.did_what_was_asked === true; }).length;
   const bothPassed = results.filter(function (result) { return result.code && result.code.pass && result.judge && result.judge.did_what_was_asked === true; }).length;
-  const summary = { timestamp: new Date().toISOString(), model: model, total: total, codePassed: codePassed,
+  const summary = { timestamp: new Date().toISOString(), model: testedModel, judgeModel: model, total: total, codePassed: codePassed,
     judgePassed: judgePassed, bothPassed: bothPassed, errors: results.filter(function (result) { return !!result.error; }).length,
     byCategory: output.categoryTable(results) };
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });

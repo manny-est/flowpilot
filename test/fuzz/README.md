@@ -12,7 +12,7 @@ From the repository root, stage the test tree using the same archive pattern as 
 git archive --format=tar HEAD lib test flowpilot.js package.json | docker --context minux exec -i nodered-test tar -x -C /data/routing-s2
 ```
 
-The container must have the FlowPilot package and its test provider setup already available. The runner reads Node-RED credentials from `NR_USER`/`NR_PASS`, or from `/data/.fp-test.env` when those variables are absent. It reads the `apiKey` only from the `openai-test` provider in `/data/flowpilot/settings.json`; the key is held in memory for the judge request and is never included in a result file or log.
+The container must have the FlowPilot package and its test provider setup already available. The runner reads Node-RED credentials from `NR_USER`/`NR_PASS`, or from `/data/.fp-test.env` when those variables are absent. It reads the judge `apiKey` from `/data/flowpilot/settings.json` (provider `JUDGE_PROVIDER`, else `openai-test`, else the first api.openai.com provider); the key is held in memory for the judge request and is never included in a result file or log.
 
 ### Run
 
