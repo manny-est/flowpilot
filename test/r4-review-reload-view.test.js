@@ -14,3 +14,11 @@ test("saved views drop live progress, flag a pending reply, and flush on page hi
   assert.match(read("flowpilot.js"), /interrupted: body\.interrupted === true/);
   assert.match(read("lib/core/main.js"), /The page was reloaded before FlowPilot answered your last message/);
 });
+
+test("pop-out: re-attach passes the source guard, full snapshots after changes, no empty state beside messages", () => {
+  const init = read("lib/core/init.js");
+  assert.match(init, /evt\.source !== popoutWindow && data\.event !== "popoutReattach"/);
+  assert.match(init, /popoutSnapshotObserver = new MutationObserver\(schedulePopoutSnapshot\)/);
+  assert.match(init, /keepScroll: true/);
+  assert.match(read("lib/core/main.js"), /\$box\.children\(\)\.not\("#fp-empty-state"\)\.length\) \{ \$state\.remove\(\); return; \}/);
+});
