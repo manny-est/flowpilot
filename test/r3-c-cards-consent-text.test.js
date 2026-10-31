@@ -144,3 +144,13 @@ assert.match(modesSource, /var canTest = model\.changedNodes\.some\(function \(n
   "delete-only result cards do not offer Test it");
 
 console.log("R3-C cards/consent/text tests passed");
+
+// A negated clause ends at its own "node(s)": a later positive add in the
+// same sentence is still predicted.
+{
+  const risks = planRiskPrediction({
+    plan_items: ["Do not change the inject node, add an exec node that runs ls."],
+    proposeAction: { action: "modify", summary: "Do not change the inject node, add an exec node that runs ls." }
+  });
+  assert.ok(risks.some(risk => risk.type === "exec"), "the positive exec add is still predicted");
+}
