@@ -3113,7 +3113,10 @@ function flowPilotRuntime(RED) {
       conversationId: body.conversationId || null,
       runId: body.runId || null,
       continuation: Array.isArray(body.continuation) ? body.continuation : [],
-      creationRun: body.creationRun === true,
+      // Kept as given when it's a boolean: the browser decides additive vs
+      // creation with the editor's view of tabs (R4-A); the server only
+      // classifies itself when no decision was sent (engine corpus, API).
+      creationRun: typeof body.creationRun === "boolean" ? body.creationRun : undefined,
       intake: body.intake && typeof body.intake === "object" ? body.intake : null,
       inheritedRun: body.inheritedRun && typeof body.inheritedRun === "object" ? body.inheritedRun : null,
       plannedNodeCount: Number.isFinite(Number(body.plannedNodeCount)) && Number(body.plannedNodeCount) > 0
@@ -3794,8 +3797,10 @@ function flowPilotRuntime(RED) {
       inheritedRun: (execution && execution.inheritedRun) ||
         (execution && execution.intake && execution.intake.inheritedRun) || null
     });
-    const creationRun = (auditAction === "generate" || auditAction === "build") &&
-      editIntent.creation === true && !(Array.isArray(continuation) && continuation.length);
+    const creationRun = execution && typeof execution.creationRun === "boolean"
+      ? execution.creationRun
+      : (auditAction === "generate" || auditAction === "build") &&
+        editIntent.creation === true && !(Array.isArray(continuation) && continuation.length);
     const plannedCount = execution && Number(execution.plannedNodeCount);
     const creationInstruction = creationRun
       ? "\n\nCREATION RUN: this is a new flow. The first WRITE must be exactly one apply_step containing the whole planned flow — every new node and every wire. A partial first write is rejected with a tool error. After that first write, only fix validation findings or run the runtime proof." +
