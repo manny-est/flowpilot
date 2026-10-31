@@ -171,10 +171,10 @@ function expectedChecks(result, expect) {
   } else if (expect.mustWrite !== undefined && result.actual.wrote !== undefined) {
     field("mustWrite", expect.mustWrite, true);
   }
-  if (expect.action && result.actual.action && expect.action !== result.actual.action) {
-    field("action", expect.action, false, "action expected " + expect.action + ", got " + result.actual.action);
-  } else if (expect.action && result.actual.action) {
-    field("action", expect.action, true);
+  if (expect.action) {
+    const actualAction = result.actual.action || (result.actual.asked ? "ask" : result.actual.wrote ? "write" : "answer");
+    field("action", expect.action, expect.action === actualAction,
+      "action expected " + expect.action + ", got " + actualAction);
   }
   if (expect.consent === "ask" && result.actual.consentAsked !== true) {
     field("consent", "ask", false, "expected consent ask");

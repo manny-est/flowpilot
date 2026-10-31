@@ -84,12 +84,15 @@ test("follow-up is a chat turn with prior history and the touched index", async 
   ], requests);
   await executor.runPrompt({ id: "follow-up", category: "follow-up", fixture: "inject-function-debug",
     prompt: "Rename Double to Twin.", followUp: "Now explain the change." }, "token", { post: post });
-  assert.strictEqual(requests[3].path, "/flowpilot/chat");
-  assert.deepStrictEqual(requests[3].body.history, [
+  const followUpRequest = requests.find(function (request) {
+    return request.path === "/flowpilot/chat" && Array.isArray(request.body.history) && request.body.history.length > 0;
+  });
+  assert.ok(followUpRequest);
+  assert.deepStrictEqual(followUpRequest.body.history, [
     { role: "user", content: "Rename Double to Twin." },
     { role: "assistant", content: "Renamed Double to Twin." }
   ]);
-  assert.ok(requests[3].body.intake.touchedNodeIndex.runs.some(function (run) {
+  assert.ok(followUpRequest.body.intake.touchedNodeIndex.runs.some(function (run) {
     return run.nodeIds.indexOf("function-1") !== -1;
   }));
 });
@@ -118,6 +121,72 @@ test("action precedence reports writes over later questions", async function () 
     post: fakePostFactory([{ message: "Hello!" }], answerRequests)
   });
   assert.strictEqual(answerResult.actual.action, "answer");
+});
+
+test("a write gets goal-checked and retries gaps only within the two-attempt budget", async function () {
+  const requests = [];
+  const post = fakePostFactory([
+    { toolCalls: [toolCall("proposal-goal", "propose_action", {
+      action: "modify", summary: "Rename Double to Twin", targets: ["function-1"]
+    })] },
+    { toolCalls: [toolCall("write-goal", "rename_node", { nodeId: "function-1", name: "Twin" })] },
+    { message: "Renamed." },
+    { done: false, gaps: ["The result needs one more check."] },
+    { message: "Checked the result." },
+    { done: true, gaps: [] }
+  ], requests);
+  const result = await executor.runPrompt({ id: "goal-check", category: "existing", fixture: "inject-function-debug",
+    prompt: "Rename Double to Twin." }, "token", { post: post });
+  const checks = requests.filter(function (request) { return request.path === "/flowpilot/goal-check"; });
+  assert.strictEqual(checks.length, 2);
+  assert.strictEqual(result.goalCheck.checks.length, 2);
+  assert.strictEqual(result.goalCheck.fixAttempts, 1);
+  assert.strictEqual(result.goalCheck.maxFixAttempts, 2);
+  assert.strictEqual(result.goalCheck.checks[0].gaps[0], "The result needs one more check.");
+  const retry = requests.filter(function (request) { return request.path === "/flowpilot/agent-step"; })[1];
+  assert.ok(retry.body.messages.some(function (message) {
+    return message.role === "user" && message.content ===
+      "Goal check: The result needs one more check.. Fix this specific gap with the existing flow; do not recreate nodes. Then give a short final summary.";
+  }));
+});
+
+test("a modify proposal without targets becomes a picker question without dispatch", async function () {
+  const requests = [];
+  const result = await executor.runPrompt({ id: "modify-picker", category: "vague", fixture: "inject-function-debug",
+    prompt: "Change something." }, "token", { post: fakePostFactory([
+    { toolCalls: [toolCall("proposal-picker", "propose_action", {
+      action: "modify", summary: "Change something", needs_selection: true, targets: []
+    })] }
+  ], requests) });
+  assert.deepStrictEqual(requests.map(function (request) { return request.path; }), ["/flowpilot/chat"]);
+  assert.strictEqual(result.actual.action, "ask");
+  assert.deepStrictEqual(result.actual.askedOptions, ["Start", "Double", "Result"]);
+  assert.match(result.finalText, /Which node should I modify\?/);
+  assert.match(result.finalText, /Start/);
+});
+
+test("an asked question is preserved in finalText with its options", async function () {
+  const result = await executor.runPrompt({ id: "question-text", category: "vague", fixture: "empty-tab",
+    prompt: "Make it better." }, "token", { post: fakePostFactory([
+    { toolCalls: [toolCall("question-text-1", "ask_user", { question: "Which flow?", options: ["one", "two"] })] }
+  ], []) });
+  assert.strictEqual(result.actual.action, "ask");
+  assert.strictEqual(result.finalText, "Which flow? [one | two]");
+});
+
+test("the LLM judge prompt explains card text, vague asks, and read-only answers", function () {
+  const prompt = llmJudge.judgePrompt({ prompt: "Explain what this flow does.", finalText: "" });
+  assert.match(prompt, /result card listing the changes/i);
+  assert.match(prompt, /vague request.*clarifying question/i);
+  assert.match(prompt, /should only be answered.*must not write/i);
+  assert.match(prompt, /Answer only JSON with this shape/);
+});
+
+test("vague action expectations accept either picker or intent-chip asks", function () {
+  const picker = codeJudge.judgeCode({ flow: [] }, { actual: { asked: true }, expect: { action: "ask" } });
+  assert.strictEqual(picker.pass, true, JSON.stringify(picker));
+  const intentChip = codeJudge.judgeCode({ flow: [] }, { actual: { action: "ask" }, expect: { action: "ask" } });
+  assert.strictEqual(intentChip.pass, true, JSON.stringify(intentChip));
 });
 
 test("graph truth ignores an orphaned pre-existing node but checks run-added nodes", function () {
