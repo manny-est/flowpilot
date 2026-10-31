@@ -156,3 +156,16 @@ test("runtime truth is wired into deploy, reload, and the assembled client", () 
 });
 
 console.log("R4-E runtime-truth regression tests loaded");
+
+test("review: a config-only difference doesn't fail confirmation; a type change or missing node does; null beforeRev skips the rev test", () => {
+  const rt = require("../lib/core/runtime-truth.js");
+  const deployed = { rev: "r1", flows: [{ id: "a", type: "inject", z: "t", repeat: "" , wires: [["b"]] }, { id: "b", type: "debug", z: "t", wires: [] }] };
+  const req = (ok) => ok(deployed);
+  let out;
+  rt.confirmDeploy(null, [{ id: "a", type: "inject", z: "t", repeat: "5" }, { id: "b", type: "debug", z: "t" }], [{ from: "a", fromPort: 0, to: "b" }], (r) => { out = r; }, req);
+  assert.equal(out.confirmed, true);
+  rt.confirmDeploy(null, [{ id: "b", type: "function", z: "t" }], [], (r) => { out = r; }, req);
+  assert.equal(out.confirmed, false);
+  rt.confirmDeploy("r1", [{ id: "a", type: "inject", z: "t" }], [], (r) => { out = r; }, req);
+  assert.equal(out.confirmed, false);
+});
