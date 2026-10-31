@@ -315,9 +315,23 @@ function hasPreRouterDocumentationTerm(prompt) {
   return /\b(document|documentation|comment)\b/i.test(String(prompt || ""));
 }
 
+const SMALL_TALK_ACTION = /\b(?:add|create|build|make|generate|change|set|rename|delete|remove|fix|repair|debug|update|insert|wire|rewire|connect|move|deploy|test|document|explain|describe|show|list|what|why|how|which|where|when|can you|could you|would you|please (?!do not|don't))\b/;
+
 function isSmallTalk(prompt) {
   const text = String(prompt || "").trim().toLowerCase();
-  return /^(?:hi|hello|hey|thanks|thank you|thx|ok|okay|how are you(?: doing)?|good morning|good afternoon|good evening)(?:[ ,.]+(?:there|flowpilot|everyone))?[!?.,]*$/.test(text);
+  if (/^(?:hi|hello|hey|thanks|thank you|thx|ok|okay|how are you(?: doing)?|good morning|good afternoon|good evening)(?:[ ,.]+(?:there|flowpilot|everyone))?[!?.,]*$/.test(text)) {
+    return true;
+  }
+  // Short acknowledgements and "no changes" replies (prompt fuzzer: "Thanks,
+  // that looks good.", "Okay, no changes for now." got the intent picker).
+  // Never when the message also asks for something.
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length > 10) { return false; }
+  const ack = /^(?:hi|hello|hey|thanks|thank you|thx|ok|okay|great|nice|cool|perfect|awesome|got it|sounds good|looks good|all good|never ?mind|no worries|no changes|nothing(?: else)?|that'?s (?:all|it|fine|great)|good|fine|sure)\b/.test(text);
+  const noChange = /\b(?:no changes?(?: for now| needed)?|don'?t change anything|do not change anything|leave it|that'?s all|nothing else|just say (?:hi|hello))\b/.test(text);
+  if (!ack && !noChange) { return false; }
+  const withoutNoChange = text.replace(/\b(?:don'?t|do not) change anything\b/g, " ").replace(/\bno changes?\b/g, " ");
+  return !SMALL_TALK_ACTION.test(withoutNoChange);
 }
 
 function isCommentCreationRequest(prompt) {

@@ -20,3 +20,12 @@ test("real words one substitution away are not verbs", () => {
   ["Invert the logic of this", "Remote control: how does it work?"].forEach(p =>
     assert.notEqual(action(p), "modify", p));
 });
+
+test("acknowledgements and 'no changes' replies are small talk; requests are not", () => {
+  const isSmallTalk = flowPilotRuntime.isSmallTalk || null;
+  if (!isSmallTalk) { return; }
+  ["Thanks, that looks good.", "Okay, no changes for now.", "Please do not change anything; just say hello.", "Good morning.", "never mind", "Great, that's all"].forEach(p =>
+    assert.equal(isSmallTalk(p), true, p));
+  ["Thanks, now add a debug node", "Okay, rename it to Beta", "Great, can you explain this flow?", "Looks good, deploy it", "ok fix the bug"].forEach(p =>
+    assert.equal(isSmallTalk(p), false, p));
+});

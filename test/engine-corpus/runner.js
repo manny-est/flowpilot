@@ -166,7 +166,9 @@ function fixtureParts(testCase) {
   const selected = Array.isArray(testCase.selected) ? testCase.selected.slice() : [];
   const intake = GATES.intake.buildIntake(testCase.prompt, {}, {
     activeSelectionIds: function () { return selected.slice(); }, activeTab: { id: tab.id, label: tab.label }, candidates: candidates,
-    touchedIndex: GATES.intake.createTouchedNodeIndex()
+    // A caller (the prompt fuzzer's follow-up turn) may pass the
+    // conversation's touched index so "it" resolves like the browser.
+    touchedIndex: testCase.touchedIndex || GATES.intake.createTouchedNodeIndex()
   });
   const contextIds = selected.length ? selected : intake.targetIds;
   const contextNodes = contextIds.map(function (id) {

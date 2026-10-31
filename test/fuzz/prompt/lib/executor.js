@@ -102,8 +102,24 @@ function currentFlow(parts) {
   return tabs.concat(parts.nodes.map(clone));
 }
 
+function rebuildTouchedIndex(snapshot) {
+  const index = intake.createTouchedNodeIndex();
+  if (snapshot && typeof snapshot === "object") {
+    for (let run = 0; run < Number(snapshot.run || 0); run++) { index.beginRun(); }
+    (snapshot.runs || []).forEach(function (record) {
+      index.recordRun((record.nodeIds || []).map(function (id) { return { id: id }; }), record.run);
+    });
+  }
+  return index;
+}
+
 function makeParts(entry, prompt, selected, oldParts) {
-  const testCase = { prompt: prompt, flow: oldParts ? currentFlow(oldParts) : loadFixture(entry.fixture), selected: selected || entry.selected || [] };
+  const priorForIntake = oldParts && oldParts.touchedIndex ? oldParts.touchedIndex.snapshot()
+    : oldParts && oldParts.intake && oldParts.intake.touchedNodeIndex;
+  // Intake (and its target, which builds the context) sees the touched index,
+  // so a follow-up's "it" resolves as in the browser instead of a picker.
+  const testCase = { prompt: prompt, flow: oldParts ? currentFlow(oldParts) : loadFixture(entry.fixture), selected: selected || entry.selected || [],
+    touchedIndex: priorForIntake ? rebuildTouchedIndex(priorForIntake) : undefined };
   const parts = corpus.fixtureParts(testCase);
   // The corpus helper deliberately omits groups from its editable node list.
   // The fuzzer must judge and mutate group fixtures too, so retain them in the

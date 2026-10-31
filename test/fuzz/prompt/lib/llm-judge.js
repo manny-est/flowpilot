@@ -12,6 +12,12 @@ function judgePrompt(input) {
     "A request that should only be answered (explain / what does) must not write.",
     "Original prompt(s):\n" + String(input.prompt || ""),
     input.followUp ? "Follow-up:\n" + String(input.followUp) : "",
+    // The judge saw only the final graph, so it couldn't tell fixture nodes
+    // from FlowPilot's changes ("the flow was changed" after a greeting).
+    "What FlowPilot did: " + String(input.outcome || "unknown") + ".",
+    "Changes FlowPilot made (the only changes; everything else was already there):\n" +
+      (Array.isArray(input.changes) && input.changes.length ? input.changes.map(function (c) { return "- " + c; }).join("\n") : "none"),
+    input.expected ? "The right kind of outcome for this prompt: " + String(input.expected) + "." : "",
     "Final graph (code-built):\n" + JSON.stringify(input.graph || {}),
     "FlowPilot final user-facing text:\n" + String(input.finalText || "")
   ].filter(Boolean).join("\n\n");

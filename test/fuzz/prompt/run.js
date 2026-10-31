@@ -93,8 +93,17 @@ async function main() {
       result = Object.assign(run, { code: code, durationMs: Date.now() - started });
       if (judgeKey) {
         try {
+          const expectAction = entry.expect && entry.expect.action;
+          const expected = expectAction === "ask" ? "ask one clarifying question (no changes)" :
+            expectAction === "answer" ? "a reply with no changes to the flow" :
+            expectAction === "write" ? "change the flow as asked" : "";
           result.judge = await llmJudge.requestJudge({ prompt: entry.prompt, followUp: entry.followUp,
-            graph: codeJudge.summarizeGraph(run.graph), finalText: run.finalText }, judgeKey, model);
+            graph: codeJudge.summarizeGraph(run.graph), finalText: run.finalText,
+            outcome: run.actual && run.actual.action === "write" ? "changed the flow" :
+              run.actual && run.actual.action === "ask" ? "asked a question" : "replied without changes",
+            changes: (run.writes || []).filter(function (w) { return w && w.result && !w.result.error && !w.result.noChange; })
+              .map(function (w) { return w.tool + ": " + String((w.args && w.args.summary) || "").slice(0, 160); }),
+            expected: expected }, judgeKey, model);
         } catch (error) {
           result.judge = { did_what_was_asked: false, gaps: [llmJudge.redactJudgeError(error, judgeKey)] };
           result.error = result.error || "judge error";
