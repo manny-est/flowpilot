@@ -1,1 +1,1 @@
-{"rule":"switch-outputs","node":{"id":"switch-2","type":"switch","outputs":3,"checkall":"false","rules":[{"t":"eq"},{"t":"else"}],"wires":[["a"],["b"],["c"]]},"expect":[]}
+{"rule": "switch-outputs", "node": {"id": "switch-5", "type": "switch", "outputs": 2, "checkall": "false", "rules": [{"t": "eq"}, {"t": "else"}], "wires": [["a"]]}, "expect": []}
