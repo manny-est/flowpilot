@@ -8,6 +8,7 @@ const path = require("path");
 const corpus = require(path.join(__dirname, "..", "..", "..", "engine-corpus", "runner.js"));
 const intake = require(path.join(__dirname, "..", "..", "..", "..", "lib", "core", "intake.js"));
 const lanes = require(path.join(__dirname, "..", "..", "..", "..", "lib", "core", "lanes.js"));
+const codeJudge = require(path.join(__dirname, "code-judge.js"));
 
 const NR_URL = process.env.NR_URL || "http://127.0.0.1:1880";
 const NR_USER = process.env.NR_USER || "fp-test";
@@ -217,6 +218,17 @@ function askedOptions(args, parts) {
   return [];
 }
 
+function candidateNames(parts) {
+  return (parts && parts.intake && Array.isArray(parts.intake.candidates) ? parts.intake.candidates : [])
+    .slice(0, 6).map(function (candidate) { return candidate.name || candidate.id; }).filter(Boolean);
+}
+
+function questionText(question, options) {
+  const text = String(question || "What would you like FlowPilot to do?").trim();
+  const values = (Array.isArray(options) ? options : []).map(String).filter(function (value) { return value.length > 0; });
+  return values.length ? text + " [" + values.join(" | ") + "]" : text;
+}
+
 function outcomeAction(wrote, asked) {
   return wrote ? "write" : asked ? "ask" : "answer";
 }
@@ -241,6 +253,9 @@ async function executeTurn(entry, prompt, token, parts, options) {
   let consentAsked = false;
   let asked = false;
   let askedOptionsValue = [];
+  let goalChecks = [];
+  let goalCheckFixAttempts = 0;
+  const MAX_GOAL_CHECK_FIX_ATTEMPTS = 2;
   let lane = null;
   let planShown = false;
   let graphTruth = { addedNodeIds: [], changedNodeIds: [], removedNodeIds: [], nodeIds: [] };
@@ -249,6 +264,46 @@ async function executeTurn(entry, prompt, token, parts, options) {
   const state = corpus.loadGateModules().diffGate.createDiffGateState(parts.targetLock.ids, { lane: "DIRECT" });
   const creationState = { active: false,
     plannedNodeCount: null, planStepCount: null, firstWriteComplete: false };
+
+  async function requestAgentStep() {
+    if (steps >= MAX_STEPS) { return false; }
+    steps++;
+    const next = { messages: messages, mode: activeRoute.mode, prompt: activePrompt, context: parts.context,
+      intake: parts.intake, targetLock: parts.targetLock, strategy: "agent", entry: activeRoute.mode,
+      runId: "prompt-fuzz-" + entry.id, events: [] };
+    try { response = await requestPost(NR_URL + "/flowpilot/agent-step", next, token); }
+    catch (error) { return false; }
+    body = response.body || {};
+    return true;
+  }
+
+  async function runGoalCheck() {
+    const summary = codeJudge.summarizeGraph({ flow: currentFlow(parts) });
+    let checkResponse;
+    try {
+      checkResponse = await requestPost(NR_URL + "/flowpilot/goal-check", {
+        request: prompt, summary: summary, runId: "prompt-fuzz-" + entry.id
+      }, token);
+    } catch (error) {
+      const unavailable = { done: true, gaps: [], unavailable: true };
+      goalChecks.push(unavailable);
+      return false;
+    }
+    const answer = checkResponse && checkResponse.body && typeof checkResponse.body === "object"
+      ? checkResponse.body : {};
+    const gaps = Array.isArray(answer.gaps) ? answer.gaps.map(String).filter(Boolean) : [];
+    const check = { done: answer.done === true, gaps: gaps };
+    goalChecks.push(check);
+    if (gaps.length && goalCheckFixAttempts < MAX_GOAL_CHECK_FIX_ATTEMPTS && steps < MAX_STEPS) {
+      goalCheckFixAttempts++;
+      messages = messages.concat([
+        { role: "assistant", content: finalText },
+        { role: "user", content: "Goal check: " + gaps[0] + ". Fix this specific gap with the existing flow; do not recreate nodes. Then give a short final summary." }
+      ]);
+      return requestAgentStep();
+    }
+    return false;
+  }
 
   while (true) {
     if (response.status !== 200) {
@@ -259,6 +314,10 @@ async function executeTurn(entry, prompt, token, parts, options) {
     const calls = Array.isArray(body.toolCalls) ? body.toolCalls : Array.isArray(body.tool_calls) ? body.tool_calls : [];
     if (!calls.length) {
       finalText = String(body.explanation || body.content || body.message || "");
+      const hasActualWrite = writes.some(function (record) {
+        return record.result && !record.result.noChange && !record.result.error;
+      });
+      if (hasActualWrite && await runGoalCheck()) { continue; }
       break;
     }
     messages = appendAssistant(messages, body);
@@ -271,11 +330,25 @@ async function executeTurn(entry, prompt, token, parts, options) {
       if (name === "ask_user") {
         asked = true;
         askedOptionsValue = askedOptions(args, parts);
+        finalText = questionText(args.question, askedOptionsValue);
         transcript[transcript.length - 1].result = { simulated: "clarification requested" };
         stopped = true;
         break;
       }
       if (name === "propose_action") {
+        const proposedAction = String(args.action || "").toLowerCase();
+        const proposedTargets = Array.isArray(args.targets) ? args.targets.filter(Boolean) : [];
+        const validProposedTargets = proposedTargets.filter(function (id) {
+          return parts.nodes.some(function (node) { return node && node.id === id; });
+        });
+        if (proposedAction === "modify" && (args.needs_selection === true || validProposedTargets.length === 0)) {
+          asked = true;
+          askedOptionsValue = candidateNames(parts);
+          finalText = questionText("Which node should I modify?", askedOptionsValue);
+          transcript[transcript.length - 1].result = { action: "ask", askedOptions: askedOptionsValue };
+          stopped = true;
+          break;
+        }
         const dispatch = proposalDispatch(args, prompt, parts);
         if (!dispatch.route) {
           asked = true;
@@ -368,13 +441,11 @@ async function executeTurn(entry, prompt, token, parts, options) {
     if (!stopped && calls.some(function (call) { return toolName(call) === "propose_action"; })) { continue; }
     if (stopped) { break; }
     if (steps >= MAX_STEPS) { asked = writes.length === 0; finalText = "Agent step budget exhausted"; break; }
-    steps++;
-    const next = { messages: messages, mode: activeRoute.mode, prompt: activePrompt, context: parts.context,
-      intake: parts.intake, targetLock: parts.targetLock, strategy: "agent", entry: activeRoute.mode,
-      runId: "prompt-fuzz-" + entry.id, events: [] };
-    try { response = await requestPost(NR_URL + "/flowpilot/agent-step", next, token); }
-    catch (error) { return { error: "network error", parts: parts, writes: writes, transcript: transcript, finalText: "", action: outcomeAction(writes.length > 0, asked) }; }
-    body = response.body || {};
+    if (!await requestAgentStep()) {
+      asked = writes.length === 0;
+      if (!finalText) { finalText = "Agent step budget exhausted"; }
+      break;
+    }
   }
   const touchedIds = recordLedgerIds(ledger);
   const actualWrites = writes.filter(function (record) { return record.result && !record.result.noChange && !record.result.error; });
@@ -386,7 +457,10 @@ async function executeTurn(entry, prompt, token, parts, options) {
   return { parts: parts, writes: writes, transcript: transcript, finalText: finalText,
     action: outcomeAction(actualWrites.length > 0, asked), asked: asked, askedOptions: askedOptionsValue,
     wrote: actualWrites.length > 0, nodesAdded: parts.nodes.length, touchedIds: touchedIds,
-    graphTruth: graphTruth, lane: lane, planShown: planShown, consentAsked: consentAsked, steps: steps, messages: messages };
+    graphTruth: graphTruth, lane: lane, planShown: planShown, consentAsked: consentAsked, steps: steps, messages: messages,
+    goalCheck: { checks: goalChecks, gaps: goalChecks.reduce(function (all, check) {
+      return all.concat(check.gaps || []).filter(function (gap, index, list) { return list.indexOf(gap) === index; });
+    }, []), fixAttempts: goalCheckFixAttempts, maxFixAttempts: MAX_GOAL_CHECK_FIX_ATTEMPTS } };
 }
 
 async function runPrompt(entry, token, options) {
@@ -410,6 +484,16 @@ async function runPrompt(entry, token, options) {
     .filter(function (id, index, list) { return list.indexOf(id) === index; });
   const graphTruth = turns.reduce(function (all, turn) { return mergeGraphTruth(all, turn.graphTruth); },
     { addedNodeIds: [], changedNodeIds: [], removedNodeIds: [], nodeIds: [] });
+  const goalCheckTurns = turns.map(function (turn) { return turn.goalCheck; }).filter(function (check) {
+    return check && check.checks && check.checks.length;
+  });
+  const goalCheck = {
+    checks: goalCheckTurns.reduce(function (all, check) { return all.concat(check.checks); }, []),
+    gaps: goalCheckTurns.reduce(function (all, check) { return all.concat(check.gaps || []); }, [])
+      .filter(function (gap, index, all) { return all.indexOf(gap) === index; }),
+    fixAttempts: goalCheckTurns.reduce(function (count, check) { return count + Number(check.fixAttempts || 0); }, 0),
+    maxFixAttempts: 2
+  };
   const wrote = writes.some(function (record) { return record.result && !record.result.noChange && !record.result.error; });
   const asked = turns.some(function (turn) { return turn.asked; });
   const lastAsked = turns.slice().reverse().find(function (turn) { return turn.asked; });
@@ -419,6 +503,7 @@ async function runPrompt(entry, token, options) {
   return {
     id: entry.id, category: entry.category, fixture: entry.fixture, prompt: entry.prompt, followUp: entry.followUp,
     graph: graph, finalText: last.finalText || first.finalText || "", writes: writes, transcript: transcript,
+    goalCheck: goalCheck,
     timings: { turns: turns.length, steps: turns.reduce(function (sum, turn) { return sum + (turn.steps || 0); }, 0) },
     actual: { wrote: wrote, nodesAdded: nodesAdded, touchedIds: touchedIds, action: outcomeAction(wrote, asked),
       askedOptions: lastAsked ? lastAsked.askedOptions : [], lane: lastLane && lastLane.lane,
