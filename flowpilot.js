@@ -85,6 +85,8 @@ const {
   splitChatDataBlock
 } = require("./lib/chat-data");
 const { extractJsonObject } = require("./lib/envelope");
+const { parseGoalCheck } = require("./lib/core/goal-check.js");
+const { redactSummaryText } = require("./lib/core/redaction.js");
 const { repairEnvelope } = require("./lib/validator");
 const { enforceAgentContract, AGENT_MUTATION_FIELDS } = require("./lib/agent-contract");
 const { isProviderShapedResponse } = require("./lib/provider-shape-check");
@@ -1772,6 +1774,42 @@ function flowPilotRuntime(RED) {
       promptTokenEst: Math.round(promptChars / 4),
       messageCount: messages.length
     }, fields));
+  }
+
+  function redactGoalCheckText(value) {
+    return redactSummaryText(value);
+  }
+
+  async function runGoalCheck(provider, activeProvider, settings, request, summary) {
+    const messages = [
+      { role: "system", content: "You are FlowPilot's final goal checker. Compare the user's request with the code-built graph summary. Answer only JSON: {\"done\":true|false,\"gaps\":[\"specific gap\"]}. Treat explicit constraints such as 'no HTTP' as binding, even if the assistant claims success. Keep gaps short." },
+      { role: "user", content: "Original request:\n" + redactGoalCheckText(request) + "\n\nGraph summary:\n" + redactGoalCheckText(summary) }
+    ];
+    const options = agentTurnOptions(settings, undefined);
+    options.maxTokens = 300;
+    let result;
+    try {
+      result = await provider.chat(activeProvider, messages, options);
+    } catch (err) {
+      maybeLogDebugEvent("goal_check", { requestSummary: redactGoalCheckText(request), graphSummary: redactGoalCheckText(summary), answer: "provider error", gaps: [], error: err.message });
+      return { done: true, gaps: [], unparseable: true };
+    }
+    const answer = result && result.content || "";
+    let parsed;
+    try {
+      parsed = parseGoalCheck(extractJsonObject(answer));
+    } catch (err) {
+      parsed = parseGoalCheck(answer);
+    }
+    maybeLogDebugEvent("goal_check", {
+      requestSummary: redactGoalCheckText(request),
+      graphSummary: redactGoalCheckText(summary),
+      answer: redactGoalCheckText(answer),
+      gaps: (parsed.gaps || []).map(redactGoalCheckText),
+      done: parsed.done === true,
+      unparseable: parsed.unparseable === true
+    });
+    return parsed;
   }
 
   // W0.1: warn when estimated prompt token count approaches the provider's
@@ -3478,6 +3516,28 @@ function flowPilotRuntime(RED) {
       res.json(body);
     } catch (err) {
       sendGenerationError(res, mode + "_agent_step", err, execution);
+    }
+  });
+
+  // ---- Final goal check -------------------------------------------------
+  // CHANGE runs call this once after their writes, before the browser renders
+  // the result card. It deliberately has no tools and never deploys.
+  RED.httpAdmin.post("/flowpilot/goal-check", RED.auth.needsPermission("settings.write"), async function (req, res) {
+    const settings = storage.getSettings();
+    const activeProvider = storage.getActiveProvider(settings);
+    if (!requireConfirmedProvider(res, activeProvider)) { return; }
+    const request = req.body && req.body.request;
+    const summary = req.body && req.body.summary;
+    if (!request || !summary) {
+      return res.status(400).json({ error: "request and summary are required." });
+    }
+    try {
+      const result = await runGoalCheck(getProvider(activeProvider), activeProvider, settings, request, summary);
+      res.json(result);
+    } catch (err) {
+      // A checker must never turn a completed write into a server failure.
+      maybeLogDebugEvent("goal_check", { requestSummary: redactGoalCheckText(request), graphSummary: redactGoalCheckText(summary), answer: "unparseable", gaps: [], error: err.message });
+      res.json({ done: true, gaps: [], unparseable: true });
     }
   });
 
