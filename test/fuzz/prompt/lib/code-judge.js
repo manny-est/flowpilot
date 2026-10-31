@@ -70,7 +70,7 @@ function nodeNeedsInput(node) {
   return Number(node.inputs) > 0 && node.type !== "group" && !/-broker$|-config$|-server$|-client$/.test(String(node.type || ""));
 }
 
-function overlapFailures(nodes) {
+function overlapFailures(nodes, scopeIds) {
   const failures = [];
   const placed = nodes.filter(function (node) {
     return node.type !== "group" && Number.isFinite(Number(node.x)) && Number.isFinite(Number(node.y));
@@ -84,7 +84,9 @@ function overlapFailures(nodes) {
       const rh = 40;
       if (Math.abs(Number(left.x) - Number(right.x)) < (lw + rw) / 2 &&
           Math.abs(Number(left.y) - Number(right.y)) < (lh + rh) / 2) {
-        failures.push("nodes overlap: " + left.id + " and " + right.id);
+        if (!scopeIds || scopeIds.has(left.id) || scopeIds.has(right.id)) {
+          failures.push("nodes overlap: " + left.id + " and " + right.id);
+        }
       }
     });
   });
@@ -96,7 +98,11 @@ function typeNames(nodes) {
 }
 
 function codeChecks(graph, actual) {
-  const nodes = graphNodes(graph);
+  const allNodes = graphNodes(graph);
+  const graphTruth = actual && actual.graphTruth;
+  const scoped = graphTruth && Array.isArray(graphTruth.nodeIds);
+  const scopeIds = scoped ? new Set((graphTruth.nodeIds || []).map(String)) : null;
+  const nodes = scoped ? allNodes.filter(function (node) { return scopeIds.has(String(node.id)); }) : allNodes;
   const allIds = new Set();
   const failures = [];
   nodes.forEach(function (node) {
@@ -104,23 +110,24 @@ function codeChecks(graph, actual) {
     if (allIds.has(node.id)) { failures.push("duplicate node id: " + node.id); }
     allIds.add(node.id);
   });
-  const graphEdges = edges(nodes);
+  const graphEdges = edges(allNodes);
   graphEdges.forEach(function (edge) {
+    if (scoped && !scopeIds.has(String(edge.from))) { return; }
     if (!edge.target) { failures.push("wire points to missing node: " + edge.to); }
     if (edge.duplicate) { failures.push("duplicate wire: " + edge.from + " -> " + edge.to); }
-    const source = nodes.find(function (node) { return node.id === edge.from; });
+    const source = allNodes.find(function (node) { return node.id === edge.from; });
     if (source && edge.fromPort >= Number(source.outputs)) {
       failures.push("wire uses an invalid output port: " + edge.from + ":" + edge.fromPort);
     }
   });
   nodes.filter(nodeNeedsInput).forEach(function (node) {
-    if (!hasInput(nodes, node.id)) { failures.push("node is unwired: " + node.id); }
+    if (!hasInput(allNodes, node.id)) { failures.push("node is unwired: " + node.id); }
   });
-  overlapFailures(nodes).forEach(function (failure) { failures.push(failure); });
+  overlapFailures(allNodes, scopeIds).forEach(function (failure) { failures.push(failure); });
 
   const validationNodes = nodes.map(clone);
   const validation = loadValidator().validateFlow(validationNodes, {
-    allNodes: validationNodes,
+    allNodes: allNodes,
     isInstalled: function (type) { return INSTALLED_TYPES.has(type); }
   });
   if (!validation.ok) {
@@ -129,7 +136,7 @@ function codeChecks(graph, actual) {
   if (validation.warnings.length) {
     failures.push.apply(failures, validation.warnings.map(function (check) { return "lint: " + check.message; }));
   }
-  return { nodes: nodes, edges: graphEdges, failures: failures, validation: validation, types: typeNames(nodes), actual: actual || {} };
+  return { nodes: allNodes, edges: graphEdges, failures: failures, validation: validation, types: typeNames(allNodes), actual: actual || {} };
 }
 
 function expectedChecks(result, expect) {
