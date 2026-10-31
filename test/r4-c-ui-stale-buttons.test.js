@@ -54,10 +54,18 @@ test("pop-out mirrors replace one record and receive settled control state", () 
 
 test("undo records that cannot be undone stay disabled with a reason", () => {
   const render = functionBody(modes, "renderResultCard");
-  assert.match(render, /undoUnavailable/);
-  assert.match(render, /\.attr\("title"/);
-  assert.match(render, /prop\("disabled",[\s\S]{0,100}undoUnavailable/);
-  assert.match(render, /result\.undone[\s\S]{0,180}undoUnavailable/);
+  assert.match(render, /resultCardUndoState/);
+  assert.match(render, /\.attr\("title", undoUnavailable\)/);
+  assert.match(render, /prop\("disabled", !!rec\.undone \|\| !undoState\.available\)/);
+});
+
+test("review: Test it and Undo never go through the one-shot chip guard (Test it must not lock Undo)", () => {
+  const render = functionBody(modes, "renderResultCard");
+  const undoClick = render.slice(render.indexOf('"result-undo"'), render.indexOf('"result-test"'));
+  const testClick = render.slice(render.indexOf('"result-test"'));
+  assert.doesNotMatch(undoClick, /guardRecordControls/);
+  assert.doesNotMatch(testClick.slice(0, 400), /guardRecordControls/);
+  assert.doesNotMatch(render, /rec\.undoUnavailable\s*=/);
 });
 
 test("result-card testing owns and releases the working banner", () => {
@@ -72,8 +80,9 @@ test("one shared answered-control guard is used by every chip/card renderer", ()
   [
     "renderActionChip", "renderChip", "renderClarifyingQuestion",
     "renderBuildConsentGate", "renderDiffGatePause",
-    "renderAgentToolConsentGate", "renderAskUserQuestion",
-    "renderResultCard"
+    "renderAgentToolConsentGate", "renderAskUserQuestion"
+    // renderResultCard is deliberately excluded: Undo/Test it are not one-shot
+    // chips (see the review test above).
   ].forEach(name => assert.match(functionBody(modes, name), /guardRecordControls/,
     name + " uses the shared guard"));
 });
