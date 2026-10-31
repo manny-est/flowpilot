@@ -351,7 +351,13 @@ test("an add-on node the user didn't ask for is refused; a named one is allowed"
 test("a final reply right after a failed validation is sent back to fix it (bounded)", () => {
   const modes = fs.readFileSync(path.join(root, "lib", "core", "modes.js"), "utf8");
   const fn = modes.slice(modes.indexOf("function nudgeValidationFix"), modes.indexOf("function nudgeBuildVerification"));
-  assert.match(fn, /last\.validationError !== true/);
+  // The fields the nudge reads must be ones continueWithResult stores (a
+  // first version read validationError/error-text and never fired live).
+  const stored = modes.slice(modes.indexOf("agentWriteResults.push({"), modes.indexOf("agentWriteResults.push({") + 900);
+  (fn.match(/last\.(\w+)/g) || []).map((m) => m.slice(5)).forEach((field) => {
+    assert.match(stored, new RegExp("\\b" + field + ":"), "write results store " + field);
+  });
+  assert.match(fn, /last\.validationFailed !== true && last\.error !== true/);
   assert.match(fn, /validationFixNudges >= VALIDATION_FIX_NUDGES_MAX \|\| step >= stepBudget/);
   assert.match(modes, /VALIDATION_FIX_NUDGES_MAX = 2;/);
   const finalBranch = modes.slice(modes.indexOf("if (!data.toolCalls || !data.toolCalls.length) {"));
