@@ -160,7 +160,10 @@ class OpenClawDriver {
 
   async addFixture(fixture) {
     const encoded = JSON.stringify(fixture && fixture.flow ? fixture.flow : fixture);
-    return this.evaluate("() => { const fixture = " + encoded + "; if (!RED.nodes || typeof RED.nodes.import !== 'function') return false; RED.nodes.import(fixture, true); return true; }");
+    // Onto the active (fuzz) tab with fresh ids. Node-RED 5's import takes an
+    // options object; the old boolean was ignored, so a second import threw
+    // "Imported duplicate nodes" and crashed the run.
+    return this.evaluate("() => { const z = RED.workspaces.active(); const fixture = " + encoded + ".filter(n => n.type !== 'tab').map(n => Object.assign({}, n, { z })); if (!RED.nodes || typeof RED.nodes.import !== 'function') return false; RED.nodes.import(fixture, { generateIds: true, applyNodeDefaults: true }); RED.view.redraw(true); return true; }");
   }
 
   async switchEditorTab() {

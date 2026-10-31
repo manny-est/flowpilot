@@ -209,7 +209,10 @@ async function runSequence(driver, options, sequenceNumber) {
       await guardFuzzTab(driver);
       const entry = { index: actionsRun, name: item.name };
       actionLog.push(entry);
-      await runAction(driver, item, state, context, chooseRngForAction(seed, actionsRun));
+      // An action the page refuses (a stale button, a gateway hiccup) is
+      // logged and the sequence goes on; only invariants make findings.
+      try { await runAction(driver, item, state, context, chooseRngForAction(seed, actionsRun)); }
+      catch (error) { entry.error = String(error && error.message || error).split("\n")[0].slice(0, 200); }
       actionsRun += 1;
       const checked = await checkAfterAction(driver, context, beforeMessages, item.name);
       const violations = Array.isArray(checked.result.violations) ? checked.result.violations : [];
