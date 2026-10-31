@@ -156,7 +156,9 @@ async function evaluateInPage(expected, injected) {
 
   // Whitespace isn't content: innerText (main) and textContent (relayed
   // pop-out HTML) space block elements differently.
-  const norm = list => JSON.stringify((list || []).map(item => ({ id: item.id, text: String(item.text || "").replace(/\s+/g, "") })));
+  // Text sequence only: messages without a record id get positional "dom-N"
+  // ids, so one extra element shifted every id and looked like a mismatch.
+  const norm = list => JSON.stringify((list || []).map(item => String(item.text || "").replace(/\s+/g, "")).filter(Boolean));
   const sameMessages = (left, right) => norm(left) === norm(right);
   const popoutMessages = wanted.popoutMessages !== undefined ? wanted.popoutMessages : page.popoutMessages;
   const popoutMismatch = popoutMessages !== undefined && !sameMessages(messageList, popoutMessages);
@@ -166,7 +168,17 @@ async function evaluateInPage(expected, injected) {
   });
 
   const reloadMessages = wanted.reloadMessages !== undefined ? wanted.reloadMessages : page.reloadMessages;
-  const reloadMismatch = wanted.afterReload === true && reloadMessages !== undefined && !sameMessages(messageList, reloadMessages);
+  // A reload mid-reply is allowed exactly one change: the live "Cruising…"
+  // bubble becomes one interrupted notice (directive: "a reload mid-run gives
+  // an interrupted notice"). Everything else must match.
+  const INTERRUPTED = /page was reloaded before FlowPilot|run was interrupted after step/i;
+  const beforeSettled = (reloadMessages || []).filter(item => item.id !== "fp-pending" && item.id !== "fp-empty-state");
+  const hadPending = (reloadMessages || []).some(item => item.id === "fp-pending");
+  let afterSettled = messageList.filter(item => item.id !== "fp-empty-state");
+  if (hadPending && afterSettled.length && INTERRUPTED.test(String(afterSettled[afterSettled.length - 1].text || ""))) {
+    afterSettled = afterSettled.slice(0, -1);
+  }
+  const reloadMismatch = wanted.afterReload === true && reloadMessages !== undefined && !sameMessages(afterSettled, beforeSettled);
   report("reload-restores", reloadMismatch, {
     message: reloadMismatch ? "reload did not restore the visible conversation" : "reload restored the visible conversation",
     before: reloadMessages === undefined ? null : reloadMessages, after: messageList
