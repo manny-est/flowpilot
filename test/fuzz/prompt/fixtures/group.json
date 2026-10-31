@@ -1,0 +1,6 @@
+[
+  {"id":"tab-group","type":"tab","label":"Grouped flow"},
+  {"id":"group-1","type":"group","z":"tab-group","name":"Existing group","nodes":["group-inject","group-debug"],"x":80,"y":60,"w":360,"h":140},
+  {"id":"group-inject","type":"inject","z":"tab-group","name":"Grouped trigger","g":"group-1","x":140,"y":120,"wires":[["group-debug"]]},
+  {"id":"group-debug","type":"debug","z":"tab-group","name":"Grouped output","g":"group-1","x":340,"y":120,"wires":[]}
+]

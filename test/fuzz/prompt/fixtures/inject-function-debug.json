@@ -1,0 +1,6 @@
+[
+  {"id":"tab-basic","type":"tab","label":"Basic flow"},
+  {"id":"inject-1","type":"inject","z":"tab-basic","name":"Start","x":140,"y":100,"wires":[["function-1"]]},
+  {"id":"function-1","type":"function","z":"tab-basic","name":"Double","func":"var value = msg.payload;\nmsg.payload = value * 2;\nreturn msg;","outputs":1,"x":340,"y":100,"wires":[["debug-1"]]},
+  {"id":"debug-1","type":"debug","z":"tab-basic","name":"Result","active":true,"complete":"false","x":540,"y":100,"wires":[]}
+]

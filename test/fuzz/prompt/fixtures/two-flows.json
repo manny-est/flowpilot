@@ -1,0 +1,8 @@
+[
+  {"id":"tab-one","type":"tab","label":"First flow"},
+  {"id":"one-inject","type":"inject","z":"tab-one","name":"First trigger","x":120,"y":100,"wires":[["one-debug"]]},
+  {"id":"one-debug","type":"debug","z":"tab-one","name":"First output","x":320,"y":100,"wires":[]},
+  {"id":"tab-two","type":"tab","label":"Second flow"},
+  {"id":"two-inject","type":"inject","z":"tab-two","name":"Second trigger","x":120,"y":260,"wires":[["two-debug"]]},
+  {"id":"two-debug","type":"debug","z":"tab-two","name":"Second output","x":320,"y":260,"wires":[]}
+]

@@ -1,0 +1,8 @@
+[
+  {"id":"tab-weather","type":"tab","label":"Weather"},
+  {"id":"inject-weather","type":"inject","z":"tab-weather","name":"Every 10 minutes","repeat":"600","x":120,"y":120,"wires":[["http-weather"]]},
+  {"id":"http-weather","type":"http request","z":"tab-weather","name":"Weather API","method":"GET","ret":"obj","url":"https://api.example.test/weather","x":320,"y":120,"wires":[["json-weather"]]},
+  {"id":"json-weather","type":"json","z":"tab-weather","name":"Parse weather","action":"obj","x":500,"y":120,"wires":[["change-weather"]]},
+  {"id":"change-weather","type":"change","z":"tab-weather","name":"Pick temperature","rules":[{"t":"set","p":"payload.temperature","pt":"msg","to":"payload.temp","tot":"msg"}],"x":700,"y":120,"wires":[["debug-weather"]]},
+  {"id":"debug-weather","type":"debug","z":"tab-weather","name":"Weather output","active":true,"complete":"true","x":900,"y":120,"wires":[]}
+]

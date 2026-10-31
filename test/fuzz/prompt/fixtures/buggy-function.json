@@ -1,0 +1,6 @@
+[
+  {"id":"tab-bug","type":"tab","label":"Bug hunt"},
+  {"id":"bug-inject","type":"inject","z":"tab-bug","name":"Input","x":120,"y":120,"wires":[["bug-function"]]},
+  {"id":"bug-function","type":"function","z":"tab-bug","name":"Broken parser","func":"msg.payload = JSON.parse(msg.payload);\nreturn msg;","outputs":1,"x":340,"y":120,"wires":[["bug-debug"]]},
+  {"id":"bug-debug","type":"debug","z":"tab-bug","name":"Output","complete":"msg","x":540,"y":120,"wires":[]}
+]
