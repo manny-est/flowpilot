@@ -6,6 +6,8 @@ const https = require("https");
 const path = require("path");
 
 const corpus = require(path.join(__dirname, "..", "..", "..", "engine-corpus", "runner.js"));
+const intake = require(path.join(__dirname, "..", "..", "..", "..", "lib", "core", "intake.js"));
+const lanes = require(path.join(__dirname, "..", "..", "..", "..", "lib", "core", "lanes.js"));
 
 const NR_URL = process.env.NR_URL || "http://127.0.0.1:1880";
 const NR_USER = process.env.NR_USER || "fp-test";
@@ -82,10 +84,14 @@ function appendTool(messages, call, result) {
   return messages.concat([{ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) }]);
 }
 
-function routeFor(entry) {
-  if (entry.category === "build") { return { route: "/flowpilot/build", mode: "build" }; }
-  if (entry.category === "document") { return { route: "/flowpilot/document", mode: "document" }; }
-  return { route: "/flowpilot/modify", mode: "modify" };
+function routeForAction(action) {
+  action = String(action || "").toLowerCase();
+  if (action === "generate" || action === "create" || action === "build") {
+    return { route: "/flowpilot/" + (action === "generate" || action === "create" ? "generate" : "build"), mode: action === "create" ? "generate" : action };
+  }
+  if (action === "modify") { return { route: "/flowpilot/modify", mode: "modify" }; }
+  if (action === "document") { return { route: "/flowpilot/document", mode: "document" }; }
+  return null;
 }
 
 function currentFlow(parts) {
@@ -104,6 +110,18 @@ function makeParts(entry, prompt, selected, oldParts) {
   const groups = testCase.flow.filter(function (node) { return node && node.type === "group"; }).map(clone);
   parts.nodes = parts.nodes.concat(groups);
   parts.flow = currentFlow(parts);
+  const priorSnapshot = oldParts && oldParts.touchedIndex
+    ? oldParts.touchedIndex.snapshot()
+    : oldParts && oldParts.intake && oldParts.intake.touchedNodeIndex;
+  parts.touchedIndex = intake.createTouchedNodeIndex();
+  if (priorSnapshot && typeof priorSnapshot === "object") {
+    const snapshot = priorSnapshot;
+    for (let run = 0; run < Number(snapshot.run || 0); run++) { parts.touchedIndex.beginRun(); }
+    (snapshot.runs || []).forEach(function (record) {
+      parts.touchedIndex.recordRun((record.nodeIds || []).map(function (id) { return { id: id }; }), record.run);
+    });
+  }
+  parts.intake.touchedNodeIndex = parts.touchedIndex.snapshot();
   return parts;
 }
 
@@ -134,32 +152,107 @@ function recordLedgerIds(ledger) {
     .filter(function (id, index, list) { return list.indexOf(id) === index; });
 }
 
+function uniqueIds(ids) {
+  return (ids || []).filter(function (id, index, all) { return id && all.indexOf(id) === index; });
+}
+
+function graphDiff(before, after) {
+  const beforeById = {};
+  const afterById = {};
+  (before || []).forEach(function (node) { if (node && node.id) { beforeById[node.id] = node; } });
+  (after || []).forEach(function (node) { if (node && node.id) { afterById[node.id] = node; } });
+  const addedNodeIds = Object.keys(afterById).filter(function (id) { return !beforeById[id]; });
+  const removedNodeIds = Object.keys(beforeById).filter(function (id) { return !afterById[id]; });
+  const changedNodeIds = Object.keys(afterById).filter(function (id) {
+    return beforeById[id] && JSON.stringify(beforeById[id]) !== JSON.stringify(afterById[id]);
+  });
+  return { addedNodeIds: addedNodeIds, removedNodeIds: removedNodeIds, changedNodeIds: changedNodeIds,
+    nodeIds: uniqueIds(addedNodeIds.concat(changedNodeIds)) };
+}
+
+function mergeGraphTruth(target, diff) {
+  target = target || { addedNodeIds: [], changedNodeIds: [], removedNodeIds: [], nodeIds: [] };
+  ["addedNodeIds", "changedNodeIds", "removedNodeIds", "nodeIds"].forEach(function (key) {
+    target[key] = uniqueIds(target[key].concat(diff && diff[key] || []));
+  });
+  return target;
+}
+
+function proposalDispatch(proposal, prompt, parts) {
+  const action = String(proposal.action || "").toLowerCase();
+  const route = routeForAction(action);
+  const targets = Array.isArray(proposal.targets) ? proposal.targets.filter(Boolean) : [];
+  const targetNodes = targets.map(function (id) {
+    return parts.nodes.find(function (node) { return node && node.id === id; });
+  }).filter(Boolean).map(clone);
+  const context = Object.assign({}, parts.context, {
+    nodes: targetNodes,
+    connections: corpus.fixtureParts({ prompt: prompt, flow: currentFlow({ nodes: targetNodes }), selected: targets }).context.connections
+  });
+  const targetLock = {
+    ids: targets.slice(),
+    labels: targetNodes.map(function (node) { return node.name || node.id; })
+  };
+  const approvedOperations = Array.isArray(proposal.approvedOperations) ? proposal.approvedOperations.slice() : [];
+  const approvedScopeNodeIds = uniqueIds(targets.concat(approvedOperations.map(function (item) { return item && item.nodeId; })));
+  const decision = intake.classifyEditIntent({ action: action, message: proposal.summary || prompt,
+    selectionIds: targets, touchedIndex: proposal.touchedNodeIndex, inheritedRun: proposal.inheritedRun });
+  const creationRun = ["generate", "build", "create"].indexOf(action) !== -1 && decision.creation === true;
+  const lane = String(proposal.lane || lanes.chooseLane(parts.intake, Object.assign({}, proposal, { action: action })).lane || "ASK").toUpperCase();
+  parts.context = context;
+  parts.targetLock = targetLock;
+  return { route: route, prompt: proposal.summary || prompt, context: context, targetLock: targetLock,
+    approvedOperations: approvedOperations, approvedScopeNodeIds: approvedScopeNodeIds,
+    creationRun: creationRun, lane: lane, planShown: lane === "PLAN",
+    planApproved: lane === "PLAN", proposal: proposal };
+}
+
+function askedOptions(args, parts) {
+  if (Array.isArray(args.options)) { return args.options.slice(); }
+  if (args.question_kind === "target" && parts.intake && Array.isArray(parts.intake.candidates)) {
+    return parts.intake.candidates.slice(0, 6).map(function (candidate) {
+      return (candidate.name || candidate.id) + " [" + candidate.type + "]";
+    }).concat(["Something else (describe it)"]);
+  }
+  return [];
+}
+
+function outcomeAction(wrote, asked) {
+  return wrote ? "write" : asked ? "ask" : "answer";
+}
+
 async function executeTurn(entry, prompt, token, parts, options) {
   options = options || {};
-  const route = routeFor(entry);
+  const requestPost = options.post || post;
   const initial = {
     prompt: prompt, stream: false, history: options.history || [], strategy: "agent", tools: true,
-    entry: route.mode, intake: parts.intake, targetLock: parts.targetLock, context: parts.context
+    entry: "chat", intake: parts.intake, context: parts.context
   };
   let response;
-  try { response = await post(NR_URL + route.route, initial, token); }
-  catch (error) { return { error: "network error", parts: parts, writes: [], transcript: [], finalText: "" }; }
+  try { response = await requestPost(NR_URL + "/flowpilot/chat", initial, token); }
+  catch (error) { return { error: "network error", parts: parts, writes: [], transcript: [], finalText: "", action: "answer" }; }
   let body = response.body || {};
   let messages = Array.isArray(body.messages) ? body.messages.slice() : [];
   let ledger = [];
   let steps = 0;
-  let action = "answer";
   let finalText = "";
   const writes = [];
   const transcript = [];
   let consentAsked = false;
+  let asked = false;
+  let askedOptionsValue = [];
+  let lane = null;
+  let planShown = false;
+  let graphTruth = { addedNodeIds: [], changedNodeIds: [], removedNodeIds: [], nodeIds: [] };
+  let activeRoute = { mode: "chat" };
+  let activePrompt = prompt;
   const state = corpus.loadGateModules().diffGate.createDiffGateState(parts.targetLock.ids, { lane: "DIRECT" });
-  const creationState = { active: entry.category === "build" && parts.nodes.filter(function (node) { return node.type !== "group"; }).length === 0,
+  const creationState = { active: false,
     plannedNodeCount: null, planStepCount: null, firstWriteComplete: false };
 
   while (true) {
     if (response.status !== 200) {
-      action = "ask";
+      asked = true;
       finalText = "HTTP " + response.status;
       break;
     }
@@ -175,10 +268,47 @@ async function executeTurn(entry, prompt, token, parts, options) {
       const name = toolName(call);
       const args = toolArgs(call);
       transcript.push({ tool: name, args: clone(args) });
-      if (name === "ask_user" || name === "propose_action") {
-        action = "ask";
+      if (name === "ask_user") {
+        asked = true;
+        askedOptionsValue = askedOptions(args, parts);
         transcript[transcript.length - 1].result = { simulated: "clarification requested" };
         stopped = true;
+        break;
+      }
+      if (name === "propose_action") {
+        const dispatch = proposalDispatch(args, prompt, parts);
+        if (!dispatch.route) {
+          asked = true;
+          askedOptionsValue = [];
+          transcript[transcript.length - 1].result = { error: "Unsupported proposed action" };
+          stopped = true;
+          break;
+        }
+        lane = dispatch.lane;
+        planShown = planShown || dispatch.planShown;
+        creationState.active = dispatch.creationRun;
+        activeRoute = dispatch.route;
+        activePrompt = dispatch.prompt;
+        transcript[transcript.length - 1].result = { approved: true, lane: dispatch.lane, planShown: dispatch.planShown };
+        const proposalBody = {
+          prompt: dispatch.prompt, stream: false, history: messages, strategy: "agent", tools: true,
+          entry: dispatch.route.mode, intake: parts.intake, context: dispatch.context,
+          targetLock: dispatch.targetLock, approvedOperations: dispatch.approvedOperations,
+          approvedScopeNodeIds: dispatch.approvedScopeNodeIds, planApproved: dispatch.planApproved,
+          lane: dispatch.lane, creationRun: dispatch.creationRun
+        };
+        if (dispatch.planApproved) { proposalBody.fromAct = true; }
+        if (args.transcriptPrompt) { proposalBody.transcriptPrompt = args.transcriptPrompt; }
+        if (Array.isArray(args.continuation) && args.continuation.length) {
+          proposalBody.continuation = args.continuation.map(function (node) {
+            return Object.assign({}, node, { wires: Array.isArray(node.wires) ? node.wires.slice() : [] });
+          });
+        }
+        try { response = await requestPost(NR_URL + dispatch.route.route, proposalBody, token); }
+        catch (error) { return { error: "network error", parts: parts, writes: writes, transcript: transcript, finalText: "", action: outcomeAction(writes.length > 0, asked) }; }
+        body = response.body || {};
+        messages = Array.isArray(body.messages) ? body.messages.slice() : messages;
+        stopped = false;
         break;
       }
       if (!WRITE_TOOLS.has(name)) {
@@ -189,12 +319,12 @@ async function executeTurn(entry, prompt, token, parts, options) {
       }
       const beforeGate = corpus.evaluateWriteTool(call, parts.targetLock.ids, parts, state, ledger);
       let gate = beforeGate;
-      let asked = beforeGate.consent === "ask";
-      if (asked) {
+      let consentWasAsked = beforeGate.consent === "ask";
+      if (consentWasAsked) {
         consentAsked = true;
         gate = corpus.evaluateWriteTool(call, parts.targetLock.ids, parts, state, ledger, { consentAccepted: true });
       }
-      const record = { tool: name, args: clone(args), consent: asked ? "ask" : "auto", diff: {
+      const record = { tool: name, args: clone(args), consent: consentWasAsked ? "ask" : "auto", diff: {
         pause: gate.diff.pause, reason: gate.diff.reason, touchedNodes: gate.diff.touchedNodes,
         outOfTargetNodes: gate.diff.outOfTargetNodes.map(clone)
       } };
@@ -212,67 +342,87 @@ async function executeTurn(entry, prompt, token, parts, options) {
       if (gate.diff.pause) {
         record.result = { error: "diff gate paused the write" };
         transcript[transcript.length - 1].result = record.result;
-        action = "ask";
+        asked = true;
         stopped = true;
         break;
       }
+      const beforeNodes = parts.nodes.map(clone);
       record.result = applyFuzzWrite(call, parts);
       transcript[transcript.length - 1].result = clone(record.result);
+      if (record.result && !record.result.noChange && !record.result.error) {
+        record.graphTruth = graphDiff(beforeNodes, parts.nodes);
+        graphTruth = mergeGraphTruth(graphTruth, record.graphTruth);
+      }
       ledger = gate.ledger;
       recordLedgerIds(ledger).forEach(function (id) { state.createdNodeIds[id] = state.createdNodeIds[id] || false; });
       (args.newNodes || []).forEach(function (node) {
         if (node && node.id) { state.createdNodeIds[String(node.id)] = true; }
       });
       if (name === "apply_step") { creationState.firstWriteComplete = true; }
-      if (record.result && record.result.error && !record.result.noChange) { action = "ask"; stopped = true; break; }
-      action = "write";
+      if (record.result && record.result.error && !record.result.noChange) { asked = true; stopped = true; break; }
     }
+    if (!stopped && calls.some(function (call) { return toolName(call) === "propose_action"; })) { continue; }
     if (stopped) { break; }
-    if (steps >= MAX_STEPS) { action = writes.length ? "write" : "ask"; finalText = "Agent step budget exhausted"; break; }
+    if (steps >= MAX_STEPS) { asked = writes.length === 0; finalText = "Agent step budget exhausted"; break; }
     steps++;
-    const next = { messages: messages, mode: route.mode, prompt: prompt, context: parts.context,
-      intake: parts.intake, targetLock: parts.targetLock, strategy: "agent", entry: route.mode,
+    const next = { messages: messages, mode: activeRoute.mode, prompt: activePrompt, context: parts.context,
+      intake: parts.intake, targetLock: parts.targetLock, strategy: "agent", entry: activeRoute.mode,
       runId: "prompt-fuzz-" + entry.id, events: [] };
-    try { response = await post(NR_URL + "/flowpilot/agent-step", next, token); }
-    catch (error) { return { error: "network error", parts: parts, writes: writes, transcript: transcript, finalText: "" }; }
+    try { response = await requestPost(NR_URL + "/flowpilot/agent-step", next, token); }
+    catch (error) { return { error: "network error", parts: parts, writes: writes, transcript: transcript, finalText: "", action: outcomeAction(writes.length > 0, asked) }; }
     body = response.body || {};
   }
   const touchedIds = recordLedgerIds(ledger);
   const actualWrites = writes.filter(function (record) { return record.result && !record.result.noChange && !record.result.error; });
-  return { parts: parts, writes: writes, transcript: transcript, finalText: finalText, action: action,
+  if (parts.touchedIndex && graphTruth.nodeIds.length) {
+    const run = parts.touchedIndex.beginRun();
+    parts.touchedIndex.recordRun(graphTruth.nodeIds.map(function (id) { return { id: id }; }), run);
+    parts.intake.touchedNodeIndex = parts.touchedIndex.snapshot();
+  }
+  return { parts: parts, writes: writes, transcript: transcript, finalText: finalText,
+    action: outcomeAction(actualWrites.length > 0, asked), asked: asked, askedOptions: askedOptionsValue,
     wrote: actualWrites.length > 0, nodesAdded: parts.nodes.length, touchedIds: touchedIds,
-    consentAsked: consentAsked, steps: steps, messages: messages };
+    graphTruth: graphTruth, lane: lane, planShown: planShown, consentAsked: consentAsked, steps: steps, messages: messages };
 }
 
-async function runPrompt(entry, token) {
+async function runPrompt(entry, token, options) {
+  options = options || {};
   const originalFlow = loadFixture(entry.fixture);
   const initialNodeIds = new Set(originalFlow.filter(function (node) { return node && node.type !== "tab" && node.type !== "subflow"; }).map(function (node) { return node.id; }));
   let parts = makeParts(entry, entry.prompt, entry.selected);
   const turns = [];
-  let first = await executeTurn(entry, entry.prompt, token, parts);
+  let first = await executeTurn(entry, entry.prompt, token, parts, { post: options.post });
   turns.push(first);
   parts = first.parts;
   if (entry.followUp) {
     parts = makeParts(entry, entry.followUp, [], parts);
     const history = [{ role: "user", content: entry.prompt }, { role: "assistant", content: first.finalText || "The requested change was applied." }];
-    turns.push(await executeTurn(entry, entry.followUp, token, parts, { history: history }));
+    turns.push(await executeTurn(entry, entry.followUp, token, parts, { history: history, post: options.post }));
   }
   const last = turns[turns.length - 1];
   const writes = turns.reduce(function (all, turn) { return all.concat(turn.writes || []); }, []);
   const transcript = turns.reduce(function (all, turn) { return all.concat(turn.transcript || []); }, []);
   const touchedIds = turns.reduce(function (all, turn) { return all.concat(turn.touchedIds || []); }, [])
     .filter(function (id, index, list) { return list.indexOf(id) === index; });
+  const graphTruth = turns.reduce(function (all, turn) { return mergeGraphTruth(all, turn.graphTruth); },
+    { addedNodeIds: [], changedNodeIds: [], removedNodeIds: [], nodeIds: [] });
+  const wrote = writes.some(function (record) { return record.result && !record.result.noChange && !record.result.error; });
+  const asked = turns.some(function (turn) { return turn.asked; });
+  const lastAsked = turns.slice().reverse().find(function (turn) { return turn.asked; });
+  const lastLane = turns.slice().reverse().find(function (turn) { return turn.lane; });
   const graph = { flow: currentFlow(parts) };
   const nodesAdded = graph.flow.filter(function (node) { return node && node.type !== "tab" && !initialNodeIds.has(node.id); }).length;
   return {
     id: entry.id, category: entry.category, fixture: entry.fixture, prompt: entry.prompt, followUp: entry.followUp,
     graph: graph, finalText: last.finalText || first.finalText || "", writes: writes, transcript: transcript,
     timings: { turns: turns.length, steps: turns.reduce(function (sum, turn) { return sum + (turn.steps || 0); }, 0) },
-    actual: { wrote: writes.some(function (record) { return record.result && !record.result.noChange && !record.result.error; }),
-      nodesAdded: nodesAdded, touchedIds: touchedIds, action: last.action || first.action || "answer",
+    actual: { wrote: wrote, nodesAdded: nodesAdded, touchedIds: touchedIds, action: outcomeAction(wrote, asked),
+      askedOptions: lastAsked ? lastAsked.askedOptions : [], lane: lastLane && lastLane.lane,
+      planShown: turns.some(function (turn) { return turn.planShown; }), graphTruth: graphTruth,
       consentAsked: turns.some(function (turn) { return turn.consentAsked; }) },
     error: turns.find(function (turn) { return turn.error; }) && turns.find(function (turn) { return turn.error; }).error
   };
 }
 
-module.exports = { runPrompt: runPrompt, getToken: getToken, loadFixture: loadFixture, post: post, NR_URL: NR_URL };
+module.exports = { runPrompt: runPrompt, getToken: getToken, loadFixture: loadFixture, post: post, NR_URL: NR_URL,
+  routeForAction: routeForAction, proposalDispatch: proposalDispatch, outcomeAction: outcomeAction };
