@@ -121,8 +121,10 @@ async function cleanupSequence(driver, mainTab, initialTabs, settings) {
     if (mainTab) {
       await driver.focus(mainTab);
       // Delete only this run's flow tabs (never the instance's own), then deploy.
-      await driver.evaluate("() => { const base = window.__fzBase || []; RED.nodes.getWorkspaceOrder().filter(id => !base.includes(id)).forEach(id => { const ws = RED.nodes.workspace(id); if (ws) RED.workspaces.delete(ws); }); RED.nodes.dirty(true); return true; }");
-      await driver.deploy();
+      // Never deploy unless every one of the instance's own tabs is loaded:
+      // a deploy from a half-loaded editor could overwrite the user's flows.
+      const safe = await driver.evaluate("() => { const base = window.__fzBase || []; const order = RED.nodes.getWorkspaceOrder(); if (!base.length || !base.every(id => order.includes(id))) return false; order.filter(id => !base.includes(id)).forEach(id => { const ws = RED.nodes.workspace(id); if (ws) RED.workspaces.delete(ws); }); return true; }");
+      if (safe === true) { await driver.deploy(); }
     }
     await restoreSettings(driver, settings);
   } catch (error) {
