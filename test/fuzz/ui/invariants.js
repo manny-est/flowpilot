@@ -85,12 +85,15 @@ async function evaluateInPage(expected, injected) {
   const allChatText = messageList.map(item => String(item.text || "")).join("\n");
   const rawHtml = /<[^>]+>/.test(allChatText);
   const rawJson = /\{\s*["'][^}]+["']\s*:/.test(allChatText);
-  const stackTrace = /(Error:|TypeError:|ReferenceError:|at [^\n]+\([^\n]+\))/i.test(allChatText);
+  // A real stack frame ("at fn (file.js:12:5)") or an uncaught JS error
+  // name; plain prose like "look at the node (function)" isn't one.
+  const stackMatch = allChatText.match(/\bat [\w$.<>\[\] ]{1,80} \([^()\n]*:\d+:\d+\)|\b(?:TypeError|ReferenceError|SyntaxError|RangeError): [^\n]{0,80}/);
+  const stackTrace = !!stackMatch;
   const visibleNodeId = nodeList.some(node => node.id && allChatText.indexOf(String(node.id)) !== -1);
   const internalText = /(data-fp-record|propose-act|agentTool|tool_call|internal error|stack trace)/i.test(allChatText);
   report("chat-safety", rawHtml || rawJson || stackTrace || visibleNodeId || internalText, {
     message: "chat contains internal or raw provider output",
-    rawHtml, rawJson, stackTrace, visibleNodeId, internalText
+    rawHtml, rawJson, stackTrace, stackSnippet: stackMatch ? stackMatch[0] : null, visibleNodeId, internalText
   });
 
   const liveButtons = all("#fp-messages button[data-fp-record-action]").filter(element => {

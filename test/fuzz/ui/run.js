@@ -149,7 +149,14 @@ async function runAction(driver, item, state, context, rng) {
 async function checkAfterAction(driver, context, beforeMessages, actionName) {
   const consoleErrors = await driver.captureConsole().catch(() => []);
   const currentMessages = await readMessages(driver).catch(() => []);
-  const popoutMessages = await capturePopoutMessages(driver, context.mainTab).catch(() => null);
+  // The pop-out mirrors through postMessage, so give it a moment to settle:
+  // compare up to 3 times, 1.5 s apart, before calling it a mismatch.
+  let popoutMessages = await capturePopoutMessages(driver, context.mainTab).catch(() => null);
+  const squash = list => JSON.stringify((list || []).map(item => String(item.text || "").replace(/\s+/g, "")));
+  for (let tries = 0; popoutMessages && tries < 2 && squash(popoutMessages) !== squash(currentMessages); tries++) {
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    popoutMessages = await capturePopoutMessages(driver, context.mainTab).catch(() => null);
+  }
   const currentNodeIds = await driver.evaluate("() => { const z = RED.nodes && RED.nodes.workspace ? RED.nodes.workspace.id : (RED.workspaces && RED.workspaces.active ? RED.workspaces.active() : undefined); return RED.nodes && RED.nodes.filterNodes ? RED.nodes.filterNodes({ z }).map(node => node.id) : []; }").catch(() => []);
   if (Array.isArray(currentNodeIds)) {
     context.touchedNodeIds = Array.from(new Set(context.touchedNodeIds.concat(currentNodeIds)));
