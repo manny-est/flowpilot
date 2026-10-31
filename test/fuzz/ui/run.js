@@ -4,7 +4,11 @@ const fs = require("fs");
 const path = require("path");
 const { ACTIONS, chooseActions } = require("./actions");
 const { buildInPageEvaluator, INVARIANT_NAMES } = require("./invariants");
-const { OpenClawDriver, safeError } = require("./driver");
+const { OpenClawDriver, CdpDriver, cdpPortForProfile, safeError } = require("./driver");
+function makeDriver(options) {
+  const port = cdpPortForProfile(options.profile);
+  return port ? new CdpDriver({ profile: options.profile, url: options.url, cdpPort: port }) : makeDriver(options);
+}
 const { scenarioMarkdown, shrinkActions } = require("./shrink");
 const fixtures = require("./fixtures");
 
@@ -100,18 +104,22 @@ async function guardFuzzTab(driver) {
   return driver.evaluate(GUARD_JS);
 }
 
+function trace(label, started) {
+  if (process.env.FZ_TRACE) { process.stderr.write("[fz] " + label + " " + (Date.now() - started) + "ms\n"); }
+}
+
 async function startSequence(driver, url, initialTabs, baseWorkspaces) {
-  await driver.open(url);
+  { const __t = Date.now(); await driver.open(url); trace('await driver.open(url);', __t); }
   // A real desktop window with Node-RED's default 300 px sidebar (the design
   // width, ADR-015 Amendment 3), not OpenClaw's 800x513 default viewport.
-  await driver.resize(1600, 1000);
-  await new Promise(resolve => setTimeout(resolve, 8000));
+  { const __t = Date.now(); await driver.resize(1600, 1000); trace('await driver.resize(1600, 1000);', __t); }
+  { const __t = Date.now(); await new Promise(resolve => setTimeout(resolve, 8000)); trace('await new Promise(resolve => setTimeout(', __t); }
   await driver.evaluate("() => { window.__fzBase = " + JSON.stringify(baseWorkspaces || []) + "; window.__fzTabs = [];" +
     " const c = document.getElementById('red-ui-sidebar'); if (c) { c.style.width = '300px'; RED.events.emit('sidebar:resize'); }" +
     " if (RED.sidebar && RED.sidebar.show) { RED.sidebar.show('flowpilot'); } return true; }");
-  await guardFuzzTab(driver);
-  await driver.click("#fp-clear-chat");
-  await new Promise(resolve => setTimeout(resolve, 300));
+  { const __t = Date.now(); await guardFuzzTab(driver); trace('await guardFuzzTab(driver);', __t); }
+  { const __t = Date.now(); await driver.click("#fp-clear-chat"); trace('await driver.click("#fp-clear-chat");', __t); }
+  { const __t = Date.now(); await new Promise(resolve => setTimeout(resolve, 300)); trace('await new Promise(resolve => setTimeout(', __t); }
   return driver.mainTab || (await driver.tabs()).slice(-1)[0] || initialTabs[initialTabs.length - 1];
 }
 
@@ -138,7 +146,13 @@ async function cleanupSequence(driver, mainTab, initialTabs, settings) {
     const id = key(tab);
     if (!originalIds.has(id)) await driver.deleteTab(tab);
   }
-  return driver.tabs().catch(() => []);
+  // Closing a tab is asynchronous; count again once it has gone.
+  let after = await driver.tabs().catch(() => []);
+  for (let i = 0; i < 5 && after.length > initialTabs.length; i++) {
+    await new Promise(resolve => setTimeout(resolve, 400));
+    after = await driver.tabs().catch(() => []);
+  }
+  return after;
 }
 
 async function runAction(driver, item, state, context, rng) {
@@ -205,10 +219,14 @@ async function runSequence(driver, options, sequenceNumber) {
   try {
     mainTab = await startSequence(driver, options.url, initialTabs, options.baseWorkspaces);
     context.mainTab = mainTab;
-    settings = await readSettings(driver).catch(() => ({}));
+    { const __t = Date.now(); settings = await readSettings(driver).catch(() => ({})); trace("readSettings", __t); }
     for (let actionIndex = 0; actionIndex < options.length; actionIndex += 1) {
+      const __t0 = Date.now();
       const beforeMessages = await readMessages(driver).catch(() => []);
+      trace("readMessages", __t0);
+      const __t1 = Date.now();
       const state = await driver.actionState().catch(() => ({}));
+      trace("actionState", __t1);
       const item = chooseActions({
         seed: String(seed) + ":" + actionIndex,
         length: 1,
@@ -220,10 +238,15 @@ async function runSequence(driver, options, sequenceNumber) {
       actionLog.push(entry);
       // An action the page refuses (a stale button, a gateway hiccup) is
       // logged and the sequence goes on; only invariants make findings.
+      const tAction = Date.now();
       try { await runAction(driver, item, state, context, chooseRngForAction(seed, actionsRun)); }
       catch (error) { entry.error = String(error && error.message || error).split("\n")[0].slice(0, 200); }
+      entry.actionMs = Date.now() - tAction;
       actionsRun += 1;
+      const tCheck = Date.now();
       const checked = await checkAfterAction(driver, context, beforeMessages, item.name);
+      entry.checkMs = Date.now() - tCheck;
+      if (process.env.FZ_TRACE) { process.stderr.write("[fz] " + seed + "#" + entry.index + " " + item.name + " action " + entry.actionMs + "ms check " + entry.checkMs + "ms" + (entry.error ? " ERR " + entry.error : "") + "\n"); }
       const violations = Array.isArray(checked.result.violations) ? checked.result.violations : [];
       if (violations.length) {
         for (const violation of violations) {
@@ -252,7 +275,7 @@ function chooseRngForAction(seed, index) {
 async function shrinkFinding(file, options) {
   const finding = JSON.parse(fs.readFileSync(file, "utf8"));
   const sourceActions = (finding.actionLog || []).map(item => item.name || item.action || item);
-  const driver = new OpenClawDriver({ profile: options.profile, url: options.url });
+  const driver = makeDriver(options);
   const actionMap = new Map(ACTIONS.map(item => [item.name, item]));
   const replay = async candidate => {
     const initialTabs = await driver.tabs();
@@ -282,7 +305,7 @@ async function main(argv) {
   if (options.help) { process.stdout.write(usage() + "\n"); return; }
   if (options.shrink) { await shrinkFinding(options.shrink, options); return; }
   fs.mkdirSync(options.out, { recursive: true });
-  const driver = new OpenClawDriver({ profile: options.profile, url: options.url });
+  const driver = makeDriver(options);
   await driver.start();
   // The instance's own flow tabs, read once from the profile's open editor
   // tab before anything runs. Without them the fuzzer can't tell its tabs
@@ -319,9 +342,11 @@ async function main(argv) {
 }
 
 if (require.main === module) {
-  main().catch(error => {
+  // Exit once done: the DevTools WebSockets would keep Node alive until an
+  // outer timeout killed it, which looked like a very slow run.
+  main().then(() => process.exit(process.exitCode || 0)).catch(error => {
     process.stderr.write(safeError(error) + "\n");
-    process.exitCode = 1;
+    process.exit(1);
   });
 }
 

@@ -3687,6 +3687,7 @@ function flowPilotRuntime(RED) {
     const view = {
       records: records,
       html: typeof body.html === "string" ? body.html : "",
+      interrupted: body.interrupted === true,
       referencedNodeIds: Array.isArray(body.referencedNodeIds) ? body.referencedNodeIds.filter(function (value) {
         return typeof value === "string" && value.length <= 256;
       }) : []

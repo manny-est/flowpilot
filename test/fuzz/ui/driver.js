@@ -245,7 +245,106 @@ class OpenClawDriver {
   }
 }
 
+// Same interface, but every page operation goes straight to the profile's
+// DevTools port (see cdp.js): ~4 s per OpenClaw CLI call made each action
+// cost ~45 s. OpenClaw still starts the profile and resizes the window.
+class CdpDriver extends OpenClawDriver {
+  constructor(options) {
+    super(options);
+    const { CdpClient } = require("./cdp");
+    this.cdp = new CdpClient(options.cdpPort);
+    this.current = null;
+    this.lastConsoleCheck = 0;
+  }
+  async tabs() { return this.cdp.pages(); }
+  async open(url) {
+    const tab = await this.cdp.open(url || this.url);
+    this.mainTab = tab || this.mainTab;
+    if (tab) { this.current = tab.targetId; await this.cdp.session(tab.targetId).catch(() => null); }
+    return this.mainTab;
+  }
+  async focus(tab) {
+    const id = tabId(tab);
+    if (!id) { return null; }
+    this.current = id;
+    await this.cdp.activate(id);
+    if (this.popoutTab && id === tabId(this.popoutTab)) { this.popoutTab = tab; }
+    return tab;
+  }
+  async ensureCurrent() {
+    if (this.current) { return this.current; }
+    const pages = await this.cdp.pages();
+    const editor = pages.find(p => /:\/\/[^/]+\/(#.*)?$/.test(p.url)) || pages[0];
+    this.current = editor ? editor.targetId : null;
+    return this.current;
+  }
+  async evaluate(fn) {
+    const source = typeof fn === "function" ? fn.toString() : String(fn);
+    return this.cdp.evaluate(await this.ensureCurrent(), source, this.timeout);
+  }
+  async dialogAccept() { return true; }
+  // Every page action through DevTools; a CLI call is ~4 s, and with the
+  // 60 s timeout x 3 attempts a failing one cost up to 3 minutes.
+  async resize(width, height) {
+    return this.cdp.setViewport(await this.ensureCurrent(), Number(width), Number(height || 640)).catch(() => null);
+  }
+  async press(key) {
+    const codes = { Enter: 13, Escape: 27, Tab: 9, ArrowDown: 40, ArrowUp: 38 };
+    const k = JSON.stringify(String(key));
+    return this.evaluate("() => { const el = document.activeElement && document.activeElement !== document.body ? document.activeElement : document.getElementById('fp-prompt'); if (!el) return false; const o = { key: " + k + ", keyCode: " + (codes[key] || 0) + ", which: " + (codes[key] || 0) + ", bubbles: true, cancelable: true }; el.dispatchEvent(new KeyboardEvent('keydown', o)); el.dispatchEvent(new KeyboardEvent('keyup', o)); return true; }");
+  }
+  async closePopout() {
+    if (!this.popoutTab) { return false; }
+    const id = tabId(this.popoutTab);
+    this.popoutTab = null;
+    if (this.current === id) { this.current = null; }
+    return this.cdp.close(id);
+  }
+  async reload() {
+    try { await this.evaluate("() => { setTimeout(() => location.reload(), 0); return true; }"); } catch (error) { /* reloading */ }
+    await wait(5000);
+    for (let i = 0; i < 20; i++) {
+      const ready = await this.evaluate("() => !!(window.RED && RED.nodes && RED.nodes.getWorkspaceOrder && RED.nodes.getWorkspaceOrder().length && document.getElementById('fp-prompt'))").catch(() => false);
+      if (ready) { break; }
+      await wait(1000);
+    }
+    return true;
+  }
+  async deleteTab(tab) {
+    const id = tabId(tab);
+    if (!id) { return false; }
+    if (this.current === id) { this.current = null; }
+    return this.cdp.close(id);
+  }
+  async captureConsole() {
+    const since = this.lastConsoleCheck || 0;
+    this.lastConsoleCheck = Date.now();
+    const id = await this.ensureCurrent();
+    return this.cdp.errorsSince(id, since).filter(item => /flowpilot/i.test(String(item.url || "") + " " + String(item.text || "")))
+      .map(item => String(item.text || "").slice(0, 300));
+  }
+  async screenshot(outputPath) {
+    const target = path.resolve(outputPath);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    try {
+      const png = await this.cdp.screenshot(await this.ensureCurrent());
+      if (png) { fs.writeFileSync(target, png); return target; }
+    } catch (error) {}
+    return null;
+  }
+}
+
+function cdpPortForProfile(profile) {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(path.join(require("os").homedir(), ".openclaw", "openclaw.json"), "utf8"));
+    const p = cfg && cfg.browser && cfg.browser.profiles && cfg.browser.profiles[profile];
+    return p && p.cdpPort ? Number(p.cdpPort) : null;
+  } catch (error) { return null; }
+}
+
 module.exports = {
+  CdpDriver,
+  cdpPortForProfile,
   OpenClawDriver,
   normalizeTabs,
   parseOutput,
