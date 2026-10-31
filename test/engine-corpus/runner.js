@@ -149,10 +149,12 @@ function fixtureParts(testCase) {
   const flow = Array.isArray(testCase.flow) ? testCase.flow : [];
   const tab = flow.find(function (node) { return node && node.type === "tab"; }) || { id: "corpus-tab", label: "Corpus tab" };
   const nodes = flow.filter(function (node) { return node && node.type !== "tab" && node.type !== "group"; }).map(clone);
+  const groups = flow.filter(function (node) { return node && node.type === "group"; }).map(clone);
+  const candidateNodes = nodes.concat(groups);
   // Mirrors lib/core/intake.js nodeCandidates: the active tab's nodes, plus
   // nodes on other tabs whose real name the prompt types.
   const promptLower = String(testCase.prompt || "").toLowerCase();
-  const allCandidates = nodes.filter(function (node) {
+  const allCandidates = candidateNodes.filter(function (node) {
     if (node.z === tab.id) { return true; }
     const name = String(node.name || "").toLowerCase().trim();
     return !!name && name !== String(node.type || "").toLowerCase() && promptLower.indexOf(name) !== -1;
@@ -183,7 +185,7 @@ function fixtureParts(testCase) {
   }).filter(Boolean).map(clone);
   const context = { nodes: contextNodes, connections: buildConnections(contextNodes, nodes),
     activeTab: { id: tab.id, label: tab.label } };
-  return { flow: flow, tab: tab, nodes: nodes, candidates: candidates, intake: intake,
+  return { flow: flow, tab: tab, nodes: nodes, groups: groups, candidates: candidates, intake: intake,
     context: context, targetLock: GATES.intake.lockTargetIds(context) };
 }
 
