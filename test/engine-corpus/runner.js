@@ -291,6 +291,16 @@ function applyWriteToFixture(call, parts) {
     const from = find(wire && wire.from), port = wire && (wire.fromPort || 0);
     return !!(from && Array.isArray(from.wires) && Array.isArray(from.wires[port]) && from.wires[port].indexOf(wire.to) !== -1);
   }
+  // Mirrors executeApplyStepTool: new nodes with ids that already exist are a
+  // repeated write and would duplicate the flow.
+  if (name === "apply_step") {
+    const repeated = (args.newNodes || []).filter(function (node) { return node && node.id && find(node.id); })
+      .map(function (node) { return node.id; });
+    if (repeated.length) {
+      return { requested: clone(args), checks: [], allPass: false, retryable: true,
+        error: "These nodes already exist from an earlier step in this run: " + repeated.join(", ") + "." };
+    }
+  }
   if (name === "apply_step" && !(args.newNodes || []).length) {
     const noOp = (args.changes || []).every(function (change) {
       const live = change && find(change.id);

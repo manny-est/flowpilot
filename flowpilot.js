@@ -395,8 +395,17 @@ function laneFields(lane) {
   return lane ? { lane: lane.lane, reason: lane.reason } : {};
 }
 
+// "Explain this but make no writes", "describe the group, but don't modify
+// it": an explicit no-write constraint is binding. Such a turn is an answer
+// with read-only tools, never routed to a change (prompt fuzzer: Spark wrote
+// on constraint-06).
+function hasNoWriteConstraint(prompt) {
+  const text = String(prompt || "").toLowerCase();
+  return /\b(?:make no (?:writes|changes)|no writes|without (?:changing|modifying|touching) (?:anything|it|them|the flow)|(?:don'?t|do not) (?:change|modify|edit|touch|write|alter) (?:anything|it|them|the flow|the group|this)|read[- ]only|just (?:explain|describe|tell me))\b/.test(text);
+}
+
 function runDeterministicPreRouter(prompt, context) {
-  if (isSmallTalk(prompt)) {
+  if (isSmallTalk(prompt) || hasNoWriteConstraint(prompt)) {
     return null;
   }
   const hasSelection = !!(context && Array.isArray(context.nodes) && context.nodes.length > 0);
@@ -2606,6 +2615,13 @@ function flowPilotRuntime(RED) {
         // turn "hi" into the intent picker.
         answerPhase = true;
         chatOptions = agentTurnOptions(settings, undefined);
+        result = await chatWithAgentCap(provider, activeProvider, messages, chatOptions);
+      } else if (!result && hasNoWriteConstraint(prompt)) {
+        // Binding no-write constraint: answer with read-only tools; no
+        // propose_action, so nothing can route to a change.
+        answerPhase = true;
+        const readOnlyTools = agentToolsFor(settings, activeProvider, "chat", undefined, true);
+        chatOptions = agentTurnOptions(settings, { tools: readOnlyTools, toolChoice: "auto" });
         result = await chatWithAgentCap(provider, activeProvider, messages, chatOptions);
       } else if (!result) {
         const routingTier = normalizedRoutingTier(activeProvider);
@@ -5259,6 +5275,7 @@ function flowPilotRuntime(RED) {
 
 flowPilotRuntime.runDeterministicPreRouter = runDeterministicPreRouter;
 flowPilotRuntime.isSmallTalk = isSmallTalk;
+flowPilotRuntime.hasNoWriteConstraint = hasNoWriteConstraint;
 flowPilotRuntime.normalizedRoutingTier = normalizedRoutingTier;
 flowPilotRuntime.isLocalDeployment = isLocalDeployment;
 flowPilotRuntime.isPrivateNetworkHost = isPrivateNetworkHost;
