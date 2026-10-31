@@ -347,3 +347,14 @@ test("an add-on node the user didn't ask for is refused; a named one is allowed"
   assert.deepEqual(limits.uninvitedContribNodes([{ type: "telegram sender" }], "send it to telegram", moduleOf), []);
   assert.deepEqual(limits.uninvitedContribNodes([{ type: "mystery" }], s10, moduleOf), [], "unknown module is allowed");
 });
+
+test("a final reply right after a failed validation is sent back to fix it (bounded)", () => {
+  const modes = fs.readFileSync(path.join(root, "lib", "core", "modes.js"), "utf8");
+  const fn = modes.slice(modes.indexOf("function nudgeValidationFix"), modes.indexOf("function nudgeBuildVerification"));
+  assert.match(fn, /last\.validationError !== true/);
+  assert.match(fn, /validationFixNudges >= VALIDATION_FIX_NUDGES_MAX \|\| step >= stepBudget/);
+  assert.match(modes, /VALIDATION_FIX_NUDGES_MAX = 2;/);
+  const finalBranch = modes.slice(modes.indexOf("if (!data.toolCalls || !data.toolCalls.length) {"));
+  assert.ok(finalBranch.indexOf("nudgeValidationFix(finalMessages)") < finalBranch.indexOf("completeRun(data)"),
+    "the fix nudge runs before the run completes");
+});
