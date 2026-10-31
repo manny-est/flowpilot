@@ -186,3 +186,31 @@ test("group and junction are not reported as missing node types", () => {
   ], { isInstalled: () => false });
   assert.equal(result.failures.some((failure) => /not installed/i.test(failure.message)), false);
 });
+
+test("review: apply_step strips noerr and editor state but keeps model-settable fields like info and targetType", () => {
+  const fs = require("fs");
+  const src = fs.readFileSync(require("path").join(__dirname, "../lib/core/main.js"), "utf8");
+  const m = src.match(/var AGENT_PATCH_STRIP = \{([\s\S]*?)\};/);
+  assert.ok(m, "AGENT_PATCH_STRIP defined");
+  const keys = m[1].match(/[A-Za-z_]+(?=:)/g);
+  assert.ok(keys.includes("noerr"));
+  ["info", "icon", "console", "targetType", "statusType", "x", "y", "initialize", "finalize"].forEach(k =>
+    assert.ok(!keys.includes(k), k + " must stay model-settable"));
+  assert.match(src, /if \(!AGENT_PATCH_STRIP\[key\]\)/);
+});
+
+test("review: read-back ignores groups and overlaps the write didn't touch; credential-only invalidity isn't a read-back failure", () => {
+  const nodes = [
+    { id: "g1", type: "group", z: "tab-1", x: 0, y: 0, w: 600, h: 300 },
+    { id: "u1", type: "inject", z: "tab-1", x: 100, y: 100, w: 100, h: 30, wires: [[]] },
+    { id: "u2", type: "debug", z: "tab-1", x: 110, y: 100, w: 100, h: 30, wires: [] },
+    { id: "n1", type: "function", z: "tab-1", x: 400, y: 100, w: 100, h: 30, wires: [[]] },
+    { id: "m1", type: "mqtt out", z: "tab-1", x: 400, y: 200, w: 100, h: 30, wires: [] }
+  ];
+  const env = makeRed(nodes);
+  const api = loadCore(env.red);
+  env.red.editor = { validateNode: (n) => { if (n.id === "m1") { n.valid = false; n.validationErrors = ["broker"]; } } };
+  assert.equal(api.verifyWriteAgainstEditor({ nodeIds: ["n1"] }).ok, true, "group membership and the user's own overlap are not this write's fault");
+  assert.equal(api.verifyWriteAgainstEditor({ nodeIds: ["u1"] }).ok, false, "an overlap involving a touched node is reported");
+  assert.equal(api.verifyWriteAgainstEditor({ nodeIds: ["m1"] }).ok, true, "a missing broker config is for the user (SF-3 needs-you)");
+});
