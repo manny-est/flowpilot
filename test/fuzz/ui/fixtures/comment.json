@@ -1,0 +1,4 @@
+[
+  {"id":"fixture-comment-tab","type":"tab","label":"Fuzz notes","disabled":false,"info":""},
+  {"id":"fixture-comment","type":"comment","z":"fixture-comment-tab","name":"Flow note","info":"A small fixture used by the UI fuzzer.","x":300,"y":100,"wires":[]}
+]

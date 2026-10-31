@@ -1,0 +1,6 @@
+[
+  {"id":"fixture-transform-tab","type":"tab","label":"Fuzz transform","disabled":false,"info":""},
+  {"id":"fixture-transform-inject","type":"inject","z":"fixture-transform-tab","name":"Input","props":[{"p":"payload"}],"payload":"ready","payloadType":"str","x":140,"y":180,"wires":[["fixture-transform-function"]]},
+  {"id":"fixture-transform-function","type":"function","z":"fixture-transform-tab","name":"Uppercase","func":"msg.payload = String(msg.payload).toUpperCase();\nreturn msg;","outputs":1,"x":360,"y":180,"wires":[["fixture-transform-debug"]]},
+  {"id":"fixture-transform-debug","type":"debug","z":"fixture-transform-tab","name":"Result","active":true,"tosidebar":true,"console":false,"tostatus":false,"complete":"payload","targetType":"msg","x":590,"y":180,"wires":[]}
+]

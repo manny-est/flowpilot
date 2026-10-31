@@ -1,0 +1,5 @@
+[
+  {"id":"fixture-basic-tab","type":"tab","label":"Fuzz basic","disabled":false,"info":""},
+  {"id":"fixture-basic-inject","type":"inject","z":"fixture-basic-tab","name":"Tick","props":[{"p":"payload"}],"payload":"hello","payloadType":"str","x":160,"y":120,"wires":[["fixture-basic-debug"]]},
+  {"id":"fixture-basic-debug","type":"debug","z":"fixture-basic-tab","name":"Output","active":true,"tosidebar":true,"console":false,"tostatus":false,"complete":"payload","targetType":"msg","x":380,"y":120,"wires":[]}
+]

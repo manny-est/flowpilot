@@ -1,0 +1,6 @@
+[
+  {"id":"fixture-context-tab","type":"tab","label":"Fuzz context","disabled":false,"info":""},
+  {"id":"fixture-context-inject","type":"inject","z":"fixture-context-tab","name":"Start","props":[{"p":"payload"}],"payload":"42","payloadType":"num","x":150,"y":240,"wires":[["fixture-context-change"]]},
+  {"id":"fixture-context-change","type":"change","z":"fixture-context-tab","name":"Store value","rules":[{"t":"set","p":"payload","pt":"msg","to":"ready","tot":"str"}],"x":370,"y":240,"wires":[["fixture-context-debug"]]},
+  {"id":"fixture-context-debug","type":"debug","z":"fixture-context-tab","name":"Observed","active":true,"tosidebar":true,"console":false,"tostatus":false,"complete":"true","targetType":"full","x":590,"y":240,"wires":[]}
+]
