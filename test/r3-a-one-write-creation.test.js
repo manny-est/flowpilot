@@ -358,3 +358,20 @@ test("a final reply right after a failed validation is sent back to fix it (boun
   assert.ok(finalBranch.indexOf("nudgeValidationFix(finalMessages)") < finalBranch.indexOf("completeRun(data)"),
     "the fix nudge runs before the run completes");
 });
+
+test("a group in newNodes doesn't fail the step as an uninstalled node type (live S10)", () => {
+  const env = makeRed();
+  const api = loadCore(env.red);
+  const state = { active: true, plannedNodeCount: null, planStepCount: 3, firstWriteComplete: false };
+  const result = applyStep(api, {
+    summary: "Build and group",
+    newNodes: [
+      { id: "n1", type: "inject", name: "Go", wires: [["n2"]] },
+      { id: "n2", type: "debug", name: "Show", wires: [] },
+      { id: "g1", type: "group", name: "Demo", nodes: ["n1", "n2"] }
+    ]
+  }, state).result;
+  assert.equal(Object.keys(env.nodes).length, 2, "the two real nodes are added");
+  assert.ok(!/not installed/.test(JSON.stringify(result)), "no 'Node type not installed: group'");
+  assert.equal(Array.isArray(result.groups) && result.groups[0].name, "Demo");
+});

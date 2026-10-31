@@ -108,6 +108,12 @@ function loadCore(red) {
     {}, [], "card-test-4", "start");
   assert.deepStrictEqual(Array.from(partly.goal.goalNames), ["Format"]);
   assert.deepStrictEqual(Array.from(partly.goal.unreachedNames), ["Store"]);
+
+  // A comment never carries messages, so it's never "not reached" (round 3).
+  env.add("note", "comment", "About this flow", 1);
+  const withComment = api.ensureTaps({ trigger_node_id: "start", scope_ids: ["start", "fn", "store", "note"] },
+    {}, [], "card-test-5", "start");
+  assert.deepStrictEqual(Array.from(withComment.goal.unreachedNames), ["Store"]);
 }
 
 console.log("P1-38 Test it path tests passed");
