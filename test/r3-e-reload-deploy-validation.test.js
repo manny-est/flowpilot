@@ -69,3 +69,13 @@ test("all valid nodes leave the deploy action available", function () {
   assert.deepStrictEqual(valid, []);
   assert.match(mainSource, /RED\.actions\.invoke\("core:deploy-flows"\)/);
 });
+
+test("restored chat controls are disabled and view saves are debounced", () => {
+  const mainSource = fs.readFileSync(path.join(__dirname, "..", "lib", "core", "main.js"), "utf8");
+  const historySource = fs.readFileSync(path.join(__dirname, "..", "lib", "core", "history.js"), "utf8");
+  const restore = mainSource.slice(mainSource.indexOf('el("#fp-messages").html(viewEntry.view.html)'));
+  assert.match(restore.slice(0, 400), /find\("button, input, select, textarea"\)\s*\.prop\("disabled", true\)/);
+  const delay = Number((historySource.match(/CONVERSATION_VIEW_SAVE_DELAY_MS = (\d+)/) || [])[1]);
+  assert.ok(delay >= 500, "view saves are debounced, not posted every tick");
+  assert.match(historySource, /clearTimeout\(conversationViewSaveTimer\)/);
+});
