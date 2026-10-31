@@ -98,6 +98,19 @@ function safeJsonParse(value) { if (typeof value !== "string") { return null; } 
 function toolName(call) { return call && call.function && call.function.name; }
 function toolArgs(call) { return safeJsonParse(call && call.function && call.function.arguments) || {}; }
 
+function creationIntentForCase(testCase, parts) {
+  const contextNodes = parts && parts.context && Array.isArray(parts.context.nodes)
+    ? parts.context.nodes : [];
+  const intake = parts && parts.intake ? parts.intake : {};
+  return GATES.intake.classifyEditIntent({
+    action: testCase.entry,
+    message: testCase.prompt,
+    selectionIds: contextNodes.map(function (node) { return node && node.id; }).filter(Boolean),
+    touchedIndex: intake.touchedNodeIndex,
+    inheritedRun: intake.inheritedRun || testCase.inheritedRun
+  }).creation === true;
+}
+
 function buildConnections(nodes, allNodes) {
   const list = Array.isArray(nodes) ? nodes : [];
   const byId = {};
@@ -469,8 +482,8 @@ async function runAgentCase(testCase, token) {
   const started = Date.now(), parts = fixtureParts(testCase);
   const plannedNodeCount = Number(testCase.plannedNodeCount) > 0 ? Number(testCase.plannedNodeCount) : null;
   const planStepCount = Array.isArray(testCase.planItems) && testCase.planItems.length ? testCase.planItems.length : null;
-  const caseMaxSteps = testCase.creationRun === true ||
-    ((testCase.entry === "build" || testCase.entry === "generate") && parts.nodes.length === 0)
+  const creationRun = creationIntentForCase(testCase, parts);
+  const caseMaxSteps = creationRun
     ? CREATION.deriveAgentLoopStepBudget(plannedNodeCount || planStepCount) : MAX_STEPS;
   const initial = { prompt: testCase.prompt, stream: false, history: [], strategy: "agent", tools: true,
     entry: testCase.entry, intake: parts.intake, targetLock: parts.targetLock, context: parts.context };
@@ -481,8 +494,7 @@ async function runAgentCase(testCase, token) {
   let ledger = [], kind = null, terminalStatus = response.status, terminalBody = body;
   const writes = [], state = GATES.diffGate.createDiffGateState(parts.targetLock.ids, {});
   const creationState = {
-    active: testCase.creationRun === true ||
-      ((testCase.entry === "build" || testCase.entry === "generate") && parts.nodes.length === 0),
+    active: creationRun,
     plannedNodeCount: plannedNodeCount,
     planStepCount: planStepCount,
     firstWriteComplete: false
