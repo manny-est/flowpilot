@@ -859,9 +859,12 @@ function flowPilotRuntime(RED) {
       function: {
         name: "apply_step",
         description: "Apply ONE plan item as a small bundle of sparse " +
-          "property patches, at most one new node, and its immediate wires. " +
-          "Use one call for the whole item, not one call per field. Existing " +
-          "wire removal/replacement is expressed as a sparse " +
+          "property patches and wires. Use one call for the whole item, not " +
+          "one call per field. On a creation run (an empty tab or a PLAN-lane " +
+          "new flow), this first apply_step MUST contain the whole flow in one apply_step: every " +
+          "planned new node and every wire; do not split creation across calls. " +
+          "Later calls only fix validation findings or run the runtime proof. " +
+          "Existing wire removal/replacement is expressed as a sparse " +
           "changes[].set.wires final value. Create connected nodes together in one apply_step, with their wires, where you can. A wire to a node you'll create in a later step is connected when that node is created.",
         parameters: {
           type: "object",
@@ -3079,6 +3082,9 @@ function flowPilotRuntime(RED) {
       conversationId: body.conversationId || null,
       runId: body.runId || null,
       continuation: Array.isArray(body.continuation) ? body.continuation : [],
+      creationRun: body.creationRun === true,
+      plannedNodeCount: Number.isFinite(Number(body.plannedNodeCount)) && Number(body.plannedNodeCount) > 0
+        ? Math.floor(Number(body.plannedNodeCount)) : null,
       // CLAUDE-014: plain-language note for the client-side decision (consent
       // gate / ask_user / loop-checkpoint) that triggered this request, only
       // sent when settings.debugLogging is on — threaded into
@@ -3732,7 +3738,7 @@ function flowPilotRuntime(RED) {
       "Continue only with work that remains, using these live ids and wires:\n" + lines.join("\n");
   }
 
-  function buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction, fromAct, continuation) {
+  function buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction, fromAct, continuation, execution) {
     const settings = storage.getSettings();
     const activeProvider = storage.getActiveProvider(settings);
     const described = describeSelectionContext(context, settings);
@@ -3744,7 +3750,16 @@ function flowPilotRuntime(RED) {
       ? "The user approved this plan: \"" + userPrompt + "\". You are now executing in " +
         auditAction + " mode. Do not re-plan; execute the approved items."
       : null;
-    const messages = buildMessages(systemPrompt + continuationInstruction(continuation), history, historyTruncated, described, userPrompt, modeNotice);
+    const nodeCount = context && Array.isArray(context.nodes) ? context.nodes.length : 0;
+    const creationRun = (execution && execution.creationRun === true) ||
+      ((auditAction === "generate" || auditAction === "build") && nodeCount === 0 &&
+        !(Array.isArray(continuation) && continuation.length));
+    const plannedCount = execution && Number(execution.plannedNodeCount);
+    const creationInstruction = creationRun
+      ? "\n\nCREATION RUN: this is a new flow. The first WRITE must be exactly one apply_step containing the whole planned flow — every new node and every wire. A partial first write is rejected with a tool error. After that first write, only fix validation findings or run the runtime proof." +
+        (isFinite(plannedCount) && plannedCount > 0 ? " The approved plan has " + Math.floor(plannedCount) + " planned node(s)." : "")
+      : "";
+    const messages = buildMessages(systemPrompt + creationInstruction + continuationInstruction(continuation), history, historyTruncated, described, userPrompt, modeNotice);
     warnNumCtxOverflow(messages, activeProvider, auditAction);
     return { activeProvider, described, messages };
   }
@@ -4160,7 +4175,7 @@ function flowPilotRuntime(RED) {
   // runChat's early return — so the route can hand it to the frontend
   // without running processGenerationContent yet.
   async function runFlowGeneration(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, useTools, execution, fromAct) {
-    const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction, fromAct, execution && execution.continuation);
+    const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction, fromAct, execution && execution.continuation, execution);
     if (!isProviderConfirmed(activeProvider)) { throw providerUnconfirmedError(); }
     const settings = storage.getSettings();
     const toolsEnabled = activeProvider.supportsTools === true && execution &&
@@ -4275,7 +4290,7 @@ function flowPilotRuntime(RED) {
   // this resolves.
   // ---------------------------------------------------------------------
   async function runFlowGenerationStream(systemPrompt, auditAction, userPrompt, context, history, historyTruncated, onDelta, auditContext, fromAct) {
-    const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction, fromAct, auditContext && auditContext.continuation);
+    const { activeProvider, described, messages } = buildGenerationContext(systemPrompt, userPrompt, context, history, historyTruncated, auditAction, fromAct, auditContext && auditContext.continuation, auditContext);
     if (!isProviderConfirmed(activeProvider)) { throw providerUnconfirmedError(); }
     const responseFormat = directCompletionResponseFormat(activeProvider, auditAction, false);
     const streamOptions = responseFormat ? { responseFormat: responseFormat } : undefined;

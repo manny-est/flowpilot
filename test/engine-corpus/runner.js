@@ -91,6 +91,7 @@ function loadGateModules() {
 }
 
 const GATES = loadGateModules();
+const CREATION = require(path.join(__dirname, "..", "..", "lib", "core", "limits.js"));
 
 function clone(value) { return value === undefined ? value : JSON.parse(JSON.stringify(value)); }
 function safeJsonParse(value) { if (typeof value !== "string") { return null; } try { return JSON.parse(value); } catch (err) { return null; } }
@@ -466,6 +467,11 @@ async function runClassicCase(testCase, token) {
 
 async function runAgentCase(testCase, token) {
   const started = Date.now(), parts = fixtureParts(testCase);
+  const plannedNodeCount = Number(testCase.plannedNodeCount) > 0 ? Number(testCase.plannedNodeCount) : null;
+  const planStepCount = Array.isArray(testCase.planItems) && testCase.planItems.length ? testCase.planItems.length : null;
+  const caseMaxSteps = testCase.creationRun === true ||
+    ((testCase.entry === "build" || testCase.entry === "generate") && parts.nodes.length === 0)
+    ? CREATION.deriveAgentLoopStepBudget(plannedNodeCount || planStepCount) : MAX_STEPS;
   const initial = { prompt: testCase.prompt, stream: false, history: [], strategy: "agent", tools: true,
     entry: testCase.entry, intake: parts.intake, targetLock: parts.targetLock, context: parts.context };
   let response;
@@ -474,6 +480,13 @@ async function runAgentCase(testCase, token) {
   let body = response.body || {}, messages = Array.isArray(body.messages) ? body.messages.slice() : [], steps = 0;
   let ledger = [], kind = null, terminalStatus = response.status, terminalBody = body;
   const writes = [], state = GATES.diffGate.createDiffGateState(parts.targetLock.ids, {});
+  const creationState = {
+    active: testCase.creationRun === true ||
+      ((testCase.entry === "build" || testCase.entry === "generate") && parts.nodes.length === 0),
+    plannedNodeCount: plannedNodeCount,
+    planStepCount: planStepCount,
+    firstWriteComplete: false
+  };
   let noOpWriteStreak = 0;
   while (true) {
     terminalStatus = response.status; terminalBody = response.body || {};
@@ -487,14 +500,23 @@ async function runAgentCase(testCase, token) {
       if (name === "propose_action") { kind = proposalKind(call, writes.length > 0, body.lane); stopped = true; break; }
       if (name === "ask_user") { kind = writes.length > 0 ? "write_allowed" : "ask_target"; stopped = true; break; }
       if (!WRITE_TOOLS.has(name)) { messages = appendTool(messages, call, readTool(call, parts, parts.context)); continue; }
+      const creationError = name === "apply_step"
+        ? CREATION.creationFirstWriteError(toolArgs(call), creationState) : null;
       const gate = evaluateWriteTool(call, parts.targetLock.ids, parts, state, ledger);
       const record = { tool: name, args: clone(toolArgs(call)), consent: gate.consent, consentItems: gate.consentItems,
         diff: { pause: gate.diff.pause, reason: gate.diff.reason, touchedNodes: gate.diff.touchedNodes,
           outOfTargetNodes: gate.diff.outOfTargetNodes.map(clone) } };
       writes.push(record);
+      if (creationError) {
+        record.result = { requested: clone(toolArgs(call)), checks: [], allPass: false,
+          error: creationError, creationFirstWrite: true };
+        messages = appendTool(messages, call, record.result);
+        continue;
+      }
       if (gate.consent === "ask") { kind = "consent_ask"; stopped = true; break; }
       if (gate.diff.pause) { kind = "diff_gate_pause"; stopped = true; break; }
       record.result = applyWriteToFixture(call, parts); ledger = gate.ledger; messages = appendTool(messages, call, record.result);
+      if (name === "apply_step" && creationState.active) { creationState.firstWriteComplete = true; }
       if (record.result.noChange) { noOpWriteStreak++; } else { noOpWriteStreak = 0; }
       if (noOpWriteStreak >= 2) { kind = "write_allowed"; stopped = true; break; }
     }
@@ -502,7 +524,7 @@ async function runAgentCase(testCase, token) {
     // Reaching the step limit is a failure even after clean writes: a run
     // that keeps writing costs time and tokens (architect's call, step b;
     // the product guard is polish item #32).
-    if (steps >= MAX_STEPS) { kind = "loop_exhausted"; break; }
+    if (steps >= caseMaxSteps) { kind = "loop_exhausted"; break; }
     steps++;
     const stepBody = { messages: messages, mode: testCase.entry, prompt: testCase.prompt, context: parts.context,
       intake: parts.intake, targetLock: parts.targetLock, strategy: "agent", entry: testCase.entry,
@@ -583,6 +605,6 @@ async function main() {
 
 if (require.main === module) { main().catch(function (err) { console.error("\nFatal:", err.stack || err.message); process.exitCode = 1; }); }
 
-module.exports = { applyWriteToFixture: applyWriteToFixture, readTool: readTool, proposalKind: proposalKind, cases: cases, corpusSha256: CORPUS_SHA256, expectMatches: expectMatches, fixtureParts: fixtureParts,
+module.exports = { applyWriteToFixture: applyWriteToFixture, creationFirstWriteError: CREATION.creationFirstWriteError, readTool: readTool, proposalKind: proposalKind, cases: cases, corpusSha256: CORPUS_SHA256, expectMatches: expectMatches, fixtureParts: fixtureParts,
   loadGateModules: loadGateModules, evaluateWriteTool: evaluateWriteTool, classifyCannedToolCall: classifyCannedToolCall,
   classify: classify, runAgentCase: runAgentCase };
