@@ -88,3 +88,9 @@ test("one shared answered-control guard is used by every chip/card renderer", ()
 });
 
 console.log("R4-C regression tests loaded");
+
+test("review (live): pop-out dedupe keeps the newest copy of a re-rendered card", () => {
+  const body = init.slice(init.indexOf("function dedupeMirroredRecord"), init.indexOf("function dedupeMirroredRecord") + 1400);
+  assert.match(body, /if \(newest\[key\]\) \{ \$\(newest\[key\]\)\.remove\(\); \}\s*newest\[key\] = this;/);
+  assert.doesNotMatch(body, /if \(seen\[key\]\) \{ \$node\.remove\(\); \}/);
+});
