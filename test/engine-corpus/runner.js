@@ -467,12 +467,11 @@ async function runClassicCase(testCase, token) {
 
 async function runAgentCase(testCase, token) {
   const started = Date.now(), parts = fixtureParts(testCase);
-  const plannedNodeCount = Number(testCase.plannedNodeCount) > 0
-    ? Number(testCase.plannedNodeCount)
-    : (Array.isArray(testCase.planItems) && testCase.planItems.length ? testCase.planItems.length : null);
+  const plannedNodeCount = Number(testCase.plannedNodeCount) > 0 ? Number(testCase.plannedNodeCount) : null;
+  const planStepCount = Array.isArray(testCase.planItems) && testCase.planItems.length ? testCase.planItems.length : null;
   const caseMaxSteps = testCase.creationRun === true ||
     ((testCase.entry === "build" || testCase.entry === "generate") && parts.nodes.length === 0)
-    ? CREATION.deriveAgentLoopStepBudget(plannedNodeCount) : MAX_STEPS;
+    ? CREATION.deriveAgentLoopStepBudget(plannedNodeCount || planStepCount) : MAX_STEPS;
   const initial = { prompt: testCase.prompt, stream: false, history: [], strategy: "agent", tools: true,
     entry: testCase.entry, intake: parts.intake, targetLock: parts.targetLock, context: parts.context };
   let response;
@@ -485,6 +484,7 @@ async function runAgentCase(testCase, token) {
     active: testCase.creationRun === true ||
       ((testCase.entry === "build" || testCase.entry === "generate") && parts.nodes.length === 0),
     plannedNodeCount: plannedNodeCount,
+    planStepCount: planStepCount,
     firstWriteComplete: false
   };
   let noOpWriteStreak = 0;

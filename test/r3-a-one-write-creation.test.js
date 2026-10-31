@@ -259,3 +259,44 @@ test("creation instructions explain the one-write contract", () => {
   assert.match(flowpilotSource, /whole flow in one apply_step/i);
   assert.match(buildPrompt, /whole flow in one apply_step/i);
 });
+
+test("plan steps are not nodes: a 5-step plan accepts a complete 4-node write", () => {
+  const state = { active: true, plannedNodeCount: null, planStepCount: 5, firstWriteComplete: false };
+  assert.equal(limits.creationFirstWriteError({
+    newNodes: [
+      { id: "n1", type: "inject", wires: [["n2"]] },
+      { id: "n2", type: "http request", wires: [["n3"]] },
+      { id: "n3", type: "function", wires: [["n4"]] },
+      { id: "n4", type: "debug", wires: [[]] }
+    ]
+  }, state), null);
+  assert.equal(limits.deriveAgentLoopStepBudget(state.plannedNodeCount || state.planStepCount), 9);
+});
+
+test("a lone node or an unwired comment/config node is a valid first write", () => {
+  const lone = { active: true, plannedNodeCount: null, planStepCount: 1, firstWriteComplete: false };
+  assert.equal(limits.creationFirstWriteError({ newNodes: [{ id: "c1", type: "inject", wires: [[]] }] }, lone), null);
+  assert.equal(limits.creationFirstWriteError({ newNodes: [{ id: "c1", type: "comment", info: "Explains the flow" }] },
+    { active: true, firstWriteComplete: false }), null);
+  assert.equal(limits.creationFirstWriteError({
+    newNodes: [
+      { id: "n1", type: "inject", wires: [["n2"]] },
+      { id: "n2", type: "mqtt out", broker: "b1", wires: [] },
+      { id: "b1", type: "mqtt-broker" },
+      { id: "c1", type: "comment", name: "About" }
+    ]
+  }, { active: true, planStepCount: 3, firstWriteComplete: false }), null);
+});
+
+test("one node per call on a multi-step plan is still rejected", () => {
+  const state = { active: true, plannedNodeCount: null, planStepCount: 4, firstWriteComplete: false };
+  assert.match(limits.creationFirstWriteError({ newNodes: [{ id: "n1", type: "inject", wires: [["n2"]] }] }, state),
+    /send the whole flow in one apply_step/);
+  assert.match(limits.creationFirstWriteError({
+    newNodes: [
+      { id: "n1", type: "inject", wires: [["n2"]] },
+      { id: "n2", type: "function", wires: [[]] },
+      { id: "n3", type: "debug", wires: [[]] }
+    ]
+  }, state), /send the whole flow in one apply_step/);
+});
