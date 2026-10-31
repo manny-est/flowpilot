@@ -299,18 +299,15 @@ test("one node per call on a multi-step plan is still rejected", () => {
 });
 
 test("validation fails a text-returning http request feeding a function that reads JSON fields", () => {
-  const validateSource = fs.readFileSync(path.join(root, "lib", "core", "validate.js"), "utf8");
-  const start = validateSource.indexOf("    var HTTP_TEXT_PAYLOAD_MEMBERS");
-  const end = validateSource.indexOf("    function validationFlowNodes()");
-  const check = new Function(validateSource.slice(start, end) + "; return validationHttpReturnsText;")();
+  const check = require(path.join(root, "lib", "core", "lint-rules.js")).validationHttpReturnsText;
   const fn = (func) => ({ id: "f1", type: "function", name: "Extract", func });
   const http = (ret) => ({ id: "h1", type: "http request", name: "Fetch", ret, wires: [["f1"]] });
   const reads = fn("var t = msg.payload.current_condition[0].temp_C; return msg;");
-  assert.equal(check(http("txt"), { f1: reads }).status, "fail");
-  assert.match(check(http(undefined), { f1: reads }).message, /set ret to "obj"/);
-  assert.equal(check(http("obj"), { f1: reads }), null);
-  assert.equal(check(http("txt"), { f1: fn("var d = JSON.parse(msg.payload); return msg;") }), null);
-  assert.equal(check(http("txt"), { f1: fn("msg.payload = msg.payload.trim(); return msg;") }), null);
+  assert.equal(check(http("txt"), { byId: { f1: reads } })[0].status, "fail");
+  assert.match(check(http(undefined), { byId: { f1: reads } })[0].message, /set ret to "obj"/);
+  assert.deepEqual(check(http("obj"), { byId: { f1: reads } }), []);
+  assert.deepEqual(check(http("txt"), { byId: { f1: fn("var d = JSON.parse(msg.payload); return msg;") } }), []);
+  assert.deepEqual(check(http("txt"), { byId: { f1: fn("msg.payload = msg.payload.trim(); return msg;") } }), []);
 });
 
 test("layout ignores a feedback wire into an inject and loop back-edges (live S10)", () => {

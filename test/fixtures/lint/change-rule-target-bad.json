@@ -1,0 +1,1 @@
+{"rule":"change-rule-target","node":{"id":"change-3","type":"change","name":"Set value","rules":[{"t":"set","p":"","pt":"msg"}]},"expect":["fail"]}

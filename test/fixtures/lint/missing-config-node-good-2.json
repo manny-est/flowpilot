@@ -1,0 +1,1 @@
+{"rule":"missing-config-node","nodes":[{"id":"node-2","type":"http request","tls":"","_def":{"defaults":{"tls":{"type":"tls-config","required":false}}}}],"expect":[]}

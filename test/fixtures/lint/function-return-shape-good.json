@@ -1,0 +1,1 @@
+{"rule":"function-return-shape","node":{"id":"fn-1","type":"function","outputs":2,"func":"if (msg.ok) return [msg, null];"},"expect":[]}

@@ -1,0 +1,1 @@
+{"rule":"debug-complete","node":{"id":"debug-2","type":"debug","complete":"payload.temperature","targetType":"msg"},"expect":[]}

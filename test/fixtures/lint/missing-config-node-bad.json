@@ -1,0 +1,1 @@
+{"rule":"missing-config-node","nodes":[{"id":"node-3","type":"mqtt in","name":"Sensor","broker":"gone","_def":{"defaults":{"broker":{"type":"mqtt-broker","required":true}}}}],"expect":["fail"]}

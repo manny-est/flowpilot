@@ -1,0 +1,1 @@
+{"rule":"switch-outputs","node":{"id":"switch-1","type":"switch","outputs":2,"rules":[{"t":"eq"},{"t":"eq"}],"wires":[["a"],["b"]]},"expect":[]}

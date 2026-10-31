@@ -1,0 +1,1 @@
+{"rule":"http-returns-text","nodes":[{"id":"http-1","type":"http request","ret":"txt","wires":[["fn-1"]]},{"id":"fn-1","type":"function","func":"return msg.payload.trim();"}],"expect":[]}

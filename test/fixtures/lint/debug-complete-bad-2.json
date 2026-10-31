@@ -1,0 +1,1 @@
+{"rule":"debug-complete","node":{"id":"debug-4","type":"debug","complete":"msg.payload"},"expect":["warn"]}

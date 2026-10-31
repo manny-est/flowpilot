@@ -1,0 +1,1 @@
+{"rule":"change-rule-target","node":{"id":"change-4","type":"change","rules":[{"t":"move","p":"payload.a","pt":"context"}]},"expect":["fail"]}
