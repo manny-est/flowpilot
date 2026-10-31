@@ -20,3 +20,10 @@ test("goal-check prompt and filter exclude non-graph gaps", () => {
 test("a goal-check fix starts only with step headroom", () => {
   assert.match(modes, /goalCheckFixAttempts < 2 && stepBudget - step >= 3/);
 });
+
+test("the goal-check summary carries the whole function body, not three lines", () => {
+  const cards = require("../lib/core/cards.js");
+  const func = "if (typeof msg.payload === 'string') {\n  msg.payload = msg.payload.toUpperCase();\n}\nreturn msg;";
+  const out = cards.summarizeRunGraph({}, [], null, [{ changeDetails: [{ id: "f1", type: "function", name: "Upper", after: { id: "f1", type: "function", name: "Upper", func: func, wires: [[]] } }] }]);
+  assert.match(out, /return msg;/);
+});
