@@ -327,7 +327,7 @@ function isSmallTalk(prompt) {
   // Never when the message also asks for something.
   const words = text.split(/\s+/).filter(Boolean);
   if (words.length > 10) { return false; }
-  const ack = /^(?:hi|hello|hey|thanks|thank you|thx|ok|okay|great|nice|cool|perfect|awesome|got it|sounds good|looks good|all good|never ?mind|no worries|no changes|nothing(?: else)?|that'?s (?:all|it|fine|great)|good|fine|sure)\b/.test(text);
+  const ack = /^(?:hi|hello|hey|thanks|thank you|thx|ty|cheers|bye|goodbye|see you|later|ok|okay|great|nice|cool|perfect|awesome|got it|sounds good|looks good|all good|never ?mind|no worries|no changes|nothing(?: else)?|that'?s (?:all|it|fine|great)|good|fine|sure)\b/.test(text);
   const noChange = /\b(?:no changes?(?: for now| needed)?|don'?t change anything|do not change anything|leave it|that'?s all|nothing else|just say (?:hi|hello))\b/.test(text);
   if (!ack && !noChange) { return false; }
   const withoutNoChange = text.replace(/\b(?:don'?t|do not) change anything\b/g, " ").replace(/\bno changes?\b/g, " ");
