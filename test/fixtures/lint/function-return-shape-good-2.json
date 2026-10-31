@@ -1,0 +1,1 @@
+{"rule":"function-return-shape","node":{"id":"fn-2","type":"function","outputs":1,"func":"return msg;"},"expect":[]}

@@ -1,0 +1,1 @@
+{"rule":"http-returns-text","nodes":[{"id":"http-1","type":"http request","name":"Weather HTTP","ret":"txt","wires":[["fn-1"]]},{"id":"fn-1","type":"function","name":"Read weather","func":"return msg.payload.temperature;"}],"expect":["fail"]}

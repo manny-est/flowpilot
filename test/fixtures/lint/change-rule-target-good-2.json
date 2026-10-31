@@ -1,0 +1,1 @@
+{"rule":"change-rule-target","node":{"id":"change-2","type":"change","rules":[{"t":"delete","p":"payload.old","pt":"flow"},{"t":"move","p":"payload.a","pt":"global","to":"payload.b"}]},"expect":[]}

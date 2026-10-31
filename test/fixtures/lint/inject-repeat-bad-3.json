@@ -1,0 +1,1 @@
+{"rule":"inject-repeat","node":{"id":"inject-5","type":"inject","once":true,"onceDelay":"0"},"expect":["fail"]}

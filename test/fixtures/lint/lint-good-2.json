@@ -1,0 +1,1 @@
+{"rule":"lint","node":{"id":"fn-1","type":"function","outputs":1,"func":"return msg;"},"expect":[]}

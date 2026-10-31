@@ -1,0 +1,1 @@
+{"rule":"switch-outputs","node":{"id":"switch-3","type":"switch","name":"Route","outputs":1,"rules":[{"t":"eq"},{"t":"eq"}],"wires":[["a"]]},"expect":["fail"]}

@@ -1,0 +1,1 @@
+{"rule":"inject-repeat","node":{"id":"inject-1","type":"inject","repeat":"5","crontab":"","once":false,"onceDelay":"0"},"expect":[]}

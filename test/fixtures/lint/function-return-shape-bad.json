@@ -1,0 +1,1 @@
+{"rule":"function-return-shape","node":{"id":"fn-3","type":"function","name":"Fanout","outputs":3,"func":"return [msg, null];"},"expect":["warn"]}

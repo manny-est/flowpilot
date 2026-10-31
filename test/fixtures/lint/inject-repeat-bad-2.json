@@ -1,0 +1,1 @@
+{"rule":"inject-repeat","node":{"id":"inject-4","type":"inject","name":"Every five minutes","repeat":"300000","crontab":""},"expect":["warn"]}

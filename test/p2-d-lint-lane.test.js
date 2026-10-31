@@ -6,7 +6,8 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 
-const source = fs.readFileSync(path.join(__dirname, "..", "lib", "core", "validate.js"), "utf8");
+const lintSource = fs.readFileSync(path.join(__dirname, "..", "lib", "core", "lint-rules.js"), "utf8");
+const source = lintSource + "\n" + fs.readFileSync(path.join(__dirname, "..", "lib", "core", "validate.js"), "utf8");
 const api = new Function("RED", source + "\nreturn { validateFlow };")({
   nodes: { getType: function (type) { return type === "inject" || type === "debug"; } }
 });

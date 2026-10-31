@@ -1,0 +1,1 @@
+{"rule":"missing-config-node","nodes":[{"id":"node-1","type":"mqtt in","broker":"broker-1","_def":{"defaults":{"broker":{"type":"mqtt-broker","required":true}}}},{"id":"broker-1","type":"mqtt-broker","_def":{"category":"config"}}],"expect":[]}
