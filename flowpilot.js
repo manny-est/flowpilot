@@ -186,6 +186,29 @@ function firstMatchingPreRouterChangeVerb(prompt) {
   return null;
 }
 
+function firstMatchingPreRouterRepairVerb(prompt) {
+  const text = String(prompt || "");
+  const direct = ["fix", "repair", "correct"];
+  for (let i = 0; i < direct.length; i++) {
+    const verb = direct[i];
+    if (new RegExp("^\\s*(?:(?:please|can you|could you|would you)\\s+)?" + verb + "\\b", "i").test(text) ||
+        new RegExp("\\b" + verb + "\\s+(?:this|it|that|the|my|selected)\\b", "i").test(text)) {
+      return verb;
+    }
+  }
+  // "debug" is also a common node type/name ("add a debug node"), so only
+  // treat it as repair language when it introduces an object to inspect.
+  if (/\bdebug\s+(?:this|it|that|the|selected)\b/i.test(text)) { return "debug"; }
+  if (/\bwhy\s+(?:doesn't|does not|isn't|is not)\s+(?:this|it|that)\s+work(?:ing)?\b/i.test(text)) {
+    return "repair";
+  }
+  if (/\b(?:this|it)\s+(?:is|'s)\s+broken\b/i.test(text) ||
+      /\bthis\s+throws\b/i.test(text)) {
+    return "repair";
+  }
+  return null;
+}
+
 function firstMatchingPreRouterCreationVerb(prompt) {
   const text = String(prompt || "");
   const patterns = [
@@ -222,7 +245,21 @@ function preRouterExistingNodeTargets(prompt, context) {
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return new RegExp("(^|[^a-z0-9_])" + escaped + "([^a-z0-9_]|$)", "i").test(text);
   });
-  if (named.length === 1) { return named; }
+  if (named.length) {
+    const selectedIds = new Set(selected.map(function (node) { return node && node.id; }).filter(Boolean));
+    const selectedNamed = named.filter(function (node) { return selectedIds.has(node.id); });
+    if (selectedNamed.length === 1) { return selectedNamed; }
+    const activeTabId = context && context.activeTabId;
+    const activeNamed = named.filter(function (node) {
+      return node.inActiveTab === true || (!!activeTabId && node.z === activeTabId);
+    });
+    // The active tab settles a duplicate only when it has exactly one match.
+    // With no active match, a single instance-wide match is still safe; two
+    // off-tab matches remain unresolved for the normal picker.
+    if (activeNamed.length === 1) { return activeNamed; }
+    if (activeNamed.length > 1 || named.length > 1) { return null; }
+    return named;
+  }
   // "this" points at the current selection. Without a selection it is only
   // deterministic when the open-tab context contains one candidate.
   if (/\bmake\s+this\b/i.test(text)) {
@@ -319,11 +356,18 @@ function runDeterministicPreRouter(prompt, context) {
   if (isSmallTalk(prompt)) {
     return null;
   }
-  if (isPreRouterInterrogative(prompt) || hasPreRouterVagueness(prompt)) {
+  const hasSelection = !!(context && Array.isArray(context.nodes) && context.nodes.length > 0);
+  const repairVerb = hasSelection ? firstMatchingPreRouterRepairVerb(prompt) : null;
+  // A selected node turns repair/debug language into an actionable Modify,
+  // including the natural-language "why doesn't this work?" form. Other
+  // questions still fall through to the classifier as explanations.
+  if (!repairVerb && (isPreRouterInterrogative(prompt) || hasPreRouterVagueness(prompt))) {
     return null;
   }
+  if (repairVerb) {
+    return makePreRouterResult("modify", repairVerb, prompt, context, false);
+  }
 
-  const hasSelection = !!(context && Array.isArray(context.nodes) && context.nodes.length > 0);
   const existingTargets = preRouterExistingNodeTargets(prompt, context);
   if (existingTargets) {
     return makePreRouterResult("modify", "make", prompt, { nodes: existingTargets }, false);
@@ -334,7 +378,9 @@ function runDeterministicPreRouter(prompt, context) {
     return makePreRouterResult("generate", "add a comment node", prompt, {}, false);
   }
   const creationVerb = firstMatchingPreRouterCreationVerb(prompt);
-  if (!hasSelection && creationVerb && !hasPreRouterDocumentationTerm(prompt)) {
+  const refersToExistingNode = /\bmake\s+(?:the|this)\b/i.test(String(prompt || ""));
+  if (!hasSelection && creationVerb && !hasPreRouterDocumentationTerm(prompt) &&
+      !(creationVerb === "make" && refersToExistingNode)) {
     return makePreRouterResult("generate", creationVerb, prompt, context, false);
   }
   const changeVerb = firstMatchingPreRouterChangeVerb(prompt);
@@ -2423,9 +2469,12 @@ function flowPilotRuntime(RED) {
     if (strategy === "agent") {
       chatOptions = agentTurnOptions(settings, chatOptions);
       const preRouterContext = Object.assign({}, context || {});
+      if (intake && intake.activeTab && intake.activeTab.id) {
+        preRouterContext.activeTabId = intake.activeTab.id;
+      }
       if ((!Array.isArray(preRouterContext.nodes) || !preRouterContext.nodes.length) &&
-          intake && Array.isArray(intake.candidates)) {
-        preRouterContext.openTabNodes = intake.candidates;
+          intake && Array.isArray(intake.allCandidates || intake.candidates)) {
+        preRouterContext.openTabNodes = intake.allCandidates || intake.candidates;
       }
       result = runDeterministicPreRouter(prompt, preRouterContext);
       if (isSmallTalk(prompt)) {

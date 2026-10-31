@@ -181,6 +181,66 @@
     "note": "Permission phrasing should still propose modify."
   },
   {
+    "id": "modify-fix-function-selected",
+    "prompt": "Fix the bug in this function",
+    "expected": "modify",
+    "expectedLane": "DIRECT",
+    "context": {
+      "nodes": [{ "id": "fix-function", "type": "function", "name": "Upper" }]
+    },
+    "note": "A selected function makes a fix request an immediate change."
+  },
+  {
+    "id": "modify-fix-selected",
+    "prompt": "fix this",
+    "expected": "modify",
+    "expectedLane": "DIRECT",
+    "context": {
+      "nodes": [{ "id": "fix-node", "type": "function", "name": "Broken" }]
+    },
+    "note": "The selected node resolves the repair target."
+  },
+  {
+    "id": "modify-debug-selected",
+    "prompt": "debug this",
+    "expected": "modify",
+    "expectedLane": "DIRECT",
+    "context": {
+      "nodes": [{ "id": "debug-node", "type": "function", "name": "Broken" }]
+    },
+    "note": "Debugging a selected node is a change request."
+  },
+  {
+    "id": "modify-repair-selected",
+    "prompt": "repair it",
+    "expected": "modify",
+    "expectedLane": "DIRECT",
+    "context": {
+      "nodes": [{ "id": "repair-node", "type": "function", "name": "Broken" }]
+    },
+    "note": "The selected node resolves the repair target."
+  },
+  {
+    "id": "modify-why-not-working-selected",
+    "prompt": "why doesn't this work?",
+    "expected": "modify",
+    "expectedLane": "DIRECT",
+    "context": {
+      "nodes": [{ "id": "throws-node", "type": "function", "name": "Broken" }]
+    },
+    "note": "A why-doesn't-it-work question asks for repair when a node is selected."
+  },
+  {
+    "id": "modify-broken-selected",
+    "prompt": "this is broken, fix it",
+    "expected": "modify",
+    "expectedLane": "DIRECT",
+    "context": {
+      "nodes": [{ "id": "broken-node", "type": "function", "name": "Broken" }]
+    },
+    "note": "Broken/fix wording with a selection is a change."
+  },
+  {
     "id": "document-current-flow",
     "prompt": "Document this flow so a teammate can understand what each node does.",
     "expected": "document",

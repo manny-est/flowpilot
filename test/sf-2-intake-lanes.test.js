@@ -107,12 +107,12 @@ assert.ok(debugs.indexOf("k") === -1 && debugs.indexOf("s") === -1, "non-matchin
 assert.deepStrictEqual(intake.nodeCandidates({ id: "t1" }, "Rename Shaper").map(function (c) { return c.id; }), ["s"], "a name match wins");
 assert.strictEqual(intake.nodeCandidates({ id: "t1" }, "fix it").length, 4, "no match falls back to the open tab's nodes");
 const named = intake.nodeCandidates({ id: "t1" }, "Add a debug node after the Elsewhere node").map(function (c) { return c.id; });
-assert.ok(named.indexOf("x") === -1, "a node from another tab is not a picker candidate");
+assert.deepStrictEqual(named, ["a", "b"], "unique off-tab names do not replace active-tab candidates");
 global.RED.nodes.workspace = function (id) { return { t1: { id: "t1", label: "Flow 1" }, t2: { id: "t2", label: "Flow 2" } }[id] || null; };
 global.RED.nodes.node = function () { return null; }; // as in Node-RED 5: tabs aren't nodes
-assert.ok(intake.nodeCandidates({ id: "t1" }, "the Elsewhere node")
-  .every(function (candidate) { return candidate.z === "t1"; }),
-  "an off-tab node is not offered by the active-tab picker");
+const elsewhere = intake.nodeCandidates({ id: "t1" }, "the Elsewhere node");
+assert.ok(elsewhere.every(function (candidate) { return candidate.z === "t1"; }),
+  "a unique off-tab name does not replace active-tab picker candidates");
 delete global.RED;
 // A selection the user didn't make for this message (live, SF-7: a run left
 // a node on another tab selected) must not redirect an explicitly named change.
