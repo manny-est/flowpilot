@@ -1806,7 +1806,10 @@ function flowPilotRuntime(RED) {
 
   async function runGoalCheck(provider, activeProvider, settings, request, summary) {
     const messages = [
-      { role: "system", content: "You are FlowPilot's final goal checker. Compare the user's request with the code-built graph summary. Answer only JSON: {\"done\":true|false,\"gaps\":[\"specific gap\"]}. Treat explicit constraints such as 'no HTTP' as binding, even if the assistant claims success. Keep gaps short." },
+      { role: "system", content: "You are FlowPilot's final goal checker. Compare the user's request with the code-built summary of the Node-RED graph after the run. " +
+        "Report a gap ONLY when the summary shows that something the user asked for is missing or wrong in the graph, or that an explicit constraint (such as 'no http') is broken. " +
+        "Never report missing tests, explanations, comments, documentation, comparisons with the old code, or anything the user didn't ask for. A summary that lists only the changed nodes is complete; don't report it as missing detail. " +
+        "If the request is met, answer {\"done\":true,\"gaps\":[]}. Answer only JSON: {\"done\":true|false,\"gaps\":[\"specific gap\"]}. Keep gaps short." },
       { role: "user", content: "Original request:\n" + redactGoalCheckText(request) + "\n\nGraph summary:\n" + redactGoalCheckText(summary) }
     ];
     const options = agentTurnOptions(settings, undefined);
@@ -1825,12 +1828,25 @@ function flowPilotRuntime(RED) {
     } catch (err) {
       parsed = parseGoalCheck(answer);
     }
+    // Small models still list non-graph "gaps" (live Spark S3: "No test case
+    // provided", "Original buggy code not included"); each one cost a fix
+    // attempt and ended a correct run as failed. Those never count.
+    const NOT_A_GAP = /\b(?:test case|unit test|tests?\b|explanation|explain|comment|documentation|document|compar|original (?:buggy )?code|summary (?:is )?(?:missing|not provided|malformed|unreadable)|cannot (?:verify|confirm)|can't (?:verify|confirm)|unable to verify|not (?:specified|shown) in (?:the )?summary)/i;
+    if (Array.isArray(parsed.gaps) && parsed.gaps.length) {
+      const kept = parsed.gaps.filter(function (gap) { return !NOT_A_GAP.test(String(gap)); });
+      if (kept.length !== parsed.gaps.length) {
+        parsed.droppedGaps = parsed.gaps.filter(function (gap) { return NOT_A_GAP.test(String(gap)); });
+        parsed.gaps = kept;
+        if (!kept.length) { parsed.done = true; }
+      }
+    }
     maybeLogDebugEvent("goal_check", {
       requestSummary: redactGoalCheckText(request),
       graphSummary: redactGoalCheckText(summary),
       answer: redactGoalCheckText(answer),
       gaps: (parsed.gaps || []).map(redactGoalCheckText),
       done: parsed.done === true,
+      droppedGaps: parsed.droppedGaps || [],
       unparseable: parsed.unparseable === true
     });
     return parsed;

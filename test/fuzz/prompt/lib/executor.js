@@ -278,7 +278,10 @@ async function executeTurn(entry, prompt, token, parts, options) {
   }
 
   async function runGoalCheck() {
-    const summary = codeJudge.summarizeGraph({ flow: currentFlow(parts) });
+    // Text, like the browser's summarizeRunGraph: the route stringifies an
+    // object as "[object Object]" and the checker then reports "summary
+    // missing" for every prompt (first full run).
+    const summary = goalCheckSummaryText(codeJudge.summarizeGraph({ flow: currentFlow(parts) }));
     let checkResponse;
     try {
       checkResponse = await requestPost(NR_URL + "/flowpilot/goal-check", {
@@ -461,6 +464,25 @@ async function executeTurn(entry, prompt, token, parts, options) {
     goalCheck: { checks: goalChecks, gaps: goalChecks.reduce(function (all, check) {
       return all.concat(check.gaps || []).filter(function (gap, index, list) { return list.indexOf(gap) === index; });
     }, []), fixAttempts: goalCheckFixAttempts, maxFixAttempts: MAX_GOAL_CHECK_FIX_ATTEMPTS } };
+}
+
+function goalCheckSummaryText(graph) {
+  const nodes = (graph && graph.nodes) || [];
+  const byId = {};
+  nodes.forEach(function (node) { byId[node.id] = node; });
+  const label = function (node) { return node ? node.type + (node.name ? " \"" + node.name + "\"" : "") : "(missing node)"; };
+  const lines = nodes.filter(function (node) { return node.type !== "tab"; }).map(function (node) {
+    const cfg = Object.keys(node.keyConfig || {}).filter(function (key) { return key[0] !== "_"; }).map(function (key) {
+      let value = node.keyConfig[key];
+      if (typeof value !== "string") { try { value = JSON.stringify(value); } catch (e) { value = String(value); } }
+      return key + "=" + String(value).slice(0, 120);
+    });
+    return label(node) + (cfg.length ? " [" + cfg.join(", ") + "]" : "");
+  });
+  ((graph && graph.wires) || []).forEach(function (wire) {
+    lines.push("wire: " + label(byId[wire.from]) + " -> " + label(byId[wire.to]));
+  });
+  return lines.join("\n") || "No nodes";
 }
 
 async function runPrompt(entry, token, options) {
