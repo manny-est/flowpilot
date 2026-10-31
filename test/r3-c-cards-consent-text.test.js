@@ -154,3 +154,25 @@ console.log("R3-C cards/consent/text tests passed");
   });
   assert.ok(risks.some(risk => risk.type === "exec"), "the positive exec add is still predicted");
 }
+
+// A consent label is a question, never the progress line (live round 3 S10:
+// "Adding Roll Dice, …" above a bare Proceed/Skip), and both render paths pass
+// the asked items.
+{
+  const args = { newNodes: [{ id: "a", type: "inject", name: "Roll Dice" }, { id: "b", type: "ui_gauge", name: "Dice Value" }] };
+  assert.match(describeAgentToolCall("apply_step", args, [{ op: "create", type: "ui_gauge", nodeId: "b", name: "Dice Value" }]),
+    /^FlowPilot wants to add an? ui_gauge node "Dice Value" along with 1 other node\.$/);
+  assert.match(describeAgentToolCall("apply_step", args, [{ op: "modify-config", type: "ui_gauge", nodeId: "b", name: "Dice Value" }]),
+    /^FlowPilot wants to change Dice Value \(ui_gauge\)\.$/);
+  assert.match(describeAgentToolCall("apply_step", args, []), /^FlowPilot wants to update the flow/);
+  assert.doesNotMatch(modesSource, /label: describeAgentToolCall\(src\.name, src\.args\)[,\n]/);
+}
+
+{
+  const cardsSource = fs.readFileSync(path.join(__dirname, "..", "lib/core/cards.js"), "utf8");
+  const start = cardsSource.indexOf("function indefiniteArticle");
+  const article = new Function("cardString", "return (" + cardsSource.slice(start, cardsSource.indexOf("\n    }\n", start) + 6) + ");")(
+    v => (v == null ? "" : String(v)));
+  [["ui_gauge", "a"], ["udp out", "a"], ["inject", "an"], ["exec", "an"], ["function", "a"], ["http request", "an"]]
+    .forEach(([type, want]) => assert.strictEqual(article(type), want, type));
+}

@@ -336,3 +336,14 @@ test("layout ignores a feedback wire into an inject and loop back-edges (live S1
   const lx = Object.fromEntries(loop.map((n) => [n.id, n.x]));
   assert.ok(lx.a < lx.b && lx.b < lx.c && lx.c < lx.e, "a loop keeps its forward order: " + JSON.stringify(lx));
 });
+
+test("an add-on node the user didn't ask for is refused; a named one is allowed", () => {
+  const moduleOf = (type) => ({ inject: "node-red", function: "node-red", ui_gauge: "node-red-dashboard",
+    ui_text: "node-red-dashboard", "telegram sender": "node-red-contrib-telegrambot" })[type] || null;
+  const nodes = [{ type: "inject" }, { type: "function" }, { type: "ui_gauge" }, { type: "ui_text" }];
+  const s10 = "Do something cool and unique, something I likely haven't seen before, but no http or exec nodes.";
+  assert.deepEqual(limits.uninvitedContribNodes(nodes, s10, moduleOf).map((n) => n.type), ["ui_gauge", "ui_text"]);
+  assert.deepEqual(limits.uninvitedContribNodes(nodes, "show the dice roll on a dashboard gauge", moduleOf), []);
+  assert.deepEqual(limits.uninvitedContribNodes([{ type: "telegram sender" }], "send it to telegram", moduleOf), []);
+  assert.deepEqual(limits.uninvitedContribNodes([{ type: "mystery" }], s10, moduleOf), [], "unknown module is allowed");
+});
