@@ -75,6 +75,7 @@ const planSystemPrompt = require("./lib/plan-system-prompt");
 const tierCClassificationPrompt = require("./lib/tier-c-classification-prompt");
 const consent = require("./lib/core/consent");
 const { chooseLane } = require("./lib/core/lanes");
+const { classifyEditIntent } = require("./lib/core/intake");
 const personaPrompt = require("./lib/persona-prompt");
 const { buildCoreScript } = require("./lib/build-core-script");
 const { sanitizeGeneratedNode, sanitizeGeneratedValue } = require("./lib/core/generated-content");
@@ -323,7 +324,9 @@ function makePreRouterResult(action, verb, prompt, context, needsSelection) {
           plan_items: [],
           deploy_verify: false,
           confidence: "high",
-          needs_selection: !!needsSelection
+          needs_selection: !!needsSelection,
+          inheritedRun: context && context.inheritedRun || null,
+          touchedNodeIndex: context && context.touchedNodeIndex || null
         })
       }
     }]
@@ -369,13 +372,33 @@ function runDeterministicPreRouter(prompt, context) {
   }
 
   const existingTargets = preRouterExistingNodeTargets(prompt, context);
+  if (isCommentCreationRequest(prompt)) {
+    const namedCommentTargets = (context && (context.openTabNodes || context.candidates) || []).filter(function (node) {
+      const name = node && typeof node.name === "string" ? node.name.trim() : "";
+      if (!name || name === node.id) { return false; }
+      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp("(^|[^a-z0-9_])" + escaped + "([^a-z0-9_]|$)", "i").test(String(prompt || ""));
+    });
+    const decision = classifyEditIntent({
+      action: "generate",
+      message: prompt,
+      selectionIds: hasSelection ? context.nodes.map(function (node) { return node && node.id; }) : [],
+      namedTargetIds: (existingTargets || namedCommentTargets).map(function (node) { return node && node.id; }),
+      touchedIndex: (context && context.touchedNodeIndex) ||
+        (context && context.intake && context.intake.touchedNodeIndex),
+      inheritedRun: context && context.inheritedRun
+    });
+    const anchorIds = decision.additive ? decision.targetIds : [];
+    const anchorNodes = anchorIds.map(function (id) {
+      const selected = (context && (context.nodes || context.openTabNodes || context.candidates) || []).find(function (node) {
+        return node && node.id === id;
+      });
+      return selected || { id: id };
+    });
+    return makePreRouterResult("generate", "add a comment node", prompt, { nodes: anchorNodes }, false);
+  }
   if (existingTargets) {
     return makePreRouterResult("modify", "make", prompt, { nodes: existingTargets }, false);
-  }
-  if (isCommentCreationRequest(prompt)) {
-    // The current tab is the implicit target; selected nodes must not turn a
-    // queued flow-level comment into a targeted Modify/DIRECT handoff.
-    return makePreRouterResult("generate", "add a comment node", prompt, {}, false);
   }
   const creationVerb = firstMatchingPreRouterCreationVerb(prompt);
   const refersToExistingNode = /\bmake\s+(?:the|this)\b/i.test(String(prompt || ""));
@@ -459,6 +482,14 @@ function normalizeProposeActionArguments(args, context) {
   const action = args.action;
   const needsSelection = action === "modify" && selectionIsEmpty;
   const deployVerify = action === "build";
+  const intent = classifyEditIntent({
+    action: action,
+    message: args.summary,
+    selectionIds: targets,
+    touchedIndex: context && context.touchedNodeIndex,
+    inheritedRun: context && context.inheritedRun
+  });
+  const normalizedTargets = intent.additive ? intent.targetIds : targets;
   // Temporary heuristic until the deterministic pre-router lands: use
   // "high" when the route is fully actionable from known context, and
   // "medium" when the route depends on missing selection state.
@@ -466,7 +497,7 @@ function normalizeProposeActionArguments(args, context) {
   const normalized = {
     action: action,
     summary: String(args.summary || "").trim(),
-    targets: targets,
+    targets: normalizedTargets,
     deploy_verify: deployVerify,
     confidence: confidence,
     needs_selection: needsSelection
@@ -3131,7 +3162,12 @@ function flowPilotRuntime(RED) {
       conversationId: body.conversationId || null,
       runId: body.runId || null,
       continuation: Array.isArray(body.continuation) ? body.continuation : [],
-      creationRun: body.creationRun === true,
+      // Kept as given when it's a boolean: the browser decides additive vs
+      // creation with the editor's view of tabs (R4-A); the server only
+      // classifies itself when no decision was sent (engine corpus, API).
+      creationRun: typeof body.creationRun === "boolean" ? body.creationRun : undefined,
+      intake: body.intake && typeof body.intake === "object" ? body.intake : null,
+      inheritedRun: body.inheritedRun && typeof body.inheritedRun === "object" ? body.inheritedRun : null,
       plannedNodeCount: Number.isFinite(Number(body.plannedNodeCount)) && Number(body.plannedNodeCount) > 0
         ? Math.floor(Number(body.plannedNodeCount)) : null,
       // CLAUDE-014: plain-language note for the client-side decision (consent
@@ -3800,9 +3836,20 @@ function flowPilotRuntime(RED) {
         auditAction + " mode. Do not re-plan; execute the approved items."
       : null;
     const nodeCount = context && Array.isArray(context.nodes) ? context.nodes.length : 0;
-    const creationRun = (execution && execution.creationRun === true) ||
-      ((auditAction === "generate" || auditAction === "build") && nodeCount === 0 &&
-        !(Array.isArray(continuation) && continuation.length));
+    const editIntent = classifyEditIntent({
+      action: auditAction,
+      message: userPrompt,
+      selectionIds: context && Array.isArray(context.nodes)
+        ? context.nodes.map(function (node) { return node && node.id; }).filter(Boolean) : [],
+      touchedIndex: (context && context.touchedNodeIndex) ||
+        (execution && execution.intake && execution.intake.touchedNodeIndex),
+      inheritedRun: (execution && execution.inheritedRun) ||
+        (execution && execution.intake && execution.intake.inheritedRun) || null
+    });
+    const creationRun = execution && typeof execution.creationRun === "boolean"
+      ? execution.creationRun
+      : (auditAction === "generate" || auditAction === "build") &&
+        editIntent.creation === true && !(Array.isArray(continuation) && continuation.length);
     const plannedCount = execution && Number(execution.plannedNodeCount);
     const creationInstruction = creationRun
       ? "\n\nCREATION RUN: this is a new flow. The first WRITE must be exactly one apply_step containing the whole planned flow — every new node and every wire. A partial first write is rejected with a tool error. After that first write, only fix validation findings or run the runtime proof." +
