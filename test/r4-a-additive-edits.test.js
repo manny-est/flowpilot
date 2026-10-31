@@ -168,3 +168,13 @@ test("review: weak anchors need wording or the active tab; compaction keeps the 
   const fp = require("fs").readFileSync(require("path").join(__dirname, "../flowpilot.js"), "utf8");
   assert.match(fp, /typeof execution\.creationRun === "boolean"/);
 });
+
+test("review (live S9): a queued message inherits the run's built nodes even when its target lock is empty", () => {
+  const intake = require("../lib/core/intake.js");
+  const r = intake.classifyEditIntent({ action: "generate", message: "also add a comment node explaining the flow",
+    inheritedRun: { runId: "r", targetLock: { ids: [], labels: [] }, nodeIds: ["a", "b"] } });
+  assert.equal(r.additive, true);
+  assert.deepEqual(r.targetIds, ["a", "b"]);
+  const modes = require("fs").readFileSync(require("path").join(__dirname, "../lib/core/modes.js"), "utf8");
+  assert.match(modes, /refreshQueuedRunContext\(entry\);\s*pendingQueuedDispatch/);
+});
