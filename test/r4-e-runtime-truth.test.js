@@ -151,7 +151,7 @@ test("runtime truth is wired into deploy, reload, and the assembled client", () 
   assert.match(mainSource, /flows:loaded/);
   assert.match(modesSource, /deployFlowsForBuild\([\s\S]*?runtime/);
   assert.match(initSource, /flows:loaded/);
-  assert.match(mainSource, /runtimeProofOutcome\(\[\], initialPresence\)/);
+  assert.match(mainSource, /goal\.runtimeConfirmed = deployResult \? !!deployResult\.confirmed/);
   assert.match(buildCoreScript(), /function fetchDeployedFlows/);
 });
 
@@ -168,4 +168,13 @@ test("review: a config-only difference doesn't fail confirmation; a type change 
   assert.equal(out.confirmed, false);
   rt.confirmDeploy("r1", [{ id: "a", type: "inject", z: "t" }], [], (r) => { out = r; }, req);
   assert.equal(out.confirmed, false);
+});
+
+
+test("review: Test it isn't refused before its own deploy; an unconfirmed deploy reads 'Not tested' on the card", () => {
+  const main = fs.readFileSync(path.join(__dirname, "../lib/core/main.js"), "utf8");
+  assert.doesNotMatch(main, /initialPresence/, "no pre-deploy presence gate");
+  const cards = require("../lib/core/cards.js");
+  const model = cards.buildResultCardModel({ verifyResults: [{ state: "not-tested", label: "Not tested: Upper isn't deployed" }] });
+  assert.equal(model.run.label, "Not tested: Upper isn't deployed");
 });
