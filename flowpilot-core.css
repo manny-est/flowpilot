@@ -1400,8 +1400,20 @@
     border: 1px solid var(--red-ui-form-input-border-color, #ccc);
     border-radius: 6px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-    overflow: hidden;
+    max-height: min(320px, 50vh);
+    overflow-x: hidden;
+    overflow-y: auto;
     z-index: 100;
+}
+
+.fp-slash-group-label {
+    padding: 4px 10px 2px;
+    color: var(--red-ui-secondary-text-color, #777);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    pointer-events: none;
 }
 
 .fp-slash-row {
