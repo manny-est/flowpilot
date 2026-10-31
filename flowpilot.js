@@ -77,6 +77,7 @@ const consent = require("./lib/core/consent");
 const { chooseLane } = require("./lib/core/lanes");
 const personaPrompt = require("./lib/persona-prompt");
 const { buildCoreScript } = require("./lib/build-core-script");
+const { sanitizeGeneratedNode, sanitizeGeneratedValue } = require("./lib/core/generated-content");
 const {
   createChatDataStreamSplitter,
   findChatDataMarker,
@@ -3679,12 +3680,11 @@ function flowPilotRuntime(RED) {
     // transition moment — "here's the flow I built for you") — never to
     // node names, ids, or any structural JSON, which stays exactly as each
     // mode's own system prompt above already specifies.
-    const personaInstruction = personaPrompt.buildPersonaInstruction(settings.personaIntensity, { scope: "explanation" });
     const modeNotice = fromAct
       ? "The user approved this plan: \"" + userPrompt + "\". You are now executing in " +
         auditAction + " mode. Do not re-plan; execute the approved items."
       : null;
-    const messages = buildMessages(systemPrompt + "\n\n" + personaInstruction + continuationInstruction(continuation), history, historyTruncated, described, userPrompt, modeNotice);
+    const messages = buildMessages(systemPrompt + continuationInstruction(continuation), history, historyTruncated, described, userPrompt, modeNotice);
     warnNumCtxOverflow(messages, activeProvider, auditAction);
     return { activeProvider, described, messages };
   }
@@ -3992,7 +3992,10 @@ function flowPilotRuntime(RED) {
       // they reach the client. Code owns the user notification now — the CRITICAL
       // block in the Modify prompt that tried to prevent this via instruction is
       // deleted. skippedNote is surfaced in modifyResult for the frontend to show.
-      const { cleanedChanges, skippedNote: redactionSkippedNote } = stripRedactionPlaceholders(changes);
+      const { cleanedChanges, skippedNote: redactionSkippedNote } = stripRedactionPlaceholders(changes.map(function (entry) {
+        if (!entry || typeof entry !== "object") { return entry; }
+        return Object.assign({}, entry, { set: sanitizeGeneratedValue(entry.set || {}) });
+      }));
 
       storage.appendAudit(Object.assign({
         action: auditAction,
@@ -4011,7 +4014,7 @@ function flowPilotRuntime(RED) {
       const modifyResult = {
         explanation: parsed.explanation || "",
         changes: cleanedChanges,
-        newNodes: newNodes,
+        newNodes: newNodes.map(sanitizeGeneratedNode),
         newWires: newWires,
         removeNodes: removeNodes,
         newGroups: newGroups
@@ -4032,7 +4035,7 @@ function flowPilotRuntime(RED) {
 
     enforceAgentContract(parsed, auditContext, false);
 
-    const flow = Array.isArray(parsed.flow) ? parsed.flow : null;
+    const flow = Array.isArray(parsed.flow) ? parsed.flow.map(sanitizeGeneratedNode) : null;
     // Converged Build (R11-6): the work is already on the canvas through the
     // WRITE tools, so the final reply is an explanation with no "flow".
     // #33: an agent Generate that already did its work with WRITE tools ends
@@ -4066,7 +4069,7 @@ function flowPilotRuntime(RED) {
     const flowResult = {
       explanation: parsed.explanation || "",
       flow: flow,
-      newNodes: Array.isArray(parsed.newNodes) ? parsed.newNodes : [],
+      newNodes: Array.isArray(parsed.newNodes) ? parsed.newNodes.map(sanitizeGeneratedNode) : [],
       newWires: Array.isArray(parsed.newWires) ? parsed.newWires : []
     };
     if (Array.isArray(parsed.strippedFields) && parsed.strippedFields.length) {
