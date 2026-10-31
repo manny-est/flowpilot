@@ -383,5 +383,26 @@
     "expected": "generate",
     "expectedLane": "PLAN",
     "note": "Creative generation with explicit names and a no-wire constraint."
+  },
+  {
+    "id": "chat-small-talk-hi",
+    "prompt": "hi",
+    "expected": "answer",
+    "expectedLane": "ANSWER",
+    "note": "Greeting must stay ordinary chat, never the intent picker."
+  },
+  {
+    "id": "chat-small-talk-thanks",
+    "prompt": "thanks!",
+    "expected": "answer",
+    "expectedLane": "ANSWER",
+    "note": "Acknowledgement must stay ordinary chat."
+  },
+  {
+    "id": "chat-small-talk-hello-there",
+    "prompt": "hello there",
+    "expected": "answer",
+    "expectedLane": "ANSWER",
+    "note": "Greeting with an address must stay ordinary chat."
   }
 ]
