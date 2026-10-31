@@ -115,8 +115,10 @@ const ACTIONS = [
   action("add-fixture-flow", always, async (driver, state, rng, context) => {
     await driver.addFixture(context.fixtures[Math.floor(rng() * context.fixtures.length)]);
   }),
+  // Switches between this sequence's own flow tabs only (making a second one
+  // if needed); the instance's own tabs are never a target.
   action("switch-tabs", always, async driver => {
-    await driver.switchEditorTab();
+    await driver.evaluate("() => { const mine = (window.__fzTabs || []).filter(id => RED.nodes.workspace(id)); if (mine.length < 2) { RED.actions.invoke('core:add-flow'); mine.push(RED.workspaces.active()); } else { const i = mine.indexOf(RED.workspaces.active()); RED.workspaces.show(mine[(i + 1) % mine.length]); } window.__fzTabs = mine; return RED.workspaces.active(); }");
   })
 ];
 

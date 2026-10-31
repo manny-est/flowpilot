@@ -65,14 +65,15 @@ async function restoreSettings(driver, settings) {
   await driver.evaluate("() => { const expected = " + JSON.stringify(settings) + "; const auto = document.getElementById('fp-auto-toggle'); const restricted = document.getElementById('fp-restricted-toggle'); const provider = document.getElementById('fp-provider-select'); if (auto && auto.checked !== expected.auto) { auto.click(); } if (restricted && restricted.checked !== expected.restricted) { restricted.click(); } if (provider && expected.provider && provider.value !== expected.provider) { provider.value = expected.provider; provider.dispatchEvent(new Event('change', { bubbles: true })); } const save = document.getElementById('fp-save-settings'); if (save) save.click(); return true; }");
 }
 
+// Only a real FlowPilot pop-out tab counts; any other open tab (an unrelated
+// editor tab) would make every parity check a false finding.
 async function findPopout(driver, mainTab) {
   const tabs = await driver.tabs();
-  const mainId = mainTab && (mainTab.id || mainTab.targetId || mainTab.tabId || mainTab.url);
-  const candidates = tabs.filter(tab => (tab.id || tab.targetId || tab.tabId || tab.url) !== mainId);
-  if (!candidates.length) return null;
-  const candidate = candidates.find(tab => /popout|flowpilot/i.test(JSON.stringify(tab))) || candidates[candidates.length - 1];
-  driver.popoutTab = candidate;
-  return candidate;
+  const key = tab => tab && (tab.targetId || tab.tabId || tab.id);
+  const mainId = key(mainTab);
+  const candidate = tabs.find(tab => key(tab) !== mainId && /\/flowpilot\/popout\//.test(String(tab.url || "")));
+  driver.popoutTab = candidate || null;
+  return candidate || null;
 }
 
 async function capturePopoutMessages(driver, mainTab) {
@@ -86,9 +87,29 @@ async function capturePopoutMessages(driver, mainTab) {
   }
 }
 
-async function startSequence(driver, url, initialTabs) {
+// Every sequence works on its OWN Node-RED flow tabs. The instance's own tabs
+// (recorded once, before the first sequence) are never edited, never the
+// target of a fixture or a build, and never deleted: guardFuzzTab() moves back
+// to a fuzz tab before every action, and cleanup deletes only fuzz tabs.
+const GUARD_JS = "() => { const base = window.__fzBase || []; const mine = (window.__fzTabs || []).filter(id => RED.nodes.workspace(id));" +
+  " if (!mine.length) { RED.actions.invoke('core:add-flow'); mine.push(RED.workspaces.active()); }" +
+  " window.__fzTabs = mine; if (base.includes(RED.workspaces.active()) || !mine.includes(RED.workspaces.active())) { RED.workspaces.show(mine[0]); }" +
+  " return RED.workspaces.active(); }";
+
+async function guardFuzzTab(driver) {
+  return driver.evaluate(GUARD_JS);
+}
+
+async function startSequence(driver, url, initialTabs, baseWorkspaces) {
   await driver.open(url);
-  await driver.resize(800, 513);
+  // A real desktop window with Node-RED's default 300 px sidebar (the design
+  // width, ADR-015 Amendment 3), not OpenClaw's 800x513 default viewport.
+  await driver.resize(1600, 1000);
+  await new Promise(resolve => setTimeout(resolve, 8000));
+  await driver.evaluate("() => { window.__fzBase = " + JSON.stringify(baseWorkspaces || []) + "; window.__fzTabs = [];" +
+    " const c = document.getElementById('red-ui-sidebar'); if (c) { c.style.width = '300px'; RED.events.emit('sidebar:resize'); }" +
+    " if (RED.sidebar && RED.sidebar.show) { RED.sidebar.show('flowpilot'); } return true; }");
+  await guardFuzzTab(driver);
   await driver.click("#fp-clear-chat");
   await new Promise(resolve => setTimeout(resolve, 300));
   return driver.mainTab || (await driver.tabs()).slice(-1)[0] || initialTabs[initialTabs.length - 1];
@@ -99,6 +120,8 @@ async function cleanupSequence(driver, mainTab, initialTabs, settings) {
     if (driver.popoutTab) await driver.deleteTab(driver.popoutTab);
     if (mainTab) {
       await driver.focus(mainTab);
+      // Delete only this run's flow tabs (never the instance's own), then deploy.
+      await driver.evaluate("() => { const base = window.__fzBase || []; RED.nodes.getWorkspaceOrder().filter(id => !base.includes(id)).forEach(id => { const ws = RED.nodes.workspace(id); if (ws) RED.workspaces.delete(ws); }); RED.nodes.dirty(true); return true; }");
       await driver.deploy();
     }
     await restoreSettings(driver, settings);
@@ -107,9 +130,10 @@ async function cleanupSequence(driver, mainTab, initialTabs, settings) {
     // evidence and the final tab count is still recorded below.
   }
   const current = await driver.tabs().catch(() => []);
-  const originalIds = new Set(initialTabs.map(tab => tab.id || tab.targetId || tab.tabId || tab.url));
+  const key = tab => tab && (tab.targetId || tab.tabId || tab.id);
+  const originalIds = new Set(initialTabs.map(key));
   for (const tab of current) {
-    const id = tab.id || tab.targetId || tab.tabId || tab.url;
+    const id = key(tab);
     if (!originalIds.has(id)) await driver.deleteTab(tab);
   }
   return driver.tabs().catch(() => []);
@@ -170,7 +194,7 @@ async function runSequence(driver, options, sequenceNumber) {
   let actionsRun = 0;
   let mainTab;
   try {
-    mainTab = await startSequence(driver, options.url, initialTabs);
+    mainTab = await startSequence(driver, options.url, initialTabs, options.baseWorkspaces);
     context.mainTab = mainTab;
     settings = await readSettings(driver).catch(() => ({}));
     for (let actionIndex = 0; actionIndex < options.length; actionIndex += 1) {
@@ -182,6 +206,7 @@ async function runSequence(driver, options, sequenceNumber) {
         context,
         state
       })[0];
+      await guardFuzzTab(driver);
       const entry = { index: actionsRun, name: item.name };
       actionLog.push(entry);
       await runAction(driver, item, state, context, chooseRngForAction(seed, actionsRun));
@@ -247,6 +272,14 @@ async function main(argv) {
   fs.mkdirSync(options.out, { recursive: true });
   const driver = new OpenClawDriver({ profile: options.profile, url: options.url });
   await driver.start();
+  // The instance's own flow tabs, read once from the profile's open editor
+  // tab before anything runs. Without them the fuzzer can't tell its tabs
+  // from the user's, so it refuses to run.
+  const base = await driver.evaluate("() => (window.RED && RED.nodes && RED.nodes.getWorkspaceOrder) ? RED.nodes.getWorkspaceOrder() : null").catch(() => null);
+  if (!Array.isArray(base) || !base.length) {
+    throw new Error("Open and log in to the Node-RED editor in profile " + options.profile + " first; the fuzzer needs the instance's own tab list.");
+  }
+  options.baseWorkspaces = base;
   const summary = {
     seed: options.seed,
     modelLabel: options.modelLabel,

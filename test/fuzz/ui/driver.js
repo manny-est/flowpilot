@@ -42,8 +42,11 @@ function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, Math.min(5000, Math.max(0, ms))));
 }
 
+// OpenClaw's --json tab objects carry tabId ("t4"), the handle every command
+// accepts; targetId is the raw CDP id. Plain strings are already handles.
 function tabId(tab) {
-  return tab && (tab.id || tab.targetId || tab.tabId || tab.handle || tab.url);
+  if (typeof tab === "string") return tab;
+  return tab && (tab.tabId || tab.suggestedTargetId || tab.targetId || tab.id || tab.handle);
 }
 
 function normalizeTabs(value) {
@@ -72,7 +75,7 @@ class OpenClawDriver {
     const opts = options || {};
     const attempts = Number.isInteger(opts.retries) ? opts.retries : this.retries;
     const timeout = Number(opts.timeout || this.timeout);
-    const fullArgs = ["browser", "--browser-profile", this.profile, command].concat(args || []);
+    const fullArgs = ["browser", "--browser-profile", this.profile].concat(opts.json ? ["--json"] : [], [command], args || []);
     let last;
     for (let attempt = 0; attempt <= attempts; attempt += 1) {
       try {
@@ -94,17 +97,18 @@ class OpenClawDriver {
 
   async start() { return this.invoke("start"); }
 
+  // The new tab's handle comes from open's own --json result: OpenClaw lists
+  // tabs newest-first, so "the last tab" was the oldest one.
   async open(url) {
-    const result = parseOutput(await this.invoke("open", [url || this.url]));
-    const tabs = await this.tabs();
-    const candidate = tabs[tabs.length - 1] || result;
+    const result = parseOutput(await this.invoke("open", [url || this.url], { json: true }));
+    const candidate = result && typeof result === "object" && tabId(result) ? { tabId: tabId(result), url: result.url } : null;
     this.mainTab = candidate || this.mainTab;
     if (this.mainTab) await this.focus(this.mainTab);
     return this.mainTab;
   }
 
   async tabs() {
-    return normalizeTabs(parseOutput(await this.invoke("tabs")));
+    return normalizeTabs(parseOutput(await this.invoke("tabs", [], { json: true })));
   }
 
   async focus(tab) {
@@ -199,12 +203,25 @@ class OpenClawDriver {
     return state;
   }
 
+  // New FlowPilot errors since the previous call: console messages of type
+  // "error" and page errors whose text or source is FlowPilot's own code.
+  // (Plain-text output such as "No page errors." is never an error.)
   async captureConsole() {
-    const result = parseOutput(await this.invoke("errors", [], { retries: 0, timeout: 10000 }));
-    if (!result) return [];
-    if (Array.isArray(result)) return result;
-    if (result.errors && Array.isArray(result.errors)) return result.errors;
-    return [result];
+    const since = this.lastConsoleCheck || 0;
+    this.lastConsoleCheck = Date.now();
+    const fromFlowPilot = item => /flowpilot/i.test(JSON.stringify(item && (item.location || item.url || item.stack || ""))) ||
+      /flowpilot/i.test(String(item && (item.text || item.message) || ""));
+    const fresh = item => !item || !item.timestamp || Date.parse(item.timestamp) >= since;
+    const out = [];
+    const consoleResult = parseOutput(await this.invoke("console", [], { retries: 0, timeout: 10000, json: true }));
+    (consoleResult && Array.isArray(consoleResult.messages) ? consoleResult.messages : []).forEach(item => {
+      if (item && item.type === "error" && fresh(item) && fromFlowPilot(item)) out.push(String(item.text || "").slice(0, 300));
+    });
+    const errorsResult = parseOutput(await this.invoke("errors", [], { retries: 0, timeout: 10000, json: true }));
+    (errorsResult && Array.isArray(errorsResult.errors) ? errorsResult.errors : []).forEach(item => {
+      if (fresh(item) && fromFlowPilot(item)) out.push(String((item && (item.message || item.text)) || item).slice(0, 300));
+    });
+    return out;
   }
 
   async screenshot(outputPath) {
