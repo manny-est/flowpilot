@@ -3650,6 +3650,10 @@ function flowPilotRuntime(RED) {
     const id = sanitizeConversationId(req.params.id);
     if (!id) { return res.status(400).json({ error: "Invalid conversation id." }); }
     if (storage.listConversationIds().indexOf(id) === -1) {
+      // The page-load rehydrate asks with ?optional=1: a conversation that was
+      // cleared before it was saved is normal there, and a 404 shows up as a
+      // browser console error (UI fuzzer finding).
+      if (req.query && req.query.optional === "1") { return res.json({ id: id, found: false }); }
       return res.status(404).json({ error: "Conversation not found." });
     }
     try {
