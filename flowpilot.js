@@ -249,6 +249,17 @@ function hasPreRouterDocumentationTerm(prompt) {
   return /\b(document|documentation|comment)\b/i.test(String(prompt || ""));
 }
 
+function isSmallTalk(prompt) {
+  const text = String(prompt || "").trim().toLowerCase();
+  return /^(?:hi|hello|hey|thanks|thank you|thx|ok|okay|how are you(?: doing)?|good morning|good afternoon|good evening)(?:[ ,.]+(?:there|flowpilot|everyone))?[!?.,]*$/.test(text);
+}
+
+function isCommentCreationRequest(prompt) {
+  const text = String(prompt || "");
+  return /\b(?:add|create|insert|make|write)\b[\s\S]*\bcomment\b[\s\S]*\bnode\b/i.test(text) ||
+    /\bcomment\s+node\b[\s\S]*\b(?:add|create|insert|make|write)\b/i.test(text);
+}
+
 function makePreRouterResult(action, verb, prompt, context, needsSelection) {
   const nodes = context && Array.isArray(context.nodes) ? context.nodes : [];
   const targets = needsSelection ? [] : nodes.map(function (node) {
@@ -303,6 +314,9 @@ function laneFields(lane) {
 }
 
 function runDeterministicPreRouter(prompt, context) {
+  if (isSmallTalk(prompt)) {
+    return null;
+  }
   if (isPreRouterInterrogative(prompt) || hasPreRouterVagueness(prompt)) {
     return null;
   }
@@ -311,6 +325,11 @@ function runDeterministicPreRouter(prompt, context) {
   const existingTargets = preRouterExistingNodeTargets(prompt, context);
   if (existingTargets) {
     return makePreRouterResult("modify", "make", prompt, { nodes: existingTargets }, false);
+  }
+  if (isCommentCreationRequest(prompt)) {
+    // The current tab is the implicit target; selected nodes must not turn a
+    // queued flow-level comment into a targeted Modify/DIRECT handoff.
+    return makePreRouterResult("generate", "add a comment node", prompt, {}, false);
   }
   const creationVerb = firstMatchingPreRouterCreationVerb(prompt);
   if (!hasSelection && creationVerb && !hasPreRouterDocumentationTerm(prompt)) {
@@ -2391,7 +2410,14 @@ function flowPilotRuntime(RED) {
         preRouterContext.openTabNodes = intake.candidates;
       }
       result = runDeterministicPreRouter(prompt, preRouterContext);
-      if (!result) {
+      if (isSmallTalk(prompt)) {
+        // Greetings and acknowledgements are ordinary chat. Do not spend a
+        // model turn classifying them, and do not offer action tools that can
+        // turn "hi" into the intent picker.
+        answerPhase = true;
+        chatOptions = agentTurnOptions(settings, undefined);
+        result = await chatWithAgentCap(provider, activeProvider, messages, chatOptions);
+      } else if (!result) {
         const routingTier = normalizedRoutingTier(activeProvider);
         if (routingTier === "C") {
           const classificationMessages = buildPlanRoutingMessages(
@@ -4966,6 +4992,7 @@ function flowPilotRuntime(RED) {
 }
 
 flowPilotRuntime.runDeterministicPreRouter = runDeterministicPreRouter;
+flowPilotRuntime.isSmallTalk = isSmallTalk;
 flowPilotRuntime.normalizedRoutingTier = normalizedRoutingTier;
 flowPilotRuntime.isLocalDeployment = isLocalDeployment;
 flowPilotRuntime.isPrivateNetworkHost = isPrivateNetworkHost;
