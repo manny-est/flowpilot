@@ -253,7 +253,7 @@ async function executeTurn(entry, prompt, token, parts, options) {
   while (true) {
     if (response.status !== 200) {
       asked = true;
-      finalText = "HTTP " + response.status;
+      finalText = "HTTP " + response.status + (response.body && (response.body.error || response.body.message) ? ": " + String(response.body.error || response.body.message).slice(0, 300) : "");
       break;
     }
     const calls = Array.isArray(body.toolCalls) ? body.toolCalls : Array.isArray(body.tool_calls) ? body.tool_calls : [];
@@ -349,6 +349,10 @@ async function executeTurn(entry, prompt, token, parts, options) {
       const beforeNodes = parts.nodes.map(clone);
       record.result = applyFuzzWrite(call, parts);
       transcript[transcript.length - 1].result = clone(record.result);
+      // Every tool call gets its tool reply, as in the browser loop; a missing
+      // one made the next step an OpenAI 400 ("tool_calls must be followed
+      // by tool messages").
+      messages = appendTool(messages, call, record.result);
       if (record.result && !record.result.noChange && !record.result.error) {
         record.graphTruth = graphDiff(beforeNodes, parts.nodes);
         graphTruth = mergeGraphTruth(graphTruth, record.graphTruth);

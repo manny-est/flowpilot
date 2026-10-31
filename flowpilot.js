@@ -180,11 +180,35 @@ function wordPattern(word) {
   return new RegExp("(^|[^a-z0-9_])" + word.replace(/\s+/g, "\\s+") + "([^a-z0-9_]|$)", "i");
 }
 
+// One missing/extra letter or one swapped pair between two words. Not a
+// substitution: those turn real words into verbs ("invert" -> "insert",
+// "remote" -> "remove").
+function withinOneEdit(a, b) {
+  if (a === b) { return true; }
+  if (Math.abs(a.length - b.length) > 1) { return false; }
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) { i++; }
+  if (a.length === b.length) {
+    return a[i] === b[i + 1] && a[i + 1] === b[i] && a.slice(i + 2) === b.slice(i + 2);
+  }
+  return a.length > b.length ? a.slice(i + 1) === b.slice(i) : a.slice(i) === b.slice(i + 1);
+}
+
 function firstMatchingPreRouterChangeVerb(prompt) {
   const text = String(prompt || "");
   for (let i = 0; i < PRE_ROUTER_CHANGE_VERBS.length; i++) {
     const verb = PRE_ROUTER_CHANGE_VERBS[i];
     if (wordPattern(verb).test(text)) { return verb; }
+  }
+  // A typo in the leading verb ("Rmove Second output", "renmae it") is still
+  // that verb (prompt fuzzer finding). Only the first word, and only verbs of
+  // 5+ letters, so short words like "and"/"ad" never turn into "add".
+  const first = (text.trim().match(/^[a-z]+/i) || [""])[0].toLowerCase();
+  if (first.length >= 4) {
+    for (let j = 0; j < PRE_ROUTER_CHANGE_VERBS.length; j++) {
+      const candidate = PRE_ROUTER_CHANGE_VERBS[j];
+      if (candidate.length >= 5 && withinOneEdit(first, candidate)) { return candidate; }
+    }
   }
   return null;
 }
