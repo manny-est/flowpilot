@@ -312,3 +312,27 @@ test("validation fails a text-returning http request feeding a function that rea
   assert.equal(check(http("txt"), { f1: fn("var d = JSON.parse(msg.payload); return msg;") }), null);
   assert.equal(check(http("txt"), { f1: fn("msg.payload = msg.payload.trim(); return msg;") }), null);
 });
+
+test("layout ignores a feedback wire into an inject and loop back-edges (live S10)", () => {
+  const layoutGeneratedFlow = new Function("return " + functionSource(applyReviewSource, "layoutGeneratedFlow"))();
+  const feedback = [
+    { id: "i", type: "inject", name: "Animate Gradient", w: 180, wires: [["f"]] },
+    { id: "f", type: "function", name: "Gradient Animator", w: 180, wires: [["d"], ["i"]] },
+    { id: "d", type: "debug", name: "Gradient Debug", w: 160, wires: [] }
+  ];
+  layoutGeneratedFlow(feedback);
+  assertNoOverlaps(feedback, "feedback flow nodes do not overlap");
+  const x = Object.fromEntries(feedback.map((n) => [n.id, n.x]));
+  assert.ok(x.i < x.f && x.f < x.d, "inject, function, debug run left to right: " + JSON.stringify(x));
+
+  const loop = [
+    { id: "a", type: "inject", name: "Start", w: 160, wires: [["b"]] },
+    { id: "b", type: "function", name: "Step", w: 160, wires: [["c"]] },
+    { id: "c", type: "delay", name: "Wait", w: 160, wires: [["b", "e"]] },
+    { id: "e", type: "debug", name: "Out", w: 160, wires: [] }
+  ];
+  layoutGeneratedFlow(loop);
+  assertNoOverlaps(loop, "loop nodes do not overlap");
+  const lx = Object.fromEntries(loop.map((n) => [n.id, n.x]));
+  assert.ok(lx.a < lx.b && lx.b < lx.c && lx.c < lx.e, "a loop keeps its forward order: " + JSON.stringify(lx));
+});
