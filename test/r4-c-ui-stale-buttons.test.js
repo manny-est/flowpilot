@@ -94,3 +94,7 @@ test("review (live): pop-out dedupe keeps the newest copy of a re-rendered card"
   assert.match(body, /if \(newest\[key\]\) \{ \$\(newest\[key\]\)\.remove\(\); \}\s*newest\[key\] = this;/);
   assert.doesNotMatch(body, /if \(seen\[key\]\) \{ \$node\.remove\(\); \}/);
 });
+
+test("review (live): the pop-out drops the empty state when a real message arrives", () => {
+  assert.match(init, /data\.event === "appendMessage"\) \{[\s\S]{0,400}find\("#fp-empty-state"\)\.remove\(\)/);
+});
