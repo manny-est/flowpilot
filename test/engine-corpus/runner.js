@@ -74,6 +74,7 @@ async function getToken() {
 // spirit as build-core-script.js's shared closure.
 function loadGateModules() {
   const consent = require(path.join(__dirname, "..", "..", "lib", "core", "consent.js"));
+  const goalCheck = require(path.join(__dirname, "..", "..", "lib", "core", "goal-check.js"));
   const source = fs.readFileSync(path.join(__dirname, "..", "..", "lib", "core", "diff-gate.js"), "utf8");
   const context = {};
   vm.runInNewContext(source + "\nthis.__flowPilotDiffGate = {" +
@@ -85,6 +86,7 @@ function loadGateModules() {
   "};", context, { filename: "lib/core/diff-gate.js" });
   return {
     consent: consent,
+    goalCheck: goalCheck,
     diffGate: context.__flowPilotDiffGate,
     intake: require(path.join(__dirname, "..", "..", "lib", "core", "intake.js"))
   };
@@ -550,6 +552,15 @@ async function runAgentCase(testCase, token) {
     touchedIds: ledger.filter(function (node) { return !node.created; }).map(function (node) { return node.id; })
       .filter(function (id, index, list) { return list.indexOf(id) === index; }),
     raw: kind === "write_allowed" ? undefined : terminalBody });
+  // Mirror the browser's post-write goal-check boundary for deterministic
+  // corpus fixtures without adding a live provider call to every case.
+  if (writes.length && Array.isArray(testCase.goalCheckAnswers)) {
+    let answerIndex = 0;
+    result.goalCheck = await GATES.goalCheck.runGoalCheckLoop({
+      check: async function () { return testCase.goalCheckAnswers[answerIndex++] || { done: true, gaps: [] }; },
+      fix: async function () { result.goalCheckFixes = (result.goalCheckFixes || 0) + 1; }
+    });
+  }
   if (kind === "write_allowed" && Array.isArray(testCase.expectTouched)) {
     const actual = result.touchedIds.slice().sort(), expected = testCase.expectTouched.slice().sort();
     result.targetCheck = { expected: expected, actual: actual, pass: JSON.stringify(expected) === JSON.stringify(actual) };
