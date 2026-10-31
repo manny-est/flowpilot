@@ -102,6 +102,18 @@ function currentFlow(parts) {
   return tabs.concat(parts.nodes.map(clone));
 }
 
+function planEnvelopeText(content) {
+  const text = String(content || "").trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  if (text.charAt(0) !== "{") { return null; }
+  try {
+    const obj = JSON.parse(text);
+    if (obj && typeof obj === "object" && (typeof obj.summary === "string" || typeof obj.explanation === "string")) {
+      return String(obj.summary || obj.explanation || "");
+    }
+  } catch (e) { return null; }
+  return null;
+}
+
 function rebuildTouchedIndex(snapshot) {
   const index = intake.createTouchedNodeIndex();
   if (snapshot && typeof snapshot === "object") {
@@ -271,6 +283,7 @@ async function executeTurn(entry, prompt, token, parts, options) {
   let askedOptionsValue = [];
   let goalChecks = [];
   let goalCheckFixAttempts = 0;
+  let planOnlyNudged = false;
   const MAX_GOAL_CHECK_FIX_ATTEMPTS = 2;
   let lane = null;
   let planShown = false;
@@ -337,6 +350,17 @@ async function executeTurn(entry, prompt, token, parts, options) {
         return record.result && !record.result.noChange && !record.result.error;
       });
       if (hasActualWrite && await runGoalCheck()) { continue; }
+      // Mirror the browser's nudgePlanOnlyReply (lib/core/modes.js): a change
+      // run that answers with a {summary, plan_items} envelope and wrote
+      // nothing is told once to act; the user never sees the raw JSON.
+      const envelope = planEnvelopeText(finalText);
+      if (envelope !== null && !hasActualWrite && !planOnlyNudged && activeRoute && activeRoute.mode !== "chat") {
+        planOnlyNudged = true;
+        messages = appendAssistant(messages, body).concat([{ role: "user", content: "Don't describe the plan: the user already asked for this. " +
+          "Do it now with the write tools (apply_step / rename_node / remove_step), then give a short final summary." }]);
+        if (await requestAgentStep()) { continue; }
+      }
+      if (envelope !== null) { finalText = envelope; }
       break;
     }
     messages = appendAssistant(messages, body);
