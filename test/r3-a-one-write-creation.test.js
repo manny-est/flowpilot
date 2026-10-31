@@ -297,3 +297,18 @@ test("one node per call on a multi-step plan is still rejected", () => {
     ]
   }, state), /send the whole flow in one apply_step/);
 });
+
+test("validation fails a text-returning http request feeding a function that reads JSON fields", () => {
+  const validateSource = fs.readFileSync(path.join(root, "lib", "core", "validate.js"), "utf8");
+  const start = validateSource.indexOf("    var HTTP_TEXT_PAYLOAD_MEMBERS");
+  const end = validateSource.indexOf("    function validationFlowNodes()");
+  const check = new Function(validateSource.slice(start, end) + "; return validationHttpReturnsText;")();
+  const fn = (func) => ({ id: "f1", type: "function", name: "Extract", func });
+  const http = (ret) => ({ id: "h1", type: "http request", name: "Fetch", ret, wires: [["f1"]] });
+  const reads = fn("var t = msg.payload.current_condition[0].temp_C; return msg;");
+  assert.equal(check(http("txt"), { f1: reads }).status, "fail");
+  assert.match(check(http(undefined), { f1: reads }).message, /set ret to "obj"/);
+  assert.equal(check(http("obj"), { f1: reads }), null);
+  assert.equal(check(http("txt"), { f1: fn("var d = JSON.parse(msg.payload); return msg;") }), null);
+  assert.equal(check(http("txt"), { f1: fn("msg.payload = msg.payload.trim(); return msg;") }), null);
+});
