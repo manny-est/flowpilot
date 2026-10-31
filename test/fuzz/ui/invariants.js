@@ -151,8 +151,10 @@ async function evaluateInPage(expected, injected) {
     duplicates: duplicateMessages
   });
 
-  const sameMessages = (left, right) => JSON.stringify((left || []).map(item => ({ id: item.id, text: item.text }))) ===
-    JSON.stringify((right || []).map(item => ({ id: item.id, text: item.text })));
+  // Whitespace isn't content: innerText (main) and textContent (relayed
+  // pop-out HTML) space block elements differently.
+  const norm = list => JSON.stringify((list || []).map(item => ({ id: item.id, text: String(item.text || "").replace(/\s+/g, "") })));
+  const sameMessages = (left, right) => norm(left) === norm(right);
   const popoutMessages = wanted.popoutMessages !== undefined ? wanted.popoutMessages : page.popoutMessages;
   const popoutMismatch = popoutMessages !== undefined && !sameMessages(messageList, popoutMessages);
   report("popout-conversation", popoutMismatch, {
