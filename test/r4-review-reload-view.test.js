@@ -52,3 +52,12 @@ test("a second interrupted run gets its own notice; only a repeat of the latest 
     delete global.messageRecords;
   }
 });
+
+test("the pop-out's pull never claims the main page, so a reloaded main page is re-attached; looking at the pop-out pulls", () => {
+  const init = read("lib/core/init.js");
+  const pull = init.slice(init.indexOf("function pullOpenerConversation"), init.indexOf("setInterval(pullOpenerConversation"));
+  assert.ok(pull.length > 0, "the pull is a named function");
+  assert.doesNotMatch(pull, /mainBoot/, "the pull's sync carries no mainBoot (it beat the re-attach check: asked 0)");
+  assert.match(init, /window\.addEventListener\("focus", pullOpenerConversation\)/);
+  assert.match(init, /visibilitychange[\s\S]{0,120}pullOpenerConversation\(\)/);
+});
