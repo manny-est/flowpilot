@@ -98,3 +98,9 @@ test("review (live): pop-out dedupe keeps the newest copy of a re-rendered card"
 test("review (live): the pop-out drops the empty state when a real message arrives", () => {
   assert.match(init, /data\.event === "appendMessage"\) \{[\s\S]{0,400}find\("#fp-empty-state"\)\.remove\(\)/);
 });
+
+test("QA pass 4b: a card's nested same-record row isn't a duplicate (the pop-out lost the whole proposal)", () => {
+  const body = init.slice(init.indexOf("function dedupeMirroredRecord"), init.indexOf("function dedupeMirroredRecord") + 2600);
+  assert.match(body, /groups\[key\]\[0\]\.contains\(\$group\[0\]\) \|\| \$group\[0\]\.contains\(groups\[key\]\[0\]\)/);
+  assert.ok(body.indexOf(".contains($group[0])") < body.indexOf("groups[key].remove();"), "the nesting check runs before any removal");
+});
