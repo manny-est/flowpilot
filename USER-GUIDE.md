@@ -155,6 +155,11 @@ When a name or description matches several nodes, FlowPilot does not guess. It
 shows **Which one?** and lists candidates with their node names, types, and tab
 names. Pick the intended candidate, then FlowPilot continues with that target.
 
+Names on the tab you have open come first. If exactly one node on the open tab has
+that name, FlowPilot uses it, even when another tab has a node with the same
+name. A name that appears only on another tab is used when it is unique across
+your flows.
+
 ![The Which one? picker showing candidates with tab names](docs/images/which-one.png)
 
 ## What asks first
