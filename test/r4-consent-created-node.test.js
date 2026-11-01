@@ -38,3 +38,12 @@ test("Stop at a consent gate can't throw before releasing the run", () => {
   assert.match(end, /stopStep\("cancel"/);
   assert.ok(end.indexOf("stopStep(\"cancel\"") < end.indexOf("setBusy(false)"), "the release comes after guarded steps");
 });
+
+test("a card answered in the pop-out or abandoned by Stop is disabled in the main window", () => {
+  const init = fs.readFileSync(path.join(__dirname, "..", "lib", "core", "init.js"), "utf8");
+  const relay = init.slice(init.indexOf('data.event === "resolveRecordAction"'));
+  assert.match(relay.slice(0, 6000), /if \(actionRec\.decision\) \{ disableRecordControls\(actionRec\); \}/);
+  const modes = fs.readFileSync(path.join(__dirname, "..", "lib", "core", "modes.js"), "utf8");
+  const end = modes.slice(modes.indexOf("function endActiveRun"), modes.indexOf("function queueMessage"));
+  assert.match(end, /state\.waitingRecord\.cancelled = true; disableRecordControls\(state\.waitingRecord\)/);
+});
