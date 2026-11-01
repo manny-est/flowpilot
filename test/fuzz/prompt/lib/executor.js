@@ -366,7 +366,18 @@ async function executeTurn(entry, prompt, token, parts, options) {
         const propertyOnly = record.tool === "rename_node" || (record.tool === "apply_step" &&
           !(Array.isArray(a.newNodes) && a.newNodes.length) && !(Array.isArray(a.newWires) && a.newWires.length) &&
           Array.isArray(a.changes) && a.changes.length > 0);
-        return propertyOnly && record.result.allPass;
+        if (!(propertyOnly && record.result.allPass)) { return false; }
+        // …and every value written is in the user's own words (modes.js).
+        const norm = function (v) { return String(v || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); };
+        const values = [];
+        if (record.tool === "rename_node" && typeof a.name === "string") { values.push(a.name); }
+        (Array.isArray(a.changes) ? a.changes : []).forEach(function (c) {
+          Object.keys((c && c.set) || {}).forEach(function (k) {
+            const v = c.set[k];
+            values.push(typeof v === "string" || typeof v === "number" ? String(v) : "\u0000non-text");
+          });
+        });
+        return values.every(function (v) { const n = norm(v); return !n || norm(prompt).indexOf(n) !== -1; });
       });
       if (hasActualWrite && !propertyEditsOnly && await runGoalCheck()) { continue; }
       // Mirror the browser's nudgePlanOnlyReply (lib/core/modes.js): a change

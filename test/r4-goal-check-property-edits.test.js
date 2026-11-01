@@ -10,11 +10,14 @@ const modes = fs.readFileSync(path.join(__dirname, "..", "lib", "core", "modes.j
 
 test("property-only runs skip the goal check; builds still get it", () => {
   const fnSrc = modes.match(/function propertyEditsOnly\(\) \{[\s\S]*?\n        \}\n/)[0];
-  const check = writes => new Function("agentWriteResults", fnSrc + "return propertyEditsOnly();")(writes);
-  assert.equal(check([{ tool: "rename_node", propertyOnly: true, allPass: true }]), true);
-  assert.equal(check([{ tool: "apply_step", propertyOnly: true, allPass: true }, { tool: "rename_node", propertyOnly: true, allPass: true }]), true);
-  assert.equal(check([{ tool: "apply_step", propertyOnly: false, allPass: true }]), false, "a build is still checked");
-  assert.equal(check([{ tool: "rename_node", propertyOnly: true, allPass: false }]), false, "an unverified edit is still checked");
-  assert.equal(check([]), false);
+  const check = (writes, prompt) => new Function("agentWriteResults", "payload", fnSrc + "return propertyEditsOnly();")(writes, { prompt: prompt });
+  const rename = (name, extra) => Object.assign({ tool: "rename_node", propertyOnly: true, allPass: true, writtenValues: [name] }, extra || {});
+  assert.equal(check([rename("Tmr.")], "Rname Start to Tmr."), true, "typo-01: the new name is in the request");
+  assert.equal(check([rename("Twin"), { tool: "apply_step", propertyOnly: true, allPass: true, writtenValues: ["5"] }], "Rename Double to Twin and set it to 5"), true);
+  assert.equal(check([rename("Result from zen API")], "That failed, fix it so it actually works"), false,
+    "QA 4b: a 'fix it' run that only renamed something is still checked");
+  assert.equal(check([{ tool: "apply_step", propertyOnly: false, allPass: true, writtenValues: [] }], "x"), false, "a build is still checked");
+  assert.equal(check([rename("Twin", { allPass: false })], "Rename to Twin"), false, "an unverified edit is still checked");
+  assert.equal(check([], "x"), false);
   assert.match(modes, /if \(propertyEditsOnly\(\)\) \{ return false; \}/);
 });
