@@ -176,7 +176,10 @@ async function checkAfterAction(driver, context, beforeMessages, actionName) {
   // compare up to 3 times, 1.5 s apart, before calling it a mismatch.
   let popoutMessages = actionName === "reload" ? null : await capturePopoutMessages(driver, context.mainTab).catch(() => null);
   const squash = list => JSON.stringify((list || []).map(item => String(item.text || "").replace(/\s+/g, "")));
-  for (let tries = 0; popoutMessages && tries < 2 && squash(popoutMessages) !== squash(currentMessages); tries++) {
+  // A freshly opened pop-out has to load the editor core before it syncs; on
+  // a busy instance that takes several seconds.
+  const settleTries = actionName === "open-popout" ? 6 : 2;
+  for (let tries = 0; popoutMessages && tries < settleTries && squash(popoutMessages) !== squash(currentMessages); tries++) {
     await new Promise(resolve => setTimeout(resolve, 1500));
     popoutMessages = await capturePopoutMessages(driver, context.mainTab).catch(() => null);
   }
