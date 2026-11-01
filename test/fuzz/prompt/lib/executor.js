@@ -71,6 +71,8 @@ async function getToken() {
   return result.body.access_token;
 }
 
+const LIMITS = require("../../../../lib/core/limits.js");
+
 function toolName(call) { return call && call.function && call.function.name; }
 function toolArgs(call) {
   try { return JSON.parse(call && call.function && call.function.arguments || "{}"); }
@@ -463,8 +465,13 @@ async function executeTurn(entry, prompt, token, parts, options) {
       } };
       writes.push(record);
       transcript[transcript.length - 1].consent = record.consent;
+      // Mirrors applyStepPrecheck (lib/core/main.js): node kinds the user
+      // ruled out ("but no http or exec nodes") are refused before creation.
+      const ruledOut = name === "apply_step" ? LIMITS.forbiddenNewNodes(args.newNodes, prompt) : [];
       const creationError = name === "apply_step"
-        ? corpus.creationFirstWriteError(args, creationState) : null;
+        ? (corpus.creationFirstWriteError(args, creationState) || (ruledOut.length
+          ? "The user ruled these out: " + ruledOut.map(function (f) { return f.type; }).join(", ") +
+            ". Nothing from this step was created; send it again without them." : null)) : null;
       if (creationError) {
         record.result = { requested: clone(args), checks: [], allPass: false,
           error: creationError, creationFirstWrite: true };
