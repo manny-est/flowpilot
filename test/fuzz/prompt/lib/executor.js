@@ -77,8 +77,15 @@ function toolArgs(call) {
   catch (error) { return {}; }
 }
 
+// Mirrors lib/core/modes.js: a tool-call turn may have null content, but a
+// final reply is pushed as text (content || message || ""). Pushing null
+// without tool_calls drew "HTTP 400: Invalid value for 'content'" (existing-09).
 function appendAssistant(messages, body) {
-  return (messages || []).concat([{ role: "assistant", content: body.content || null, tool_calls: body.toolCalls || body.tool_calls }]);
+  const calls = body.toolCalls || body.tool_calls;
+  if (Array.isArray(calls) && calls.length) {
+    return (messages || []).concat([{ role: "assistant", content: body.content || null, tool_calls: calls }]);
+  }
+  return (messages || []).concat([{ role: "assistant", content: body.content || body.message || "" }]);
 }
 
 function appendTool(messages, call, result) {
