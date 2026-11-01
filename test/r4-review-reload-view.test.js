@@ -22,3 +22,33 @@ test("pop-out: re-attach passes the source guard, full snapshots after changes, 
   assert.match(init, /keepScroll: true/);
   assert.match(read("lib/core/main.js"), /\$box\.children\(\)\.not\("#fp-empty-state"\)\.length\) \{ \$state\.remove\(\); return; \}/);
 });
+
+test("a second interrupted run gets its own notice; only a repeat of the latest message is skipped", () => {
+  // history.js runs a little page-load code; give it the browser globals it reads.
+  const storage = new Map();
+  global.window = global.window || { sessionStorage: {
+    getItem: (key) => storage.has(key) ? storage.get(key) : null,
+    setItem: (key, value) => storage.set(key, String(value)),
+    removeItem: (key) => storage.delete(key)
+  } };
+  global.location = global.location || { href: "http://test/" };
+  global.document = global.document || { readyState: "complete" };
+  const history = require("../lib/core/history.js");
+  const notice = history.interruptedRunNotice(0);
+  const added = [];
+  global.addMessage = (role, text) => { added.push(text); global.messageRecords.push({ kind: "chat", role, text }); };
+  global.messageRecords = [
+    { kind: "chat", role: "user", text: "hello FlowPilot" },
+    { kind: "chat", role: "assistant", text: notice },
+    { kind: "chat", role: "user", text: "hi" }
+  ];
+  try {
+    history.renderInterruptedRunMessage(0);
+    assert.deepEqual(added, [notice], "the earlier identical notice doesn't swallow this run's");
+    history.renderInterruptedRunMessage(0);
+    assert.equal(added.length, 1, "restoring twice doesn't stack it");
+  } finally {
+    delete global.addMessage;
+    delete global.messageRecords;
+  }
+});
