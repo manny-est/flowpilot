@@ -73,7 +73,8 @@ The sidebar header has these controls:
   message as context.
 - The chat icon returns to the conversation.
 - The clock opens the Flight log of saved conversations.
-- The pop-out icon opens the same FlowPilot controls in a separate window.
+- The pop-out icon opens the same conversation and controls in a separate window. Settings stay in the
+  sidebar; the pop-out uses the same settings.
 - The gear opens Settings.
 
 With no conversation, FlowPilot shows example prompts. They fill the prompt box
