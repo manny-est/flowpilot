@@ -105,6 +105,37 @@ Each scenario lists what to do and what must be true. Anything else that looks w
         text and need no sideways scrolling.
     - Check the pop-out at a narrow width too.
 
+### From the UI fuzzer (round 4)
+
+Each of these is the shortest form of a real failure the UI fuzzer found. They stay in the script for good.
+
+16. **Reload while a reply is coming.**
+    - Send "what can you help with?" and reload the page while "Cruising…" is showing.
+    - **Pass:**
+      - the conversation comes back as it was, with no "Cruising…" bubble;
+      - one plain notice says the page was reloaded before FlowPilot answered;
+      - the next message sends normally.
+17. **Two interrupted runs in a row.**
+    - Send "hello FlowPilot" and reload mid-reply. Then send "hi" and reload mid-reply again.
+    - **Pass:** each reload gets its own notice, straight away. No notice turns up one reload later, and none is
+      doubled.
+18. **Sending again while a message is queued.**
+    - Start scenario 4. While it works, send "hi" (it's queued), then send "hi" twice more.
+    - **Pass:**
+      - one "(queued)" message, and one "One message is already queued" notice, however often Send is pressed;
+      - when the queued message runs, its "(queued)" copy goes away.
+19. **The pop-out across a reload of the main window.**
+    - Open the pop-out. Send "hi" from the main window, then reload the main window. Send "good morning" from the
+      main window.
+    - **Pass:** within a few seconds the pop-out shows the same conversation as the main window: no empty state,
+      no stale "Cruising…", and no missing or extra messages.
+20. **The pop-out during a build.**
+    - Open the pop-out, then start scenario 4 from the main window.
+    - **Pass:**
+      - the pop-out follows the run (step status, cards, the final result) and matches the main window when it
+        ends;
+      - a card approved in one window is shown approved in the other.
+
 ## Exploratory (15 minutes, unscripted)
 
 Try to break it, for example:
