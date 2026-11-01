@@ -17,3 +17,9 @@ test("skip notices list each step once, ignoring end punctuation", () => {
   assert.equal(n, 2);
   assert.match(modes, /withoutTerminalPunctuation\(String\(result\.summary\)\.trim\(\)\)/);
 });
+
+test("a goal-check fix retry needs the run's own system prompt and request (Spark S10 'lost context')", () => {
+  const block = modes.slice(modes.indexOf("function runGoalCheckBeforeDone"), modes.indexOf("function runGoalCheckBeforeDone") + 2600);
+  assert.match(block, /hasRunContext = lastAgentMessages\.some\(function \(m\) \{ return m && m\.role === "system"; \}\)/);
+  assert.match(block, /stepBudget - step >= 3 &&\s*hasRunContext\)/);
+});
