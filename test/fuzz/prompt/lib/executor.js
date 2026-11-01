@@ -356,7 +356,17 @@ async function executeTurn(entry, prompt, token, parts, options) {
       const hasActualWrite = writes.some(function (record) {
         return record.result && !record.result.noChange && !record.result.error;
       });
-      if (hasActualWrite && await runGoalCheck()) { continue; }
+      // Mirrors lib/core/modes.js propertyEditsOnly(): renames and property
+      // changes on existing nodes, all verified, skip the goal check.
+      const landed = writes.filter(function (record) { return record.result && !record.result.noChange && !record.result.skipped; });
+      const propertyEditsOnly = landed.length > 0 && landed.every(function (record) {
+        const a = record.args || {};
+        const propertyOnly = record.tool === "rename_node" || (record.tool === "apply_step" &&
+          !(Array.isArray(a.newNodes) && a.newNodes.length) && !(Array.isArray(a.newWires) && a.newWires.length) &&
+          Array.isArray(a.changes) && a.changes.length > 0);
+        return propertyOnly && record.result.allPass;
+      });
+      if (hasActualWrite && !propertyEditsOnly && await runGoalCheck()) { continue; }
       // Mirror the browser's nudgePlanOnlyReply (lib/core/modes.js): a change
       // run that answers with a {summary, plan_items} envelope and wrote
       // nothing is told once to act; the user never sees the raw JSON.

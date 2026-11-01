@@ -127,16 +127,17 @@ test("a write gets goal-checked and retries gaps only within the two-attempt bud
   const requests = [];
   const post = fakePostFactory([
     { toolCalls: [toolCall("proposal-goal", "propose_action", {
-      action: "modify", summary: "Rename Double to Twin", targets: ["function-1"]
+      action: "modify", summary: "Add a debug node after Double", targets: ["function-1"]
     })] },
-    { toolCalls: [toolCall("write-goal", "rename_node", { nodeId: "function-1", name: "Twin" })] },
-    { message: "Renamed." },
+    { toolCalls: [toolCall("write-goal", "apply_step", { summary: "Add a debug node after Double",
+      newNodes: [{ id: "n1", type: "debug", name: "Extra", x: 500, y: 200 }], newWires: [{ from: "function-1", to: "n1" }] })] },
+    { message: "Added." },
     { done: false, gaps: ["The result needs one more check."] },
     { message: "Checked the result." },
     { done: true, gaps: [] }
   ], requests);
   const result = await executor.runPrompt({ id: "goal-check", category: "existing", fixture: "inject-function-debug",
-    prompt: "Rename Double to Twin." }, "token", { post: post });
+    prompt: "Add a debug node after Double." }, "token", { post: post });
   const checks = requests.filter(function (request) { return request.path === "/flowpilot/goal-check"; });
   assert.strictEqual(checks.length, 2);
   assert.strictEqual(result.goalCheck.checks.length, 2);
@@ -148,6 +149,20 @@ test("a write gets goal-checked and retries gaps only within the two-attempt bud
     return message.role === "user" && message.content ===
       "Goal check: The result needs one more check.. Fix this specific gap with the existing flow; do not recreate nodes. Then give a short final summary.";
   }));
+});
+
+test("a run that only renames or changes properties skips the goal check (typo-01)", async function () {
+  const requests = [];
+  const post = fakePostFactory([
+    { toolCalls: [toolCall("proposal-rename", "propose_action", {
+      action: "modify", summary: "Rename Double to Twin", targets: ["function-1"]
+    })] },
+    { toolCalls: [toolCall("write-rename", "rename_node", { nodeId: "function-1", name: "Twin" })] },
+    { message: "Renamed." }
+  ], requests);
+  await executor.runPrompt({ id: "rename-no-goal-check", category: "rename", fixture: "inject-function-debug",
+    prompt: "Rname Double to Twin." }, "token", { post: post });
+  assert.strictEqual(requests.filter(function (request) { return request.path === "/flowpilot/goal-check"; }).length, 0);
 });
 
 test("a modify proposal without targets becomes a picker question without dispatch", async function () {
