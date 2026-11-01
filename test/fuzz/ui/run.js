@@ -171,7 +171,7 @@ async function checkAfterAction(driver, context, beforeMessages, actionName) {
   if (context.mainTab) { await driver.focus(context.mainTab).catch(() => null); }
   if (actionName === "reload") { await new Promise(resolve => setTimeout(resolve, 1500)); }
   const consoleErrors = await driver.captureConsole().catch(() => []);
-  const currentMessages = await readMessages(driver).catch(() => []);
+  let currentMessages = await readMessages(driver).catch(() => []);
   // The pop-out mirrors through postMessage, so give it a moment to settle:
   // compare up to 3 times, 1.5 s apart, before calling it a mismatch.
   let popoutMessages = actionName === "reload" ? null : await capturePopoutMessages(driver, context.mainTab).catch(() => null);
@@ -182,6 +182,9 @@ async function checkAfterAction(driver, context, beforeMessages, actionName) {
   for (let tries = 0; popoutMessages && tries < settleTries && squash(popoutMessages) !== squash(currentMessages); tries++) {
     await new Promise(resolve => setTimeout(resolve, 1500));
     popoutMessages = await capturePopoutMessages(driver, context.mainTab).catch(() => null);
+    // Re-read main too: a reply landing in main while we wait is not a pop-out lag.
+    if (context.mainTab) { await driver.focus(context.mainTab).catch(() => null); }
+    currentMessages = await readMessages(driver).catch(() => currentMessages);
   }
   const currentNodeIds = await driver.evaluate("() => { const z = RED.nodes && RED.nodes.workspace ? RED.nodes.workspace.id : (RED.workspaces && RED.workspaces.active ? RED.workspaces.active() : undefined); return RED.nodes && RED.nodes.filterNodes ? RED.nodes.filterNodes({ z }).map(node => node.id) : []; }").catch(() => []);
   if (Array.isArray(currentNodeIds)) {
@@ -191,6 +194,7 @@ async function checkAfterAction(driver, context, beforeMessages, actionName) {
     afterReload: actionName === "reload",
     reloadMessages: actionName === "reload" ? beforeMessages : undefined,
     popoutMessages: popoutMessages || undefined,
+    mainMessages: popoutMessages ? currentMessages : undefined,
     popoutAttach: driver.lastPopoutAttach || null,
     consoleErrors,
     touchedNodeIds: context.touchedNodeIds,

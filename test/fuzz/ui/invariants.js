@@ -158,14 +158,19 @@ async function evaluateInPage(expected, injected) {
   // pop-out HTML) space block elements differently.
   // Text sequence only: messages without a record id get positional "dom-N"
   // ids, so one extra element shifted every id and looked like a mismatch.
-  const norm = list => JSON.stringify((list || []).map(item => String(item.text || "").replace(/\s+/g, "").toLowerCase()).filter(Boolean)); // innerText follows CSS text-transform
+  // A live run's elapsed counter (" · 4s", " · 1m 5s") ticks every second
+  // and the pop-out relays on a throttle, so the counter itself isn't compared.
+  const norm = list => JSON.stringify((list || []).map(item => String(item.text || "").replace(/\s+/g, "").replace(/·\d+(?:m\d+)?s/g, "").toLowerCase()).filter(Boolean)); // innerText follows CSS text-transform
   const sameMessages = (left, right) => norm(left) === norm(right);
   const popoutMessages = wanted.popoutMessages !== undefined ? wanted.popoutMessages : page.popoutMessages;
-  const popoutMismatch = popoutMessages !== undefined && !sameMessages(messageList, popoutMessages);
+  // The runner reads both windows at the same moment; judge that pair, not a
+  // main-window read taken later (a reply may have landed in between).
+  const mainForPopout = wanted.mainMessages !== undefined ? wanted.mainMessages : messageList;
+  const popoutMismatch = popoutMessages !== undefined && !sameMessages(mainForPopout, popoutMessages);
   report("popout-conversation", popoutMismatch, {
     message: popoutMismatch ? "main and pop-out conversations differ" : "main and pop-out conversations match",
     attach: wanted.popoutAttach || null,
-    main: messageList, popout: popoutMessages === undefined ? null : popoutMessages
+    main: mainForPopout, popout: popoutMessages === undefined ? null : popoutMessages
   });
 
   const reloadMessages = wanted.reloadMessages !== undefined ? wanted.reloadMessages : page.reloadMessages;
@@ -178,7 +183,7 @@ async function evaluateInPage(expected, injected) {
   // still waiting for its reply (e.g. a queued one, which has no bubble).
   const lastBefore = beforeSettled[beforeSettled.length - 1];
   const hadPending = (reloadMessages || []).some(item => item.id === "fp-pending") ||
-    !!(lastBefore && /^\s*YOU\b/.test(String(lastBefore.text || "")));
+    !!(lastBefore && /^\s*YOU/.test(String(lastBefore.text || ""))); // innerText runs the label into the text ("YOUhello")
   let afterSettled = messageList.filter(item => item.id !== "fp-empty-state");
   if (hadPending && afterSettled.length && INTERRUPTED.test(String(afterSettled[afterSettled.length - 1].text || ""))) {
     afterSettled = afterSettled.slice(0, -1);
