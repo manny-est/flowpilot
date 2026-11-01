@@ -274,7 +274,10 @@ async function runSequence(driver, options, sequenceNumber) {
       }
     }
   } finally {
-    const endTabs = await cleanupSequence(driver, mainTab, initialTabs, settings);
+    // Restore the run's starting settings, not this sequence's: a sequence
+    // that began from a drifted state would otherwise keep the drift (Auto
+    // off / Restricted on was left on both instances after round 4 runs).
+    const endTabs = await cleanupSequence(driver, mainTab, initialTabs, options.baselineSettings || settings);
     if (endTabs.length !== initialTabs.length) {
       const violation = { invariant: "tab-hygiene", message: "browser tab count was not restored" };
       const finding = await writeFinding(driver, options.out, seed, findings.length, actionLog, violation, { initial: initialTabs.length, final: endTabs.length });
@@ -343,6 +346,7 @@ async function main(argv) {
     throw new Error("Open and log in to the Node-RED editor in profile " + options.profile + " first; the fuzzer needs the instance's own tab list.");
   }
   options.baseWorkspaces = base;
+  options.baselineSettings = await readSettings(driver).catch(() => null);
   const summary = {
     seed: options.seed,
     modelLabel: options.modelLabel,
@@ -364,7 +368,20 @@ async function main(argv) {
       summary.byInvariant[finding.invariant] += 1;
     });
   }
+  // The instance must be left as found. Check it, retry once, and say so.
+  const same = (a, b) => !!a && !!b && a.auto === b.auto && a.restricted === b.restricted && (!a.provider || a.provider === b.provider);
+  let endSettings = await readSettings(driver).catch(() => null);
+  if (options.baselineSettings && !same(options.baselineSettings, endSettings)) {
+    await restoreSettings(driver, options.baselineSettings).catch(() => null);
+    endSettings = await readSettings(driver).catch(() => null);
+  }
+  summary.settingsRestored = !options.baselineSettings || same(options.baselineSettings, endSettings);
+  summary.baselineSettings = options.baselineSettings;
+  summary.endSettings = endSettings;
   fs.writeFileSync(path.join(options.out, "summary.json"), JSON.stringify(summary, null, 2) + "\n");
+  if (!summary.settingsRestored) {
+    process.stdout.write("SETTINGS NOT RESTORED: start " + JSON.stringify(options.baselineSettings) + " end " + JSON.stringify(endSettings) + "\n");
+  }
   process.stdout.write(formatResultLine(options.modelLabel, options.instance, summary.sequences, summary.actions, summary.violations, summary.byInvariant) + "\n");
   return summary;
 }
