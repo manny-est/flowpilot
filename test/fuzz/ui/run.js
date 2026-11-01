@@ -299,8 +299,11 @@ async function shrinkFinding(file, options) {
         const item = actionMap.get(candidate[i]);
         if (!item) continue;
         const state = await driver.actionState();
+        // The real "before" view: an empty list made every reload look like
+        // it lost the conversation.
+        const before = await readMessages(driver).catch(() => []);
         await runAction(driver, item, state, context, chooseRngForAction(finding.seed, i));
-        const checked = await checkAfterAction(driver, context, [], item.name);
+        const checked = await checkAfterAction(driver, context, before, item.name);
         if ((checked.result.violations || []).some(itemViolation => itemViolation.invariant === finding.invariant)) return true;
       }
       return false;
