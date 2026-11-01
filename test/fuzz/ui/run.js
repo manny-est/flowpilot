@@ -289,7 +289,10 @@ async function shrinkFinding(file, options) {
   const actionMap = new Map(ACTIONS.map(item => [item.name, item]));
   const replay = async candidate => {
     const initialTabs = await driver.tabs();
-    const main = await startSequence(driver, options.url, initialTabs);
+    if (!options.baseWorkspaces) {
+      options.baseWorkspaces = await driver.evaluate("() => (window.RED && RED.nodes && RED.nodes.getWorkspaceOrder) ? RED.nodes.getWorkspaceOrder() : null").catch(() => null) || [];
+    }
+    const main = await startSequence(driver, options.url, initialTabs, options.baseWorkspaces);
     const context = { allowProviderSwitch: !!options.allowProviderSwitch, fixtures, touchedNodeIds: [], mainTab: main };
     try {
       for (let i = 0; i < candidate.length; i += 1) {
@@ -305,6 +308,11 @@ async function shrinkFinding(file, options) {
       await cleanupSequence(driver, main, initialTabs, {});
     }
   };
+  // Say plainly whether the finding still reproduces on this build before
+  // shrinking (it used to print the full sequence either way).
+  const reproduces = await replay(sourceActions);
+  process.stdout.write("REPRODUCES: " + (reproduces ? "yes" : "no") + " (seed " + finding.seed + ", " + finding.invariant + ")\n");
+  if (!reproduces) { return null; }
   const shortest = await shrinkActions(sourceActions, replay);
   process.stdout.write(scenarioMarkdown(finding, shortest) + "\n");
   return shortest;
