@@ -35,3 +35,10 @@ test("the re-plan never says 'Done … built' when nothing was built", () => {
   const chip = modes.slice(modes.indexOf("function renderReplanChip"), modes.indexOf("function renderReplanChip") + 900);
   assert.match(chip, /built\.length\s*\?\s*"Done — all approved plan steps are already built\."\s*:\s*"The run stopped and nothing was built/);
 });
+
+test("QA 4c: a write refused before anything landed is not validated (no 'missing node' chase)", () => {
+  const modes = fs.readFileSync(path.join(__dirname, "..", "lib", "core", "modes.js"), "utf8");
+  const fin = modes.slice(modes.indexOf("function finishWriteResult"), modes.indexOf("function finishWriteResult") + 1400);
+  assert.match(fin, /resultObj\.error && !resultObj\.noChange &&\s*Array\.isArray\(resultObj\.checks\) && resultObj\.checks\.length === 0\)\s*\{\s*continueWithResult\(resultObj\);\s*return;/);
+  assert.ok(fin.indexOf("continueWithResult(resultObj);") < fin.indexOf("validateWriteResult(resultObj"), "the skip comes before validation");
+});
