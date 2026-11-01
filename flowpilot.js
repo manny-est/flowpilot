@@ -3080,6 +3080,8 @@ function flowPilotRuntime(RED) {
       return res.status(400).json({ error: validationError });
     }
     try {
+      // Display-only; never persisted (a stored copy went stale at 0.6.1).
+      if (req.body && Object.prototype.hasOwnProperty.call(req.body, "flowpilotVersion")) { delete req.body.flowpilotVersion; }
       const saved = storage.saveSettings(req.body);
       storage.appendAudit({
         action: "settings_saved",
@@ -3087,7 +3089,11 @@ function flowPilotRuntime(RED) {
         baseUrl: saved.baseUrl,
         model: saved.model
       });
-      res.json(maskProviderSecrets(saved));
+      // The running package's version, never a value stored in settings:
+      // a stale stored copy showed "FlowPilot v0.6.1" after a Save (QA pass 4).
+      const savedBody = maskProviderSecrets(saved);
+      savedBody.flowpilotVersion = PACKAGE_VERSION;
+      res.json(savedBody);
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
