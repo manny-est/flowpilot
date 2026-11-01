@@ -567,7 +567,7 @@ async function runPrompt(entry, token, options) {
     graph: graph, finalText: last.finalText || first.finalText || "", writes: writes, transcript: transcript,
     goalCheck: goalCheck,
     timings: { turns: turns.length, steps: turns.reduce(function (sum, turn) { return sum + (turn.steps || 0); }, 0) },
-    actual: { wrote: wrote, nodesAdded: nodesAdded, touchedIds: touchedIds, action: outcomeAction(wrote, asked),
+    actual: { wrote: wrote, nodesAdded: nodesAdded, touchedIds: touchedIds, addedNodeIds: (graphTruth && graphTruth.addedNodeIds) || [], action: outcomeAction(wrote, asked),
       askedOptions: lastAsked ? lastAsked.askedOptions : [], lane: lastLane && lastLane.lane,
       planShown: turns.some(function (turn) { return turn.planShown; }), graphTruth: graphTruth,
       consentAsked: turns.some(function (turn) { return turn.consentAsked; }) },

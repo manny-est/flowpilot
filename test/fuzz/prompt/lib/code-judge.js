@@ -66,8 +66,12 @@ function hasInput(nodes, nodeId) {
   return edges(nodes).some(function (edge) { return edge.target && edge.to === nodeId; });
 }
 
+// Node types that never take an input wire in Node-RED (they're triggered by
+// the runtime, not by a message), whatever "inputs" a model wrote.
+const NO_INPUT_TYPES = new Set(["status", "catch", "complete", "inject", "comment", "link in", "mqtt in", "http in", "tcp in", "udp in", "websocket in", "watch"]);
 function nodeNeedsInput(node) {
-  return Number(node.inputs) > 0 && node.type !== "group" && !/-broker$|-config$|-server$|-client$/.test(String(node.type || ""));
+  return Number(node.inputs) > 0 && node.type !== "group" && !NO_INPUT_TYPES.has(String(node.type || "")) &&
+    !/-broker$|-config$|-server$|-client$/.test(String(node.type || ""));
 }
 
 function overlapFailures(nodes, scopeIds) {
@@ -123,7 +127,12 @@ function codeChecks(graph, actual) {
   nodes.filter(nodeNeedsInput).forEach(function (node) {
     if (!hasInput(allNodes, node.id)) { failures.push("node is unwired: " + node.id); }
   });
-  overlapFailures(allNodes, scopeIds).forEach(function (failure) { failures.push(failure); });
+  // Overlaps aren't judged here: the fuzzer applies the model's raw x/y, while
+  // FlowPilot lays nodes out in the browser (R3-A) and the UI fuzzer's
+  // no-overlap invariant checks the real result. Kept for opt-in runs.
+  if (process.env.FUZZ_JUDGE_OVERLAP === "1") {
+    overlapFailures(allNodes, scopeIds).forEach(function (failure) { failures.push(failure); });
+  }
 
   const validationNodes = nodes.map(clone);
   const validation = loadValidator().validateFlow(validationNodes, {
@@ -156,7 +165,20 @@ function expectedChecks(result, expect) {
     field("mustNotContainTypes", type, types.indexOf(type) === -1, "forbidden type present: " + type);
   });
   if (Array.isArray(expect.targetIds)) {
+    // A target is touched when it changed, or when a new node was wired to or
+    // from it (an additive edit anchors on it without modifying it), or a
+    // new comment was placed beside it.
     const touched = new Set((result.actual.touchedIds || []).map(String));
+    const added = new Set((result.actual.addedNodeIds || []).map(String));
+    (result.edges || []).forEach(function (edge) {
+      if (added.has(String(edge.from))) { touched.add(String(edge.to)); }
+      if (added.has(String(edge.to))) { touched.add(String(edge.from)); }
+    });
+    (result.nodes || []).filter(function (n) { return added.has(String(n.id)) && n.type === "comment"; }).forEach(function (c) {
+      (result.nodes || []).forEach(function (n) {
+        if (n.z === c.z && Math.abs(Number(n.x) - Number(c.x)) < 400 && Math.abs(Number(n.y) - Number(c.y)) < 200) { touched.add(String(n.id)); }
+      });
+    });
     expect.targetIds.forEach(function (id) {
       field("targetIds", id, touched.has(String(id)), "target was not touched: " + id);
     });
@@ -173,7 +195,8 @@ function expectedChecks(result, expect) {
   }
   if (expect.action) {
     const actualAction = result.actual.action || (result.actual.asked ? "ask" : result.actual.wrote ? "write" : "answer");
-    field("action", expect.action, expect.action === actualAction,
+    const allowed = Array.isArray(expect.action) ? expect.action : [expect.action];
+    field("action", expect.action, allowed.indexOf(actualAction) !== -1,
       "action expected " + expect.action + ", got " + actualAction);
   }
   if (expect.consent === "ask" && result.actual.consentAsked !== true) {
