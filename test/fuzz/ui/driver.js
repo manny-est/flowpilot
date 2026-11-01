@@ -288,6 +288,12 @@ class CdpDriver extends OpenClawDriver {
   async resize(width, height) {
     return this.cdp.setViewport(await this.ensureCurrent(), Number(width), Number(height || 640)).catch(() => null);
   }
+  async resizePopout(width, height) {
+    const pages = await this.cdp.pages();
+    const pop = pages.find(p => /\/flowpilot\/popout\//.test(p.url));
+    if (!pop) { return null; }
+    return this.cdp.setViewport(pop.targetId, Number(width), Number(height || 640)).catch(() => null);
+  }
   async press(key) {
     const codes = { Enter: 13, Escape: 27, Tab: 9, ArrowDown: 40, ArrowUp: 38 };
     const k = JSON.stringify(String(key));
@@ -301,6 +307,9 @@ class CdpDriver extends OpenClawDriver {
     return this.cdp.close(id);
   }
   async reload() {
+    // The main window closes its pop-out when it unloads (init.js
+    // beforeunload), so a reload ends the pop-out by design.
+    this.popoutTab = null;
     try { await this.evaluate("() => { setTimeout(() => location.reload(), 0); return true; }"); } catch (error) { /* reloading */ }
     await wait(5000);
     for (let i = 0; i < 20; i++) {

@@ -161,11 +161,15 @@ async function runAction(driver, item, state, context, rng) {
 }
 
 async function checkAfterAction(driver, context, beforeMessages, actionName) {
+  // Every check reads the main window explicitly; an action may have left
+  // the pop-out as the current target.
+  if (context.mainTab) { await driver.focus(context.mainTab).catch(() => null); }
+  if (actionName === "reload") { await new Promise(resolve => setTimeout(resolve, 1500)); }
   const consoleErrors = await driver.captureConsole().catch(() => []);
   const currentMessages = await readMessages(driver).catch(() => []);
   // The pop-out mirrors through postMessage, so give it a moment to settle:
   // compare up to 3 times, 1.5 s apart, before calling it a mismatch.
-  let popoutMessages = await capturePopoutMessages(driver, context.mainTab).catch(() => null);
+  let popoutMessages = actionName === "reload" ? null : await capturePopoutMessages(driver, context.mainTab).catch(() => null);
   const squash = list => JSON.stringify((list || []).map(item => String(item.text || "").replace(/\s+/g, "")));
   for (let tries = 0; popoutMessages && tries < 2 && squash(popoutMessages) !== squash(currentMessages); tries++) {
     await new Promise(resolve => setTimeout(resolve, 1500));

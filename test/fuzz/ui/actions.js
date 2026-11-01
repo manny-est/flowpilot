@@ -102,9 +102,10 @@ const ACTIONS = [
   action("close-popout", state => !!(state && state.popoutOpen), async driver => {
     await driver.closePopout();
   }),
+  // Resizes the pop-out window itself (it used to resize the main viewport).
   action("resize-popout", state => !!(state && state.popoutOpen), async (driver, state, rng) => {
     const width = rng() < 0.5 ? 300 : 500;
-    await driver.resize(width, 640);
+    if (typeof driver.resizePopout === "function") { await driver.resizePopout(width, 640); } else { await driver.resize(width, 640); }
   }),
   action("select-nodes", always, async driver => {
     await driver.evaluate("() => { if (RED.view && RED.view.selectAll) { RED.view.selectAll(); } return true; }");
