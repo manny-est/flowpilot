@@ -57,7 +57,8 @@ assert.strictEqual(consent.decideConsent("modify-config", SIDE, ctx("run-1", "n-
 const main = fs.readFileSync(path.join(__dirname, "..", "lib", "core", "main.js"), "utf8");
 const collect = main.match(/function collectWriteToolConsentItems\(name, args, idMap\) \{[\s\S]*?\n    \}\n/)[0];
 const isEmptyWrite = main.match(/function writeToolCallIsEmpty\(name, args\) \{[\s\S]*?\n    \}\n/)[0];
-const decision = isEmptyWrite + main.match(/function writeToolCallConsentDecision\(tier, name, args, consentContext\) \{[\s\S]*?\n    \}\n/)[0];
+const targetsGone = main.match(/function removeStepTargetsGone\(args, idMap\) \{[\s\S]*?\n    \}\n/)[0];
+const decision = targetsGone + isEmptyWrite + main.match(/function writeToolCallConsentDecision\(tier, name, args, consentContext\) \{[\s\S]*?\n    \}\n/)[0];
 const gate = main.match(/function writeToolCallNeedsConsent\(tier, name, args, consentContext\) \{[\s\S]*?\n    \}\n/)[0];
 const consentSrc = fs.readFileSync(path.join(__dirname, "..", "lib", "core", "consent.js"), "utf8").replace(/if \(typeof module[\s\S]*$/, "");
 const LIVE = { "fn1": { type: "function" }, "http1": { type: "http request" }, "dbg1": { type: "debug" } };
@@ -75,6 +76,10 @@ assert.strictEqual(needs("write-gated", "apply_step", { changes: [{ id: "http1",
 assert.strictEqual(needs("write-gated", "rename_node", { nodeId: "fn1", name: "y" }), false, "rename safe auto");
 assert.strictEqual(needs("write-gated", "remove_step", { nodeId: "dbg1" }), true, "delete of a safe node asks");
 assert.strictEqual(needs("write-gated", "rename_node", { nodeId: "ghost" }), true, "unresolvable id asks");
+// QA pass 4 (S6): a repeated delete of nodes already removed deletes nothing,
+// so it asks nothing; a delete that still has a live node asks.
+assert.strictEqual(needs("write-gated", "remove_step", { nodeIds: ["gone-1", "gone-2"] }), false, "deleting nodes already gone asks nothing");
+assert.strictEqual(needs("write-gated", "remove_step", { nodeIds: ["gone-1", "dbg1"] }), true, "a live node in the delete still asks");
 // Round 2 live check: an apply_step with nothing in it applies nothing (the
 // tool answers "nothing to apply"), so asking only showed the user a vague
 // "update the flow" question. An unresolvable id (above) still asks.
