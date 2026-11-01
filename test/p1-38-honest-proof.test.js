@@ -45,7 +45,7 @@ assert.strictEqual(proof.runtimeProofOutcome(observed, wired).label, "Run: obser
 assert.ok(!/_msgid|\\\"/.test(proof.runtimeProofOutcome(observed, wired).label));
 assert.strictEqual(proof.runtimeProofOutcome([
   { kind: "debug", nodeId: "fn", node: "Format", value: { answer: 42 }, valueType: "object" }
-], wired).label, 'Run: observed — {"answer":42} (at Format)');
+], wired).label, 'Run: observed — answer: 42 (at Format)');
 
 // A legacy/full-message observation is normalized to the default watched
 // property, msg.payload, rather than quoting _msgid or encoding JSON twice.
