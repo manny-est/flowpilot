@@ -164,6 +164,7 @@ async function evaluateInPage(expected, injected) {
   const popoutMismatch = popoutMessages !== undefined && !sameMessages(messageList, popoutMessages);
   report("popout-conversation", popoutMismatch, {
     message: popoutMismatch ? "main and pop-out conversations differ" : "main and pop-out conversations match",
+    attach: wanted.popoutAttach || null,
     main: messageList, popout: popoutMessages === undefined ? null : popoutMessages
   });
 
@@ -173,7 +174,11 @@ async function evaluateInPage(expected, injected) {
   // an interrupted notice"). Everything else must match.
   const INTERRUPTED = /page was reloaded before FlowPilot|run was interrupted after step/i;
   const beforeSettled = (reloadMessages || []).filter(item => item.id !== "fp-pending" && item.id !== "fp-empty-state");
-  const hadPending = (reloadMessages || []).some(item => item.id === "fp-pending");
+  // Pending = a "Cruising…" bubble, or the last turn is the user's own message
+  // still waiting for its reply (e.g. a queued one, which has no bubble).
+  const lastBefore = beforeSettled[beforeSettled.length - 1];
+  const hadPending = (reloadMessages || []).some(item => item.id === "fp-pending") ||
+    !!(lastBefore && /^\s*YOU\b/.test(String(lastBefore.text || "")));
   let afterSettled = messageList.filter(item => item.id !== "fp-empty-state");
   if (hadPending && afterSettled.length && INTERRUPTED.test(String(afterSettled[afterSettled.length - 1].text || ""))) {
     afterSettled = afterSettled.slice(0, -1);

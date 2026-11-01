@@ -85,7 +85,12 @@ async function capturePopoutMessages(driver, mainTab) {
   if (!popout) return null;
   try {
     await driver.focus(popout);
-    return await readMessages(driver);
+    const list = await readMessages(driver);
+    // Attach diagnostics ride along (not compared): which main page this
+    // pop-out thinks it mirrors, and whether it asked to re-attach.
+    const info = await driver.evaluate("() => ({ known: window.__fpKnownMainBoot || null, asked: window.__fpReattachAsked || 0, openerBoot: (window.opener && window.opener.__fpMainBoot) || null, opener: !!window.opener })").catch(() => null);
+    if (Array.isArray(list) && info) { Object.defineProperty(list, "attach", { value: info, enumerable: false }); driver.lastPopoutAttach = info; }
+    return list;
   } finally {
     if (mainTab) await driver.focus(mainTab);
   }
@@ -183,6 +188,7 @@ async function checkAfterAction(driver, context, beforeMessages, actionName) {
     afterReload: actionName === "reload",
     reloadMessages: actionName === "reload" ? beforeMessages : undefined,
     popoutMessages: popoutMessages || undefined,
+    popoutAttach: driver.lastPopoutAttach || null,
     consoleErrors,
     touchedNodeIds: context.touchedNodeIds,
     fetchFlows: true
