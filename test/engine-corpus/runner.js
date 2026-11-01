@@ -180,8 +180,13 @@ function fixtureParts(testCase) {
     touchedIndex: testCase.touchedIndex || GATES.intake.createTouchedNodeIndex()
   });
   const contextIds = selected.length ? selected : intake.targetIds;
+  // Mirrors lib/core/selection-context.js: a resolved group id is context too
+  // (members as ids), not dropped because it isn't a regular node.
   const contextNodes = contextIds.map(function (id) {
-    return nodes.find(function (node) { return node.id === id; });
+    const node = nodes.find(function (item) { return item.id === id; });
+    if (node) { return node; }
+    const group = groups.find(function (item) { return item.id === id; });
+    return group ? Object.assign({}, group, { nodes: (group.nodes || []).slice() }) : null;
   }).filter(Boolean).map(clone);
   const context = { nodes: contextNodes, connections: buildConnections(contextNodes, nodes),
     activeTab: { id: tab.id, label: tab.label } };

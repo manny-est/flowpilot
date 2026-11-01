@@ -159,3 +159,30 @@ test("deleting a group removes only the group and keeps its members", function (
 });
 
 console.log("R4-K group-target tests passed");
+
+// Round 4 prompt fuzzer (rename-10): intake resolved the group, but the
+// client's context builder looked it up with RED.nodes.node(), which never
+// returns groups, so the target was dropped and a picker was shown.
+test("a resolved group id reaches the request context", () => {
+  const vm = require("vm");
+  const fsx = require("fs");
+  const px = require("path");
+  const src = ["redaction.js", "selection-context.js"].map(function (f) {
+    return fsx.readFileSync(px.join(__dirname, "..", "lib", "core", f), "utf8");
+  }).join("\n");
+  const member = { id: "g-debug", type: "debug", z: "t1", name: "Grouped output", wires: [] };
+  const group = { id: "group-1", type: "group", z: "t1", name: "Existing group", nodes: [member], x: 10, y: 10, w: 200, h: 80, style: { label: true } };
+  member.g = "group-1";
+  const sandbox = {
+    RED: { nodes: { node: function (id) { return id === "g-debug" ? member : null; },
+      group: function (id) { return id === "group-1" ? group : null; }, eachLink: function () {} } },
+    currentSettings: {}, console: console, JSON: JSON
+  };
+  vm.createContext(sandbox);
+  vm.runInContext("(function(){" + src + "\nthis.collect = collectSelectionContext;}).call(this);", sandbox);
+  const ctx = sandbox.collect(["group-1"]);
+  assert.ok(ctx && Array.isArray(ctx.nodes) && ctx.nodes.length === 1, "the group is in the context");
+  assert.equal(ctx.nodes[0].type, "group");
+  assert.equal(ctx.nodes[0].name, "Existing group");
+  assert.deepEqual(Array.from(ctx.nodes[0].nodes), ["g-debug"], "members are ids, not live objects");
+});

@@ -194,8 +194,16 @@ function withinOneEdit(a, b) {
   return a.length > b.length ? a.slice(i + 1) === b.slice(i) : a.slice(i) === b.slice(i + 1);
 }
 
+// "…but do not delete any nodes", "without adding another HTTP node": a
+// negated verb is a constraint, not the request (prompt fuzzer: constraint-09
+// was summarised "I will delete as requested", constraint-03 added a node).
+function withoutNegatedVerbs(prompt) {
+  return String(prompt || "").replace(
+    /\b(?:do not|don'?t|dont|never|without|not|no)\s+(?:\w+\s+)?(?:rename|rewire|remove|update|insert|add|delete|create|generate|build|make|set up)\w*/gi, " ");
+}
+
 function firstMatchingPreRouterChangeVerb(prompt) {
-  const text = String(prompt || "");
+  const text = withoutNegatedVerbs(prompt);
   for (let i = 0; i < PRE_ROUTER_CHANGE_VERBS.length; i++) {
     const verb = PRE_ROUTER_CHANGE_VERBS[i];
     if (wordPattern(verb).test(text)) { return verb; }
@@ -237,7 +245,7 @@ function firstMatchingPreRouterRepairVerb(prompt) {
 }
 
 function firstMatchingPreRouterCreationVerb(prompt) {
-  const text = String(prompt || "");
+  const text = withoutNegatedVerbs(prompt);
   const patterns = [
     { verb: "create", pattern: wordPattern("create") },
     { verb: "generate", pattern: wordPattern("generate") },
