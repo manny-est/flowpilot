@@ -158,7 +158,7 @@ async function evaluateInPage(expected, injected) {
   // pop-out HTML) space block elements differently.
   // Text sequence only: messages without a record id get positional "dom-N"
   // ids, so one extra element shifted every id and looked like a mismatch.
-  const norm = list => JSON.stringify((list || []).map(item => String(item.text || "").replace(/\s+/g, "")).filter(Boolean));
+  const norm = list => JSON.stringify((list || []).map(item => String(item.text || "").replace(/\s+/g, "").toLowerCase()).filter(Boolean)); // innerText follows CSS text-transform
   const sameMessages = (left, right) => norm(left) === norm(right);
   const popoutMessages = wanted.popoutMessages !== undefined ? wanted.popoutMessages : page.popoutMessages;
   const popoutMismatch = popoutMessages !== undefined && !sameMessages(messageList, popoutMessages);
