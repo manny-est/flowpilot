@@ -125,10 +125,13 @@ Each of these is the shortest form of a real failure the UI fuzzer found. They s
       - one "(queued)" message, and one "One message is already queued" notice, however often Send is pressed;
       - when the queued message runs, its "(queued)" copy goes away.
 19. **The pop-out across a reload of the main window.**
-    - Open the pop-out. Send "hi" from the main window, then reload the main window. Send "good morning" from the
-      main window.
-    - **Pass:** within a few seconds the pop-out shows the same conversation as the main window: no empty state,
-      no stale "Cruising…", and no missing or extra messages.
+    - Open the pop-out. Send "hi" from the main window, then reload the main window.
+    - Reloading the main window closes the pop-out (by design, like Node-RED's debug window). Open the pop-out
+      again and send "good morning" from the main window.
+    - **Pass:**
+      - the pop-out closed on the reload;
+      - once reopened, within a few seconds it shows the same conversation as the main window: no empty state,
+        no stale "Cruising…", and no missing or extra messages.
 20. **The pop-out during a build.**
     - Open the pop-out, then start scenario 4 from the main window.
     - **Pass:**
