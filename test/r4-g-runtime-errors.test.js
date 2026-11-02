@@ -42,7 +42,7 @@ test("a touched-node debug error is retryable and a clean re-test proves", () =>
   const failed = proof.runtimeProofOutcome([], { goalNames: ["Output"], runtimeErrors: observer.snapshot().errors });
   assert.equal(failed.state, "runtime-error");
   assert.equal(failed.retryable, true);
-  assert.equal(failed.label, "Format (function) threw: TypeError: bad value");
+  assert.equal(failed.label, "Format (function) failed: TypeError: bad value");
   assert.equal(proof.runtimeProofRetryDecision(failed, 1, 2).retry, true);
 
   observer.reset();
@@ -61,7 +61,7 @@ test("two failed attempts end with a plain failure line, not Ran", () => {
     runtimeErrors: [{ nodeId: "fn-1", nodeName: "Format", nodeType: "function", message: "ECONNREFUSED" }]
   });
   assert.equal(proof.runtimeProofRetryDecision(failed, 2, 2).retry, false);
-  assert.match(failed.label, /^Format \(function\) threw: ECONNREFUSED$/);
+  assert.match(failed.label, /^Format \(function\) failed: the connection was refused \(nothing is listening at that address\) \(ECONNREFUSED\)$/);
   assert.doesNotMatch(failed.label, /Ran/);
 });
 
@@ -124,11 +124,11 @@ test("main proof wiring subscribes, confirms no-tap runtime, and cleans up", () 
 test("the final run card prefers a runtime error over stale evidence", () => {
   const run = cards.buildResultCardModel({ verifyResults: [{
     state: "runtime-error",
-    label: "Format (function) threw: TypeError: bad value",
+    label: "Format (function) failed: TypeError: bad value",
     evidenceCount: 1,
     evidence: [{ kind: "status", node: "Format", value: "green — ready" }]
   }] }).run;
-  assert.equal(run.label, "Format (function) threw: TypeError: bad value");
+  assert.equal(run.label, "Format (function) failed: TypeError: bad value");
   assert.doesNotMatch(run.label, /green|Run: observed|Ran/);
 });
 

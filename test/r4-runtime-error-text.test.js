@@ -28,3 +28,13 @@ test("QA 4c: an error with an empty message shows name and code, never the objec
   assert.equal(runtimeProofMessageText(plain), "RequestError: ECONNREFUSED");
   assert.doesNotMatch(runtimeProofMessageText(plain), /stack|at x|[{}]/);
 });
+
+test("QA 4d: network failures read as plain words with the code in brackets", () => {
+  const { runtimeProofPlainError, runtimeProofErrorLabel } = require("../lib/core/runtime-proof.js");
+  assert.equal(runtimeProofPlainError("RequestError: ECONNREFUSED"), "the connection was refused (nothing is listening at that address) (ECONNREFUSED)");
+  assert.equal(runtimeProofPlainError("getaddrinfo EAI_AGAIN wttr.in"), "the host name couldn't be found (EAI_AGAIN)");
+  assert.equal(runtimeProofPlainError("TypeError: x is undefined"), "TypeError: x is undefined");
+  const label = runtimeProofErrorLabel([{ nodeName: "Call localhost:9", nodeType: "http request",
+    message: JSON.stringify({ __enc__: true, type: "error", data: { name: "RequestError", message: "", code: "ECONNREFUSED", stack: "x\n at y (z.js:1:2)" } }) }]);
+  assert.equal(label, "Call localhost:9 (http request) failed: the connection was refused (nothing is listening at that address) (ECONNREFUSED)");
+});
