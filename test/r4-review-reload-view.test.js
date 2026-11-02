@@ -61,3 +61,10 @@ test("the pop-out's pull never claims the main page, so a reloaded main page is 
   assert.match(init, /window\.addEventListener\("focus", pullOpenerConversation\)/);
   assert.match(init, /visibilitychange[\s\S]{0,120}pullOpenerConversation\(\)/);
 });
+
+test("UI fuzzer 240145: a pop-out no main page ever synced asks to be adopted after ~3 s", () => {
+  const init = read("lib/core/init.js");
+  const tick = init.slice(init.indexOf("var boot = window.opener.__fpMainBoot;"), init.indexOf("var boot = window.opener.__fpMainBoot;") + 900);
+  assert.match(tick, /if \(knownMainBoot === null\) \{\s*unsyncedTicks \+= 1;\s*if \(unsyncedTicks < 2\) \{ return; \}\s*knownMainBoot = "never-synced";/);
+  assert.match(tick, /window\.opener\.postMessage\(\{ event: "popoutReattach" \}/);
+});
