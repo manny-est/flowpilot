@@ -32,3 +32,11 @@ test("the client's write precheck refuses them before creating anything", () => 
   assert.ok(r && /ruled these out: exec/.test(r.error) && r.retryable === true);
   assert.equal(precheck({ newNodes: [{ id: "n1", type: "inject" }] }, { userPrompt: "no http or exec nodes" }), null);
 });
+
+test("QA 4d: a plan summary '(no http or exec)' predicts no exec risk; a later positive add still counts", () => {
+  const cardsSrc = fs.readFileSync(path.join(__dirname, "..", "lib", "core", "cards.js"), "utf8");
+  const f = cardsSrc.match(/function stripNegatedPlanMentions\(text\) \{[\s\S]*?\n    \}/)[0];
+  const strip = new Function("cardString", f + ";return stripNegatedPlanMentions;")(String);
+  assert.doesNotMatch(strip("a rotating cube visualizer (no http or exec)."), /exec|http/);
+  assert.match(strip("no http or exec, using a function, then add an mqtt out"), /add an mqtt out/);
+});

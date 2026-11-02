@@ -62,8 +62,8 @@ Each scenario lists what to do and what must be true. Anything else that looks w
      outside Node-RED)"), with **Proceed / Skip this step**. Both choices behave as labelled.
 8. **Clear and Stop at awkward moments.** Do each of these three times, and after each one, send "hi" to check it
    sends normally (not "queued"):
-   - **(a)** Clear while a Proceed/Skip consent is waiting (use scenario 7).
-   - **(b)** Clear while a question with options is waiting (e.g. "/modify" with nothing selected, or a vague
+   - **(a)** Clear the chat (the eraser icon) while a Proceed/Skip consent is waiting (use scenario 7). **Clear text** next to Send only empties the prompt box.
+   - **(b)** Clear the chat (the eraser icon) while a question with options is waiting (e.g. "/modify" with nothing selected, or a vague
      request).
    - **(c)** Press **Stop** while a build is mid-run (scenario 4).
    - **Pass:** Send is enabled, the prompt box has its normal placeholder, and the next message runs. A click on an

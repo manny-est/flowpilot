@@ -32,8 +32,9 @@ test("installed types, groups and junctions pass", () => {
 
 test("the re-plan never says 'Done … built' when nothing was built", () => {
   const modes = fs.readFileSync(path.join(__dirname, "..", "lib", "core", "modes.js"), "utf8");
-  const chip = modes.slice(modes.indexOf("function renderReplanChip"), modes.indexOf("function renderReplanChip") + 900);
-  assert.match(chip, /built\.length\s*\?\s*"Done — all approved plan steps are already built\."\s*:\s*"The run stopped and nothing was built/);
+  const chip = modes.slice(modes.indexOf("function renderReplanChip"), modes.indexOf("function renderReplanChip") + 1800);
+  assert.match(chip, /!built\.length\s*\?\s*"The run stopped and nothing was built/);
+  assert.match(chip, /endedEarly\s*\?\s*"The plan's steps are built, but the run ended early/, "QA 4d: no 'Done' right after an error stop");
 });
 
 test("QA 4c: a write refused before anything landed is not validated (no 'missing node' chase)", () => {

@@ -85,7 +85,7 @@ or name a node in your request.
 Below the prompt box, the status line shows the current selection, context-size
 warnings, possible sensitive context, attached Debug messages, and the active
 provider. **Preview JSON** can show the sanitized node context that would be
-sent. At the right are **Clear**, **Auto**, the **▾** menu, and **Send**.
+sent. At the right are **Clear text** (empties the prompt box), **Auto**, the **▾** menu, and **Send**.
 
 **Auto** is on by default. The **▾** menu offers a one-message choice of
 **Plan first**, **Just do it**, or **Normal**. The selected one-shot choice stays
