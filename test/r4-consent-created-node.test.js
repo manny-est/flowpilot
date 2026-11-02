@@ -47,3 +47,13 @@ test("a card answered in the pop-out or abandoned by Stop is disabled in the mai
   const end = modes.slice(modes.indexOf("function endActiveRun"), modes.indexOf("function queueMessage"));
   assert.match(end, /state\.waitingRecord\.cancelled = true; disableRecordControls\(state\.waitingRecord\)/);
 });
+
+test("QA 4d (Spark S6): a delete outside the run's target is refused before any consent prompt", () => {
+  const modes = fs.readFileSync(path.join(__dirname, "..", "lib", "core", "modes.js"), "utf8");
+  const at = modes.indexOf('if (name === "remove_step" && payload.targetLock');
+  assert.ok(at > 0, "the guard exists");
+  const guard = modes.slice(at, at + 1600);
+  assert.match(guard, /lockIds\.indexOf\(id\) === -1 && createdIds\.indexOf\(id\) === -1 && !!findLiveNode\(id\)/);
+  assert.match(guard, /continueWithResult\(\{[\s\S]*error: "Refused: only the nodes this request is about can be deleted/);
+  assert.ok(at < modes.indexOf("var consentEvaluation = writeToolCallConsentEvaluation"), "it runs before the consent decision");
+});
